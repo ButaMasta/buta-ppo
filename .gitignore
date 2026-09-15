@@ -70,3 +70,6 @@ Testing/
 
 # Extra
 .vscode/
+rust_bridge/Cargo.lock
+rust_bridge/target
+assets/*
