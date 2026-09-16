@@ -1,13 +1,80 @@
+// buta-ppo/rust_bridge/src/lib.rs
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use rocketsim::{Arena, GameMode, Team, CarBodyConfig};
+use rocketsim::{Arena, ArenaEvent, GameMode, Team, Car, CarBodyConfig, CarInfo, CarState, BallState, PhysState};
 
-//// Mesh initialization. ////
-#[no_mangle]
-pub extern "C" fn rs_init_from_default(silent: bool) -> bool {
-    rocketsim::init_from_default(silent).is_ok()
+//// C++ State Interface Structs. ////
+
+/// Core states.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CPhysState {
+    pub pos: [f32; 3],
+    pub rot_mat: [[f32; 3]; 3],
+    pub vel: [f32; 3],
+    pub ang_vel: [f32; 3],
 }
 
+impl From<&PhysState> for CPhysState {
+    fn from(phys: &PhysState) -> Self {
+        Self {
+            pos: phys.pos.into(),
+            rot_mat: [
+                phys.rot_mat.x_axis.into(),
+                phys.rot_mat.y_axis.into(),
+                phys.rot_mat.z_axis.into(),
+            ],
+            vel: phys.vel.into(),
+            ang_vel: phys.ang_vel.into(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CBallState {
+    pub phys: CPhysState,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CCarState {
+    pub phys: CPhysState,
+    pub team: i32,
+    pub boost: f32,
+    pub handbrake_val: f32,
+    pub is_on_ground: bool,
+    pub has_jumped: bool,
+    pub has_double_jumped: bool,
+    pub is_jumping: bool,
+    pub has_flipped: bool,
+    pub is_flipping: bool,
+    pub is_demoed: bool,
+    pub is_supersonic: bool,
+}
+
+/// Events and Global State.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CArenaEvents {
+    pub is_ball_scored: bool,
+    pub car_hit_ball: [bool; 8],
+    pub car_got_boost: [bool; 8],
+    pub ball_hit_extra_vel: [f32; 8],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CArenaState {
+    pub ball: CBallState,
+    pub cars: [CCarState; 8],
+    pub num_cars: u32,
+    pub tick_count: u64,
+    pub events: CArenaEvents,
+}
+
+
+//// Mesh initialization. ////
 #[no_mangle]
 pub extern "C" fn rs_init(collision_meshes_folder: *const c_char, silent: bool) -> bool {
     if collision_meshes_folder.is_null() {
@@ -15,8 +82,8 @@ pub extern "C" fn rs_init(collision_meshes_folder: *const c_char, silent: bool) 
     }
     
     // Parse the C-string pointer into a Rust string slice.
-    let c_str = unsafe { CStr::from_ptr(collision_meshes_folder) };
-    let path_str = match c_str.to_str() {
+    let c_str: &CStr = unsafe { CStr::from_ptr(collision_meshes_folder) };
+    let path_str: &str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => return false,
     };
@@ -28,6 +95,7 @@ pub extern "C" fn rs_init(collision_meshes_folder: *const c_char, silent: bool) 
 pub extern "C" fn rs_is_initialized() -> bool {
     rocketsim::is_initialized()
 }
+
 
 //// Arena Creation. ////
 #[no_mangle]
@@ -42,7 +110,7 @@ pub extern "C" fn rs_arena_create(game_mode_idx: i32) -> *mut Arena {
         _ => GameMode::Soccar, 
     };
 
-    let arena = Arena::new(game_mode);
+    let arena: Arena = Arena::new(game_mode);
     
     // Move the Arena to the heap and hand the pointer to C++.
     Box::into_raw(Box::new(arena))
@@ -58,7 +126,27 @@ pub extern "C" fn rs_arena_free(arena_ptr: *mut Arena) {
     }
 }
 
+
 //// Arena Util. ////
+/// Creates and adds a car to the arena, returning the index of the car in the cars vector.
+#[no_mangle]
+pub extern "C" fn rs_arena_add_car(arena_ptr: *mut Arena, team_idx: i32) -> u32 {
+    if arena_ptr.is_null() {
+        return 0;
+    }
+
+    let arena: &mut Arena = unsafe { &mut *arena_ptr };
+    
+    // Map integer to Team (0 = Blue, 1 = Orange).
+    let team: Team = if team_idx == 0 { Team::Blue } else { Team::Orange };
+    
+    let config: CarBodyConfig = CarBodyConfig::OCTANE; 
+    
+    // add_car returns the index of the newly added car (usize).
+    // Cast to u32 for standard C-ABI compatibility.
+    arena.add_car(team, config) as u32
+}
+
 /// Steps the arena for 1 tick, returning the events produced during that tick.
 #[no_mangle]
 pub extern "C" fn rs_arena_step(arena_ptr: *mut Arena) {
@@ -67,57 +155,76 @@ pub extern "C" fn rs_arena_step(arena_ptr: *mut Arena) {
     }
 
     // Convert raw C pointer into a Rust mutable reference.
-    let arena = unsafe { &mut *arena_ptr };
+    let arena: &mut Arena = unsafe { &mut *arena_ptr };
     
     // Advance the physics engine by one tick.
     arena.step_tick();
 }
 
-/// Creates and adds a car to the arena, returning the index of the car in the cars vector.
+/// Core function to grab the entire arena state in one call.
 #[no_mangle]
-pub extern "C" fn rs_arena_add_car(arena_ptr: *mut Arena, team_idx: i32) -> u32 {
-    if arena_ptr.is_null() {
-        return 0;
-    }
-
-    let arena = unsafe { &mut *arena_ptr };
-    
-    // Map integer to Team (0 = Blue, 1 = Orange).
-    let team = if team_idx == 0 { Team::Blue } else { Team::Orange };
-    
-    let config = CarBodyConfig::OCTANE; 
-    
-    // add_car returns the index of the newly added car (usize).
-    // Cast to u32 for standard C-ABI compatibility.
-    arena.add_car(team, config) as u32
-}
-
-#[no_mangle]
-pub extern "C" fn rs_arena_get_basic_obs(
-    arena_ptr: *const Arena, 
-    car_idx: u32, 
-    out_obs: *mut f32
+pub extern "C" fn rs_arena_get_global_state(
+    arena_ptr: *const Arena,
+    out_state: *mut CArenaState,
 ) {
-    if arena_ptr.is_null() || out_obs.is_null() {
+    if arena_ptr.is_null() || out_state.is_null() {
         return;
     }
 
-    let arena = unsafe { &*arena_ptr };
-    
-    // Retrieve states from RocketSim
-    let ball_state = arena.get_ball_state();
-    let car_state = arena.get_car_state(car_idx as usize);
+    let arena: &Arena = unsafe { &*arena_ptr };
+    let state: &mut CArenaState = unsafe { &mut *out_state };
 
-    // Safely wrap the raw C pointer into a Rust mutable slice of exactly 6 floats
-    let obs = unsafe { std::slice::from_raw_parts_mut(out_obs, 6) };
+    // For now just clear the state to be safe.
+    *state = CArenaState::default();
 
-    // Pack the Ball position
-    obs[0] = ball_state.phys.pos.x;
-    obs[1] = ball_state.phys.pos.y;
-    obs[2] = ball_state.phys.pos.z;
+    state.tick_count = arena.tick_count();
 
-    // Pack the Car position
-    obs[3] = car_state.phys.pos.x;
-    obs[4] = car_state.phys.pos.y;
-    obs[5] = car_state.phys.pos.z;
+    // Pack ball.
+    let ball: &BallState = arena.get_ball_state();
+    state.ball.phys = CPhysState::from(&ball.phys);
+
+    // Pack cars.
+    let cars: &Vec<Car> = arena.cars();
+    state.num_cars = cars.len().min(8) as u32;
+
+    for (i, car) in cars.iter().enumerate().take(8) {
+        let car_state: &CarState = car.get_state();
+        let car_info: &CarInfo = arena.get_car_info(i);
+
+        state.cars[i].phys = CPhysState::from(&car_state.phys);
+
+        state.cars[i].team = if car_info.team == Team::Blue { 0 } else { 1 };
+        state.cars[i].boost = car_state.boost;
+        state.cars[i].handbrake_val = car_state.handbrake_val;
+        state.cars[i].is_on_ground = car_state.is_on_ground;
+        state.cars[i].has_jumped = car_state.has_jumped;
+        state.cars[i].has_double_jumped = car_state.has_double_jumped;
+        state.cars[i].is_jumping = car_state.is_jumping;
+        state.cars[i].has_flipped = car_state.has_flipped;
+        state.cars[i].is_flipping = car_state.is_flipping;
+        state.cars[i].is_demoed = car_state.is_demoed;
+        state.cars[i].is_supersonic = car_state.is_supersonic;
+    }
+
+    // Pack events.
+    state.events.is_ball_scored = arena.is_ball_scored();
+
+    for event in arena.get_last_step_events() {
+        match event {
+            ArenaEvent::CarHitBall(hit) => {
+                let idx: usize = hit.car_idx as usize;
+                if idx < 8 {
+                    state.events.car_hit_ball[idx] = true;
+                    state.events.ball_hit_extra_vel[idx] = hit.extra_hit_vel.length();
+                }
+            }
+            ArenaEvent::CarPickupBoost(pickup) => {
+                let idx: usize = pickup.car_idx as usize;
+                if idx < 8 {
+                    state.events.car_got_boost[idx] = true;
+                }
+            }
+            _ => {}
+        }
+    }
 }

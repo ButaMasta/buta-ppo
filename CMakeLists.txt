@@ -17,6 +17,8 @@ add_custom_target(cargo_build ALL
     COMMENT "Compiling Rust FFI cdylib via Cargo..."
 )
 
+add_compile_options(-Wall -Wextra -O3 -march=native)
+
 # Define the C++ executable.
 add_executable(buta_ppo src/main.cpp)
 
