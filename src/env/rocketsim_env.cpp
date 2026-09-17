@@ -9,6 +9,11 @@ RocketSimEnv::RocketSimEnv(int ticks_per_step, size_t max_players_per_team, uint
     : ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed) {
     arena_ = ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
+
+    // Setup Rewards.
+    reward_manager_.add_reward(std::make_unique<VelocityToBallReward>(), 0.1f);
+    reward_manager_.add_reward(std::make_unique<TouchBallReward>(), 1.0f);
+    reward_manager_.add_reward(std::make_unique<GoalReward>(), 10.0f);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {
@@ -25,6 +30,7 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
 const std::vector<float>& RocketSimEnv::reset() {
     ffi::reset_to_random_kickoff(arena_);
     ffi::get_arena_state(arena_, arena_state_);
+    reward_manager_.reset(arena_state_);
 
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
@@ -49,7 +55,7 @@ StepResult RocketSimEnv::step(const std::vector<int>& actions) {
 
         // Calculate and accumulate rewards.
         for (size_t a = 0; a < agents_.size(); a++) {
-            reward_buffer_[a] += calculate_reward(a, arena_state_);
+            reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_);
         }
 
         if (arena_state_.events.is_ball_scored) {
@@ -68,20 +74,10 @@ StepResult RocketSimEnv::step(const std::vector<int>& actions) {
 }
 
 // Helpers.
-ffi::CarControls RocketSimEnv::decode_action(int action_idx) {
+ffi::CarControls RocketSimEnv::decode_action([[maybe_unused]] int action_idx) { // Maybe unused is temp here.
     ffi::CarControls controls{};
     // TODO: Map controls based on popular discrete action setups.
     return controls;
-}
-
-float RocketSimEnv::calculate_reward(uint32_t agent_idx, const ffi::ArenaState& arena_state) {
-    float reward = 0.0f;
-
-    // TODO: Implement actual reward calculations.
-    if (arena_state_.events.car_hit_ball[agents_[agent_idx].car_id]) {
-        reward += 1.0f;
-    }
-    return reward;
 }
 
 }; // namespace buta_ppo::env

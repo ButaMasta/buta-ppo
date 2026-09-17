@@ -24,6 +24,7 @@ add_executable(buta_ppo
     src/main.cpp
     src/env/rocketsim_env.cpp
     src/env/advanced_obs.cpp
+    src/env/reward_manager.cpp
 )
 
 # Expose include/ directory.

@@ -3,6 +3,7 @@
 
 #include "buta_ppo/ffi.h"
 #include "advanced_obs.hpp"
+#include "reward_manager.hpp"
 #include <vector>
 #include <cstdint>
 
@@ -38,10 +39,10 @@ private:
     size_t single_obs_size_;
 
     AdvancedObs obs_builder_;
+    RewardManager reward_manager_;
 
     // Helpers.
     ffi::CarControls decode_action(int action_idx);
-    float calculate_reward(uint32_t agent_idx, const ffi::ArenaState& arena_state);
 
 public:
     explicit RocketSimEnv(
