@@ -24,11 +24,15 @@ extern "C" {
         int32_t team;
         float boost;
         float handbreak_val;
+        float air_time_since_jump;
+        float demo_respawn_timer;
         bool is_on_ground;
         bool has_jumped;
         bool has_double_jumped;
         bool is_jumping;
+        bool has_flip_or_jump;
         bool has_flipped;
+        bool is_auto_flipping;
         bool is_flipping;
         bool is_demoed;
         bool is_supersonic;
@@ -44,9 +48,21 @@ extern "C" {
     struct rs_arena_state {
         rs_ball_state ball;
         rs_car_state cars[8];
+        float pads[34];
         uint32_t num_cars;
         uint64_t tick_count;
         rs_arena_events events;
+    };
+
+    struct rs_car_controls {
+        float throttle;
+        float steer;
+        float pitch;
+        float yaw;
+        float roll;
+        bool jump;
+        bool boost;
+        bool handbrake;
     };
 
     // Mesh Initialization.
@@ -55,12 +71,17 @@ extern "C" {
     // Arena Creation.
     struct rs_arena; // Opaque type representing the Rust Arena struct.
     rs_arena* rs_arena_create(int game_mode_idx);
+    rs_arena* rs_arena_create_vis(int game_mode_idx);
     void rs_arena_free(rs_arena* arena_ptr);
 
     // Arena Util.
     uint32_t rs_arena_add_car(rs_arena* arena_ptr, int team_idx);
     void rs_arena_step(rs_arena* arena_ptr);
-    void rs_arena_get_global_state(const rs_arena* arena_ptr, rs_arena_state* out_state);
+    void rs_arena_get_arena_state(const rs_arena* arena_ptr, rs_arena_state* out_state);
+    void rs_arena_set_car_controls(rs_arena* arena_ptr, uint32_t car_idx, rs_car_controls controls);
+    void rs_arena_set_ball_state(rs_arena* arena_ptr, rs_ball_state ball_state);
+    void rs_arena_set_car_state(rs_arena* arena_ptr, uint32_t car_idx, rs_car_state car_state);
+    void rs_arena_reset_to_random_kickoff(rs_arena* arena_ptr, uint64_t seed, bool use_seed);
 }
 
 namespace buta_ppo::ffi {
@@ -70,6 +91,7 @@ using BallState = rs_ball_state;
 using CarState = rs_car_state;
 using ArenaEvents = rs_arena_events;
 using ArenaState = rs_arena_state;
+using CarControls = rs_car_controls;
 
 enum class Team : int {
     Blue = 0,
@@ -92,6 +114,10 @@ inline ArenaPtr create_arena(int game_mode = 0) {
     return ArenaPtr(rs_arena_create(game_mode));
 }
 
+inline ArenaPtr create_arena_vis(int game_mode = 0) {
+    return ArenaPtr(rs_arena_create_vis(game_mode));
+}
+
 inline bool init(const std::string& collision_meshes_folder, bool silent = true) {
     return rs_init(collision_meshes_folder.c_str(), silent);
 }
@@ -109,9 +135,33 @@ inline void step_arena(const ArenaPtr& arena) {
     }
 }
 
-inline void get_global_state(const ArenaPtr& arena, ArenaState& out_state) {
+inline void get_arena_state(const ArenaPtr& arena, ArenaState& out_state) {
     if (arena) {
-        rs_arena_get_global_state(arena.get(), &out_state);
+        rs_arena_get_arena_state(arena.get(), &out_state);
+    }
+}
+
+inline void set_car_controls(const ArenaPtr& arena, uint32_t car_idx, const CarControls& controls) {
+    if (arena) {
+        rs_arena_set_car_controls(arena.get(), car_idx, controls);
+    }
+}
+
+inline void set_ball_state(const ArenaPtr& arena, const BallState& state) {
+    if (arena) {
+        rs_arena_set_ball_state(arena.get(), state);
+    }
+}
+
+inline void set_car_state(const ArenaPtr& arena, uint32_t car_idx, const CarState& state) {
+    if (arena) {
+        rs_arena_set_car_state(arena.get(), car_idx, state);
+    }
+}
+
+inline void reset_to_random_kickoff(const ArenaPtr& arena, uint64_t seed = 0, bool use_seed = false) {
+    if (arena) {
+        rs_arena_reset_to_random_kickoff(arena.get(), seed, use_seed);
     }
 }
 
