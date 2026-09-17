@@ -3,7 +3,10 @@ use std::{ffi::CStr};
 use std::os::raw::c_char;
 use glam::{Mat3A, Vec3A};
 use rocketsim::{
-    Arena, ArenaEvent, BallState, Car, CarBodyConfig, CarControls, CarInfo, CarState, GameMode, PhysState, Team
+    Arena, ArenaEvent, BallState, Car, 
+    CarBodyConfig, CarControls, CarInfo, 
+    CarState, GameMode, PhysState, Team,
+    BoostPadConfig,
 };
 use rocketsim_vis::ArenaVisExt;
 
@@ -76,6 +79,43 @@ pub struct CCarState {
     pub is_supersonic: bool,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CBoostPadState {
+    pub big: [f32; 6],
+    pub small: [f32; 28], 
+}
+
+// Helper boost pad methods and vars.
+fn get_sorted_pad_indices(arena: &Arena, is_big_target: bool) -> Vec<usize> {
+    let mut pad_info: Vec<(usize, &BoostPadConfig)> = (0..arena.num_boost_pads())
+        .map(|i| (i, arena.get_boost_pad_config(i)))
+        .filter(|(_, cfg)| cfg.is_big == is_big_target)
+        .collect();
+
+    pad_info.sort_unstable_by(|(_, a), (_, b)| {
+        a.pos.y.total_cmp(&b.pos.y)
+            .then_with(|| a.pos.x.total_cmp(&b.pos.x))
+    });
+
+    pad_info.into_iter().map(|(idx, _)| idx).collect()
+}
+use std::sync::OnceLock;
+static SOCCAR_BIG_INDICES: OnceLock<[usize; 6]> = OnceLock::new();
+static SOCCAR_SMALL_INDICES: OnceLock<[usize; 28]> = OnceLock::new();
+
+fn ensure_pad_indices_cached(arena: &Arena) {
+    SOCCAR_BIG_INDICES.get_or_init(|| {
+        let indices = get_sorted_pad_indices(arena, true);
+        indices.try_into().expect("Expected 6 big pads in Soccar")
+    });
+
+    SOCCAR_SMALL_INDICES.get_or_init(|| {
+        let indices = get_sorted_pad_indices(arena, false);
+        indices.try_into().expect("Expected 28 small pads in Soccar")
+    });
+}
+
 /// Events and Global State.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -87,27 +127,14 @@ pub struct CArenaEvents {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct CArenaState {
     pub ball: CBallState,
     pub cars: [CCarState; 8],
-    pub pads: [f32; 34],
+    pub boost_pads: CBoostPadState,
     pub num_cars: u32,
     pub tick_count: u64,
     pub events: CArenaEvents,
-}
-
-impl Default for CArenaState {
-    fn default() -> Self {
-        Self {
-            ball: Default::default(),
-            cars: [Default::default(); 8],
-            pads: [0.0; 34],
-            num_cars: 0,
-            tick_count: 0,
-            events: Default::default(),
-        }
-    }
 }
 
 /// Input Struct.
@@ -294,6 +321,18 @@ pub extern "C" fn rs_arena_get_arena_state(
         state.cars[i].is_flipping = car_state.is_flipping;
         state.cars[i].is_demoed = car_state.is_demoed;
         state.cars[i].is_supersonic = car_state.is_supersonic;
+    }
+
+    // Pack boost pads.
+    ensure_pad_indices_cached(arena);
+    let big_indices: &[usize; 6] = SOCCAR_BIG_INDICES.get().unwrap();
+    let small_indices: &[usize; 28] = SOCCAR_SMALL_INDICES.get().unwrap();
+
+    for (i, &pad_idx) in big_indices.iter().enumerate() {
+        state.boost_pads.big[i] = arena.get_boost_pad_state(pad_idx).cooldown;
+    }
+    for (i, &pad_idx) in small_indices.iter().enumerate() {
+        state.boost_pads.small[i] = arena.get_boost_pad_state(pad_idx).cooldown;
     }
 
     // Pack events.

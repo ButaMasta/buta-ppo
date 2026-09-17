@@ -49,7 +49,7 @@ int main() {
         }
 
         ffi::step_arena(arena);
-        ffi::get_global_state(arena, state);
+        ffi::get_arena_state(arena, state);
 
         tick++;
         std::this_thread::sleep_for(std::chrono::milliseconds(8));

@@ -38,6 +38,11 @@ extern "C" {
         bool is_supersonic;
     };
 
+    struct rs_boost_pad_state {
+        float big[6];
+        float small[28];
+    };
+
     struct rs_arena_events {
         bool is_ball_scored;
         bool car_hit_ball[8];
@@ -48,7 +53,7 @@ extern "C" {
     struct rs_arena_state {
         rs_ball_state ball;
         rs_car_state cars[8];
-        float pads[34];
+        rs_boost_pad_state boost_pads;
         uint32_t num_cars;
         uint64_t tick_count;
         rs_arena_events events;
@@ -89,6 +94,7 @@ namespace buta_ppo::ffi {
 using PhysState = rs_phys_state;
 using BallState = rs_ball_state;
 using CarState = rs_car_state;
+using BoostPadState = rs_boost_pad_state;
 using ArenaEvents = rs_arena_events;
 using ArenaState = rs_arena_state;
 using CarControls = rs_car_controls;
