@@ -17,7 +17,7 @@ add_custom_target(cargo_build ALL
     COMMENT "Compiling Rust FFI cdylib via Cargo..."
 )
 
-add_compile_options(-Wall -Wextra -O3 -march=native)
+add_compile_options(-Wall -Wextra -O3 -march=native -pthread)
 
 # Define the C++ executable.
 add_executable(buta_ppo 
@@ -25,6 +25,8 @@ add_executable(buta_ppo
     src/env/rocketsim_env.cpp
     src/env/advanced_obs.cpp
     src/env/reward_manager.cpp
+    src/env/default_action.cpp
+    src/env/vec_env.cpp
 )
 
 # Expose include/ directory.

@@ -1,7 +1,7 @@
 // buta-ppo/src/env/advanced_obs.hpp
 
 /*
-*   Implementation is entirely based off of advanced obs used in rlgymppo-rs and GigaLearn.
+*   Implementation is entirely based off of advanced obs used in rlgymppo_rs and GigaLearn.
 */
 
 #pragma once

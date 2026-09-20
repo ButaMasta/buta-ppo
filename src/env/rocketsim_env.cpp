@@ -39,7 +39,7 @@ const std::vector<float>& RocketSimEnv::reset() {
     return obs_buffer_;
 }
 
-StepResult RocketSimEnv::step(const std::vector<int>& actions) {
+StepResult RocketSimEnv::step(const int* actions) {
     for (size_t i = 0; i < agents_.size(); i++) {
         ffi::CarControls controls = decode_action(actions[i]);
         ffi::set_car_controls(arena_, agents_[i].car_id, controls);
@@ -74,10 +74,8 @@ StepResult RocketSimEnv::step(const std::vector<int>& actions) {
 }
 
 // Helpers.
-ffi::CarControls RocketSimEnv::decode_action([[maybe_unused]] int action_idx) { // Maybe unused is temp here.
-    ffi::CarControls controls{};
-    // TODO: Map controls based on popular discrete action setups.
-    return controls;
+ffi::CarControls RocketSimEnv::decode_action(int action_idx) {
+    return action_parser_.get_action(action_idx);
 }
 
 }; // namespace buta_ppo::env

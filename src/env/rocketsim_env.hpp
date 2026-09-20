@@ -4,6 +4,7 @@
 #include "buta_ppo/ffi.h"
 #include "advanced_obs.hpp"
 #include "reward_manager.hpp"
+#include "default_action.hpp"
 #include <vector>
 #include <cstdint>
 
@@ -40,6 +41,7 @@ private:
 
     AdvancedObs obs_builder_;
     RewardManager reward_manager_;
+    DefaultAction action_parser_;
 
     // Helpers.
     ffi::CarControls decode_action(int action_idx);
@@ -47,7 +49,7 @@ private:
 public:
     explicit RocketSimEnv(
         int ticks_per_step = 8, 
-        size_t single_obs_size = 45,
+        size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}()
     );
 
@@ -58,7 +60,7 @@ public:
     const std::vector<float>& reset();
 
     // Step environment and update obs and reward buffers for collection.
-    StepResult step(const std::vector<int>& actions);
+    StepResult step(const int* actions);
 
     [[nodiscard]] size_t get_obs_size() const { return single_obs_size_; }
 };
