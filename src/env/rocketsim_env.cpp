@@ -70,7 +70,16 @@ StepResult RocketSimEnv::step(const int* actions) {
             reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_);
         }
 
-        if (arena_state_.events.is_ball_scored) {
+        // Terminal States.
+        if (std::any_of(arena_state_.events.car_hit_ball, arena_state_.events.car_hit_ball + 8, [](bool v) { return v; })) {
+            ticks_since_last_touch_ = 0;
+        } else {
+            ++ticks_since_last_touch_;
+        }
+
+        bool should_terminate = arena_state_.events.is_ball_scored || ticks_since_last_touch_ >= ticks_until_terminal_state_;
+        if (should_terminate) {
+            ticks_since_last_touch_ = 0;
             ticks_elapsed = i + 1;
             episode_terminated = true;
             break;

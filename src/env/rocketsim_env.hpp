@@ -47,6 +47,8 @@ private:
     int ticks_per_step_;
     size_t single_obs_size_;
     size_t action_space_size_;
+    static constexpr int ticks_until_terminal_state_ = 1200;
+    int ticks_since_last_touch_ = 0;
 
     AdvancedObs obs_builder_;
     RewardManager reward_manager_;

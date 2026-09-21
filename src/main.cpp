@@ -26,7 +26,7 @@ int main() {
 
     RunnerConfig config;
 
-    config.bot_name = "Porkchop";
+    config.bot_name = "default";
     config.render = true;
 
     config.num_envs = 256;
