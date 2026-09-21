@@ -57,7 +57,7 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
 
     if (max_steps >= 0 && !latest_file.empty()) {
         torch::load(actor_critic_, latest_file);
-        std::cout << "Resumed training from: " << latest_file << " (Lifetime Steps: " << max_steps << ")\n";
+        std::cout << "Latest Model Found: " << latest_file << " (Lifetime Steps: " << max_steps << ")\n";
         return max_steps;
     }
     
@@ -66,6 +66,13 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
 }
 
 void PPORunner::setup_dimensions_and_buffers() {
+
+    if (config_.render) {
+        config_.num_envs = 1;
+        config_.num_minibatches = 1;
+        config_.target_steps_per_update = config_.agents_per_env;
+    }
+
     total_agents_ = config_.num_envs * config_.agents_per_env;
 
     buffer_size_ = (config_.target_steps_per_update + total_agents_ - 1) / total_agents_;
@@ -80,7 +87,8 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.num_envs, 
         std::min(config_.num_envs, (size_t)std::thread::hardware_concurrency()), 
         config_.ticks_per_step, 
-        config_.agents_per_env
+        config_.agents_per_env,
+        config_.render
     );
 
     size_t obs_size = vec_env_->get_single_obs_size();
@@ -118,9 +126,7 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
     std::cout << "Model checkpoint saved to: " << path << std::endl;
 }
 
-void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
-    
-    global_step_ = load_latest_checkpoint(checkpoint_dir);
+void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
     
     auto reset_res = vec_env_->reset();
 
@@ -200,6 +206,39 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
     }
 
     save_checkpoint(checkpoint_dir);
+}
+
+void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
+    auto reset_res = vec_env_->reset();
+    torch::Tensor current_obs = reset_res.observations;
+    torch::Tensor current_masks = reset_res.action_masks;
+
+    std::cout << "Starting visualizer... Press Ctrl+C to stop." << std::endl;
+
+    while (!stop_flag) {
+        step_obs_gpu_.copy_(current_obs, true);
+        step_masks_gpu_.copy_(current_masks, true);
+
+        auto [actions_gpu, log_probs_gpu, values_gpu] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
+
+        actions_cpu_.copy_(actions_gpu, false);
+        
+        // vec_env_->step() will now naturally block for ~66ms while rendering smoothly
+        auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>()); 
+
+        current_obs = step_res.observations;
+        current_masks = step_res.action_masks;
+    }
+}
+
+void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
+    global_step_ = load_latest_checkpoint(checkpoint_dir);
+
+    if (config_.render) {
+        run_render(stop_flag);
+    } else {
+        run_training(num_updates, stop_flag, checkpoint_dir);
+    }
 }
 
 }; // namespace buta_ppo::rl

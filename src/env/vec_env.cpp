@@ -6,11 +6,11 @@
 
 namespace buta_ppo::env {
 
-VecEnv::VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step, size_t max_players_per_team)
+VecEnv::VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step, size_t max_players_per_team, bool render)
     : num_envs_(num_envs) {
     
     for (size_t i = 0; i < num_envs_; i++) {
-        auto env = std::make_unique<RocketSimEnv>(ticks_per_step, max_players_per_team);
+        auto env = std::make_unique<RocketSimEnv>(ticks_per_step, max_players_per_team, std::random_device{}(), render);
 
         // TODO: Account for more than just 1v1.
         // Starting with just 1v1.

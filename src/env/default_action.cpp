@@ -113,7 +113,9 @@ void DefaultAction::get_action_mask(const ffi::CarState& car_state, float* out_m
     bool has_boost = car_state.boost > 0.0f;
     
     // Check if the car's local Z (Up) vector is pointing sharply downward (-Z). Substitute for world contact normal.
-    bool is_turtled = car_state.is_on_ground && (car_state.phys.rot_mat[2][2] < -0.5f);
+    bool is_turtled = (!car_state.is_on_ground) && 
+                      (car_state.phys.rot_mat[2][2] < -0.2f) && 
+                      (car_state.phys.pos[2] < 50.0f);
     
     // Check if a jump/flip is possible.
     bool can_jump = car_state.has_flip_or_jump || is_turtled;

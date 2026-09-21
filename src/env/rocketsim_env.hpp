@@ -52,6 +52,8 @@ private:
     RewardManager reward_manager_;
     DefaultAction action_parser_;
 
+    bool render_;
+
     // Helpers.
     ffi::CarControls decode_action(int action_idx);
 
@@ -59,7 +61,8 @@ public:
     explicit RocketSimEnv(
         int ticks_per_step = 8, 
         size_t max_players_per_team = 3,
-        uint32_t seed = std::random_device{}()
+        uint32_t seed = std::random_device{}(),
+        bool render = false
     );
 
     // Add an agent to the env.

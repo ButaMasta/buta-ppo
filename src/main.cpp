@@ -27,6 +27,7 @@ int main() {
     RunnerConfig config;
 
     config.bot_name = "Porkchop";
+    config.render = true;
 
     config.num_envs = 256;
     config.agents_per_env = 2;

@@ -1,13 +1,15 @@
 // buta-ppo/src/env/rocketsim_env.hpp
 #include "rocketsim_env.hpp"
 #include <algorithm>
+#include <thread>
+#include <chrono>
 
 namespace buta_ppo::env {
 
 // Public methods.
-RocketSimEnv::RocketSimEnv(int ticks_per_step, size_t max_players_per_team, uint32_t seed)
-    : ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed) {
-    arena_ = ffi::create_arena(0);
+RocketSimEnv::RocketSimEnv(int ticks_per_step, size_t max_players_per_team, uint32_t seed, bool render)
+    : ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed), render_(render) {
+    arena_ = render ? ffi::create_arena_vis(0) : ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
     action_space_size_ = action_parser_.get_action_space_size();
 
@@ -58,6 +60,10 @@ StepResult RocketSimEnv::step(const int* actions) {
     for (int i = 0; i < ticks_per_step_; i++) {
         ffi::step_arena(arena_);
         ffi::get_arena_state(arena_, arena_state_);
+
+        if (render_) [[unlikely]] {
+            std::this_thread::sleep_for(std::chrono::microseconds(8333));
+        }
 
         // Calculate and accumulate rewards.
         for (size_t a = 0; a < agents_.size(); a++) {

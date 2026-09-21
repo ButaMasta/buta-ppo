@@ -58,7 +58,7 @@ private:
     void worker_loop(size_t worker_id, size_t start_idx, size_t end_idx);
     
 public:
-    VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step = 8, size_t max_players_per_team = 4);
+    VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step = 8, size_t max_players_per_team = 4, bool render = false);
     ~VecEnv();
 
     // NOTE: Do not read any rewards or dones after this call and before a step call as the data is stale.

@@ -13,6 +13,7 @@ namespace buta_ppo::rl {
 
 struct RunnerConfig {
     std::string bot_name = "default";
+    bool render = false;
 
     size_t num_envs = 256;
     size_t agents_per_env = 2;
@@ -49,6 +50,9 @@ private:
 
     void setup_dimensions_and_buffers();
     int64_t load_latest_checkpoint(const std::string& dir);
+    
+    void run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
+    void run_render(const std::atomic<bool>& stop_flag);
 
 public:
     explicit PPORunner(const RunnerConfig& config);
