@@ -6,11 +6,14 @@
 #include <memory>
 #include <atomic>
 #include <cstring>
+#include <string>
 
 
 namespace buta_ppo::rl {
 
 struct RunnerConfig {
+    std::string bot_name = "default";
+
     size_t num_envs = 256;
     size_t agents_per_env = 2;
     int ticks_per_step = 8;
@@ -42,13 +45,15 @@ private:
     torch::Tensor step_rewards_gpu_;
     torch::Tensor step_dones_gpu_;
 
+    int64_t global_step_{0};
+
     void setup_dimensions_and_buffers();
+    int64_t load_latest_checkpoint(const std::string& dir);
 
 public:
     explicit PPORunner(const RunnerConfig& config);
 
-    void save_checkpoint(const std::string& path) const;
-
+    void save_checkpoint(const std::string& dir) const;
     void run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
 };
 

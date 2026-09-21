@@ -4,6 +4,7 @@
 #include <csignal>
 #include <atomic>
 #include <iostream>
+#include <locale>
 
 namespace ffi = buta_ppo::ffi;
 using namespace buta_ppo::rl;
@@ -15,7 +16,7 @@ void handle_sigint(int) {
 }
 
 int main() {
-
+    std::cout.imbue(std::locale("en_US.utf8"));
     std::signal(SIGINT, handle_sigint);
 
     if (!ffi::init("assets/collision_meshes", true)) {
@@ -24,6 +25,8 @@ int main() {
     }
 
     RunnerConfig config;
+
+    config.bot_name = "Porkchop";
 
     config.num_envs = 256;
     config.agents_per_env = 2;

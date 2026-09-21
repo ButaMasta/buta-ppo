@@ -3,6 +3,9 @@
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 namespace buta_ppo::rl {
 
@@ -17,6 +20,49 @@ PPORunner::PPORunner(const RunnerConfig& config)
         std::cout << "CUDA not found. Defaulting to CPU." << std::endl;
     }
     setup_dimensions_and_buffers();
+}
+
+int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
+    if (!fs::exists(dir)) {
+        fs::create_directories(dir);
+        return 0;
+    }
+
+    std::string latest_file;
+    int64_t max_steps = -1;
+
+    // Scan directory for .pt files
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".pt") {
+            std::string filename = entry.path().stem().string();
+            
+            size_t delim_pos = filename.find_last_of('_');
+            if (delim_pos != std::string::npos) {
+                try {
+                    // Extract the string after the last '_' and convert to int64
+                    int64_t steps = std::stoll(filename.substr(delim_pos + 1));
+                    
+                    // Only load if the name prefix matches the config
+                    std::string prefix = filename.substr(0, delim_pos);
+                    if (prefix == config_.bot_name && steps > max_steps) {
+                        max_steps = steps;
+                        latest_file = entry.path().string();
+                    }
+                } catch (const std::exception&) {
+                    // Ignore any other files.
+                }
+            }
+        }
+    }
+
+    if (max_steps >= 0 && !latest_file.empty()) {
+        torch::load(actor_critic_, latest_file);
+        std::cout << "Resumed training from: " << latest_file << " (Lifetime Steps: " << max_steps << ")\n";
+        return max_steps;
+    }
+    
+    std::cout << "No valid checkpoints found for bot '" << config_.bot_name << "'. Starting fresh training.\n";
+    return 0;
 }
 
 void PPORunner::setup_dimensions_and_buffers() {
@@ -62,12 +108,20 @@ void PPORunner::setup_dimensions_and_buffers() {
     step_dones_gpu_ = torch::empty({(int64_t)total_agents_}, float_opts);
 }
 
-void PPORunner::save_checkpoint(const std::string& path) const {
+void PPORunner::save_checkpoint(const std::string& dir) const {
+    if (!fs::exists(dir)) {
+        fs::create_directories(dir);
+    }
+    
+    std::string path = dir + "/" + config_.bot_name + "_" + std::to_string(global_step_) + ".pt";
     torch::save(actor_critic_, path);
     std::cout << "Model checkpoint saved to: " << path << std::endl;
 }
 
 void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
+    
+    global_step_ = load_latest_checkpoint(checkpoint_dir);
+    
     auto reset_res = vec_env_->reset();
 
     for (int update = 1; update <= num_updates; ++update) {
@@ -106,6 +160,9 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
             current_obs = step_res.observations;
             current_masks = step_res.action_masks;
         }
+
+        // Successful rollout, increment global steps.
+        global_step_ += total_steps_per_update_;
         
         auto rollout_end = std::chrono::high_resolution_clock::now();
 
@@ -130,7 +187,8 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
         double total_sps = total_steps_per_update_ / update_time.count();
         double rollout_sps = total_steps_per_update_ / rollout_time.count();
 
-        std::cout << "Update: " << update
+        std::cout << "Update: " << update 
+                  << "\nLifetime Steps: " << global_step_
                   << "\n | Total SPS:   " << static_cast<int64_t>(total_sps)
                   << "\n |  | Rollout:  " << static_cast<int64_t>(rollout_sps)
                   << "\n | Time:        " << std::fixed << std::setprecision(2) << update_time.count() << "s"
@@ -141,7 +199,7 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
                   << "\n | Entropy:     " << metrics["entropy"] << std::endl;
     }
 
-    save_checkpoint(checkpoint_dir + "/model_final.pt");
+    save_checkpoint(checkpoint_dir);
 }
 
 }; // namespace buta_ppo::rl
