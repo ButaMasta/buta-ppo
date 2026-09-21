@@ -1,5 +1,6 @@
 // buta-ppo/src/env/rocketsim_env.hpp
 #include "rocketsim_env.hpp"
+#include "buta_ppo/ffi.h"
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -7,16 +8,21 @@
 namespace buta_ppo::env {
 
 // Public methods.
-RocketSimEnv::RocketSimEnv(int ticks_per_step, size_t max_players_per_team, uint32_t seed, bool render)
+RocketSimEnv::RocketSimEnv(const std::vector<ffi::Team>& match_layout, int ticks_per_step, size_t max_players_per_team, uint32_t seed, bool render)
     : ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed), render_(render) {
     arena_ = render ? ffi::create_arena_vis(0) : ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
     action_space_size_ = action_parser_.get_action_space_size();
 
+    // Fill teams
+    for (const ffi::Team team : match_layout) {
+        add_agent(team);
+    }
+
     // Setup Rewards.
     reward_manager_.add_reward(std::make_unique<VelocityToBallReward>(), 0.1f);
     reward_manager_.add_reward(std::make_unique<TouchBallReward>(), 1.0f);
-    reward_manager_.add_reward(std::make_unique<GoalReward>(), 10.0f);
+    reward_manager_.add_reward(std::make_unique<GoalReward>(), 100.0f);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {

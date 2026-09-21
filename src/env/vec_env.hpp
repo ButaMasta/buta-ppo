@@ -2,6 +2,7 @@
 #pragma once
 
 #include "rocketsim_env.hpp"
+#include <cstddef>
 #include <vector>
 #include <memory>
 #include <thread>
@@ -10,7 +11,15 @@
 #include <atomic>
 #include <torch/torch.h>
 
+namespace buta_ppo::rl {
+
+// Forward declaration.
+struct MatchDistribution;
+
+}; // namespace buta_ppo::rl
+
 namespace buta_ppo::env {
+
 
 struct BatchedResetResult {
     torch::Tensor observations;
@@ -27,7 +36,8 @@ struct BatchedStepResult {
 class VecEnv {
 private:
     size_t num_envs_;
-    size_t agents_per_env_;
+    std::vector<size_t> env_agent_counts_;
+    std::vector<size_t> env_agent_offsets_;
     size_t single_obs_size_;
     size_t action_space_size_;
     size_t total_agents_;
@@ -58,7 +68,7 @@ private:
     void worker_loop(size_t worker_id, size_t start_idx, size_t end_idx);
     
 public:
-    VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step = 8, size_t max_players_per_team = 4, bool render = false);
+    VecEnv(size_t num_envs, const std::vector<rl::MatchDistribution>& distributions, size_t num_threads, int ticks_per_step = 8, size_t max_players_per_team = 4, bool render = false);
     ~VecEnv();
 
     // NOTE: Do not read any rewards or dones after this call and before a step call as the data is stale.

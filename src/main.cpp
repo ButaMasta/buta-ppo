@@ -26,11 +26,16 @@ int main() {
 
     RunnerConfig config;
 
-    config.bot_name = "default";
-    config.render = true;
+    config.bot_name = "Porkchop";
+    config.render = false;
+
+    config.match_distributions = {
+        {1, 1, 0.70f},
+        {2, 2, 0.30f}
+    };
 
     config.num_envs = 256;
-    config.agents_per_env = 2;
+    config.num_threads = 12;
     config.ticks_per_step = 8;
 
     config.target_steps_per_update = 50'000;
@@ -48,7 +53,7 @@ int main() {
     config.ppo_cfg.target_kl = 0.015f;
 
     PPORunner runner(config);
-    runner.run(1000, g_stop_training, "checkpoints");
+    runner.run(1'000, g_stop_training, "checkpoints");
 
     return 0;
 }

@@ -70,10 +70,24 @@ void PPORunner::setup_dimensions_and_buffers() {
     if (config_.render) {
         config_.num_envs = 1;
         config_.num_minibatches = 1;
-        config_.target_steps_per_update = config_.agents_per_env;
     }
 
-    total_agents_ = config_.num_envs * config_.agents_per_env;
+    vec_env_ = std::make_unique<env::VecEnv>(
+        config_.num_envs, 
+        config_.match_distributions,
+        std::min(config_.num_envs, config_.num_threads), 
+        config_.ticks_per_step, 
+        config_.max_players_per_team,
+        config_.render
+    );
+
+    total_agents_ = vec_env_->get_total_agents();
+    size_t obs_size = vec_env_->get_single_obs_size();
+    size_t action_space_size = vec_env_->get_action_space_size();
+
+    if (config_.render) {
+        config_.target_steps_per_update = total_agents_;
+    }
 
     buffer_size_ = (config_.target_steps_per_update + total_agents_ - 1) / total_agents_;
     while ((buffer_size_ * total_agents_) % config_.num_minibatches != 0) {
@@ -82,17 +96,6 @@ void PPORunner::setup_dimensions_and_buffers() {
 
     total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * total_agents_);
     config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
-
-    vec_env_ = std::make_unique<env::VecEnv>(
-        config_.num_envs, 
-        std::min(config_.num_envs, (size_t)std::thread::hardware_concurrency()), 
-        config_.ticks_per_step, 
-        config_.agents_per_env,
-        config_.render
-    );
-
-    size_t obs_size = vec_env_->get_single_obs_size();
-    size_t action_space_size = vec_env_->get_action_space_size();
 
     config_.ac_cfg.obs_size = obs_size;
     config_.ac_cfg.action_size = action_space_size;

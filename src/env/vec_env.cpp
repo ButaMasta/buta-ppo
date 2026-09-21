@@ -1,29 +1,56 @@
 // buta-ppo/src/env/vec_env.cpp
 
 #include "vec_env.hpp"
+#include "buta_ppo/ffi.h"
+#include "env/rocketsim_env.hpp"
+#include "rl/ppo_runner.hpp"
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
+#include <memory>
+#include <random>
+#include <vector>
 
 namespace buta_ppo::env {
 
-VecEnv::VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step, size_t max_players_per_team, bool render)
-    : num_envs_(num_envs) {
+VecEnv::VecEnv(
+    size_t num_envs, 
+    const std::vector<rl::MatchDistribution>& distributions, 
+    size_t num_threads, 
+    int ticks_per_step, 
+    size_t max_players_per_team, 
+    bool render
+) : num_envs_(num_envs) {
     
-    for (size_t i = 0; i < num_envs_; i++) {
-        auto env = std::make_unique<RocketSimEnv>(ticks_per_step, max_players_per_team, std::random_device{}(), render);
+    auto env_counts = rl::compute_env_counts(num_envs_, distributions);
 
-        // TODO: Account for more than just 1v1.
-        // Starting with just 1v1.
-        env->add_agent(ffi::Team::Blue);
-        env->add_agent(ffi::Team::Orange);
+    envs_.reserve(num_envs_);
+    env_agent_counts_.resize(num_envs_);
+    env_agent_offsets_.resize(num_envs_);
 
-        envs_.push_back(std::move(env));
+    size_t current_agent_offset = 0;
+    size_t env_idx = 0;
+
+    for (size_t d = 0; d < distributions.size(); d++) {
+        const rl::MatchDistribution& dist = distributions[d];
+        size_t count_for_dist = env_counts[d];
+        std::vector<ffi::Team> layout = dist.to_team_layout();
+        size_t agents_in_layout = dist.total_players();
+
+        for (size_t c = 0; c < count_for_dist; c++) {
+            envs_.push_back(std::make_unique<RocketSimEnv>(
+                layout, ticks_per_step, max_players_per_team, std::random_device{}(), render
+            ));
+
+            env_agent_counts_[env_idx] = agents_in_layout;
+            env_agent_offsets_[env_idx] = current_agent_offset;
+
+            current_agent_offset += agents_in_layout;
+            env_idx++;
+        }
     }
 
-    // TODO: Account for uneven teams.
-    // Assume all envs are symmetrical for now.
-    agents_per_env_ = 2;
-    total_agents_ = num_envs_ * agents_per_env_;
+    total_agents_ = current_agent_offset;
     single_obs_size_ = envs_[0]->get_obs_size();
     action_space_size_ = envs_[0]->get_action_space_size();
 
@@ -82,20 +109,24 @@ void VecEnv::worker_loop([[maybe_unused]] size_t worker_id, size_t start_idx, si
         switch (current_worker_state_) {
         case WorkerState::RESET: {
             for (size_t i = start_idx; i < end_idx; i++) {
+                size_t agent_offset = env_agent_offsets_[i];
+
                 const auto& result = envs_[i]->reset();
 
-                size_t obs_offset = i * agents_per_env_ * single_obs_size_;
+                size_t obs_offset = agent_offset * single_obs_size_;
                 std::memcpy(batched_obs_.data_ptr<float>() + obs_offset, result.observations.data(), result.observations.size() * sizeof(float));
 
-                size_t action_mask_offset = i * agents_per_env_ * action_space_size_;
+                size_t action_mask_offset = agent_offset * action_space_size_;
                 std::memcpy(batched_action_masks_.data_ptr<float>() + action_mask_offset, result.action_masks.data(), result.action_masks.size() * sizeof(float));
             }
             break;
         }
         case WorkerState::STEP: {
             for (size_t i = start_idx; i < end_idx; ++i) {
+                size_t agent_offset = env_agent_offsets_[i];
+                size_t num_agents = env_agent_counts_[i];
                 
-                const int* env_actions_ptr = current_actions_ptr_ + (i * agents_per_env_);
+                const int* env_actions_ptr = current_actions_ptr_ + agent_offset;
 
                 StepResult result = envs_[i]->step(env_actions_ptr);
 
@@ -108,18 +139,18 @@ void VecEnv::worker_loop([[maybe_unused]] size_t worker_id, size_t start_idx, si
                     mask_src = &reset_res.action_masks;
                 }
 
-                size_t obs_offset = i * agents_per_env_ * single_obs_size_;
+                size_t obs_offset = agent_offset * single_obs_size_;
                 std::memcpy(batched_obs_.data_ptr<float>() + obs_offset, obs_src->data(), obs_src->size() * sizeof(float));
 
-                size_t action_mask_offset = i * agents_per_env_ * action_space_size_;
+                size_t action_mask_offset = agent_offset * action_space_size_;
                 std::memcpy(batched_action_masks_.data_ptr<float>() + action_mask_offset, mask_src->data(), mask_src->size() * sizeof(float));
 
-                size_t reward_offset = i * agents_per_env_;
+                size_t reward_offset = agent_offset;
                 std::memcpy(batched_rewards_.data_ptr<float>() + reward_offset, result.rewards.data(), result.rewards.size() * sizeof(float));
 
                 float done_val = result.is_done ? 1.0f : 0.0f;
-                for (size_t a = 0; a < agents_per_env_; ++a) {
-                    batched_dones_.data_ptr<float>()[i * agents_per_env_ + a] = done_val;
+                for (size_t a = 0; a < num_agents; ++a) {
+                    batched_dones_.data_ptr<float>()[agent_offset + a] = done_val;
                 }
             }
             break;

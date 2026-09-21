@@ -10,7 +10,12 @@ torch::nn::Sequential ActorCriticImpl::build_block(int64_t in_size, const std::v
     int64_t current_in = in_size;
 
     for (int64_t out_size : sizes) {
-        seq->push_back(torch::nn::Linear(current_in, out_size));
+        auto linear = torch::nn::Linear(current_in, out_size);
+
+        torch::nn::init::orthogonal_(linear->weight, std::sqrt(2.0));
+        torch::nn::init::constant_(linear->bias, 0.0);
+
+        seq->push_back(linear);
         if (use_ln) {
             seq->push_back(torch::nn::LayerNorm(torch::nn::LayerNormOptions({out_size})));
         }
@@ -43,7 +48,12 @@ ActorCriticImpl::ActorCriticImpl(const ActorCriticConfig& config) {
     }
 
     actor_head_ = register_module("actor_head", torch::nn::Linear(actor_out_size, config.action_size));
+    torch::nn::init::orthogonal_(actor_head_->weight, 0.01);
+    torch::nn::init::constant_(actor_head_->bias, 0.0);
+
     critic_head_ = register_module("critic_head", torch::nn::Linear(critic_out_size, 1));
+    torch::nn::init::orthogonal_(critic_head_->weight, 1.0);
+    torch::nn::init::constant_(critic_head_->bias, 0.0);
 }
 
 std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor obs) {
