@@ -41,6 +41,7 @@
 
 # Build directories
 build/
+build-debug/
 Build/
 build-*/
 
@@ -67,6 +68,7 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+checkpoints/*
 
 # Extra
 .vscode/

@@ -4,6 +4,13 @@ project(buta_ppo LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Find the Torch package using the provided path
+set(Torch_DIR "/home/buta/Dev/libtorch/share/cmake/Torch")
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
 # Define directories.
 set(RUST_BRIDGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rust_bridge)
 set(RUST_TARGET_DIR ${RUST_BRIDGE_DIR}/target/release)
@@ -17,7 +24,10 @@ add_custom_target(cargo_build ALL
     COMMENT "Compiling Rust FFI cdylib via Cargo..."
 )
 
+# Release
 add_compile_options(-Wall -Wextra -O3 -march=native -pthread)
+# Debug
+# add_compile_options(-Wall -Wextra -g -O0)
 
 # Define the C++ executable.
 add_executable(buta_ppo 
@@ -27,17 +37,20 @@ add_executable(buta_ppo
     src/env/reward_manager.cpp
     src/env/default_action.cpp
     src/env/vec_env.cpp
+    src/rl/rollout_buffer.cpp
+    src/rl/actor_critic.cpp
+    src/rl/ppo_trainer.cpp
+    src/rl/ppo_runner.cpp
 )
 
 # Expose include/ directory.
-target_include_directories(buta_ppo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(buta_ppo PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
 # Link the compiled Rust library.
-target_link_libraries(buta_ppo PRIVATE ${RUST_LIB})
+target_link_libraries(buta_ppo PRIVATE ${RUST_LIB} ${TORCH_LIBRARIES})
 
 # Ensure Cargo builds the Rust library.
 add_dependencies(buta_ppo cargo_build)
-
-# (Future) LibTorch Integration Placeholder
-# find_package(Torch REQUIRED)
-# target_link_libraries(buta_ppo PRIVATE "${TORCH_LIBRARIES}")

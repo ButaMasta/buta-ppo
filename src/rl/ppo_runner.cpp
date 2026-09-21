@@ -1,0 +1,147 @@
+// buta-ppo/src/rl/ppo_runner.hpp
+#include "ppo_runner.hpp"
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+
+namespace buta_ppo::rl {
+
+PPORunner::PPORunner(const RunnerConfig& config)
+    : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU) {
+    
+    if (torch::cuda::is_available()) {
+        std::cout << "CUDA detected. Running on GPU." << std::endl;
+        at::globalContext().setUserEnabledCuDNN(true);
+        at::globalContext().setBenchmarkCuDNN(true);
+    } else {
+        std::cout << "CUDA not found. Defaulting to CPU." << std::endl;
+    }
+    setup_dimensions_and_buffers();
+}
+
+void PPORunner::setup_dimensions_and_buffers() {
+    total_agents_ = config_.num_envs * config_.agents_per_env;
+
+    buffer_size_ = (config_.target_steps_per_update + total_agents_ - 1) / total_agents_;
+    while ((buffer_size_ * total_agents_) % config_.num_minibatches != 0) {
+        buffer_size_++;
+    }
+
+    total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * total_agents_);
+    config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
+
+    vec_env_ = std::make_unique<env::VecEnv>(
+        config_.num_envs, 
+        std::min(config_.num_envs, (size_t)std::thread::hardware_concurrency()), 
+        config_.ticks_per_step, 
+        config_.agents_per_env
+    );
+
+    size_t obs_size = vec_env_->get_single_obs_size();
+    size_t action_space_size = vec_env_->get_action_space_size();
+
+    config_.ac_cfg.obs_size = obs_size;
+    config_.ac_cfg.action_size = action_space_size;
+    
+    actor_critic_ = ActorCritic(config_.ac_cfg);
+    actor_critic_->to(device_);
+
+    trainer_ = std::make_unique<PPOTrainer>(config_.ppo_cfg, actor_critic_, device_);
+    
+    buffer_ = std::make_unique<RolloutBuffer>(
+        buffer_size_, total_agents_, obs_size, action_space_size, device_
+    );
+
+    auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU).pinned_memory(true);
+    actions_cpu_ = torch::empty({(int64_t)total_agents_}, cpu_int_opts);
+
+    auto float_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
+    step_obs_gpu_ = torch::empty({(int64_t)total_agents_, (int64_t)obs_size}, float_opts);
+    step_masks_gpu_ = torch::empty({(int64_t)total_agents_, (int64_t)action_space_size}, float_opts);
+    step_rewards_gpu_ = torch::empty({(int64_t)total_agents_}, float_opts);
+    step_dones_gpu_ = torch::empty({(int64_t)total_agents_}, float_opts);
+}
+
+void PPORunner::save_checkpoint(const std::string& path) const {
+    torch::save(actor_critic_, path);
+    std::cout << "Model checkpoint saved to: " << path << std::endl;
+}
+
+void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
+    auto reset_res = vec_env_->reset();
+
+    for (int update = 1; update <= num_updates; ++update) {
+
+        if (stop_flag) {
+            std::cout << "\nTraining interrupted by user. Stopping..." << std::endl;
+            break;
+        }
+
+        auto t_start = std::chrono::high_resolution_clock::now();
+        buffer_->reset();
+
+        torch::Tensor current_obs = reset_res.observations;
+        torch::Tensor current_masks = reset_res.action_masks;
+
+        auto rollout_start = std::chrono::high_resolution_clock::now();
+        
+        while (!buffer_->is_full()) {
+            step_obs_gpu_.copy_(current_obs, true);
+            step_masks_gpu_.copy_(current_masks, true);
+
+            auto [actions_gpu, log_probs_gpu, values_gpu] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
+
+            actions_cpu_.copy_(actions_gpu, false); // Blocking sync required for physics
+            
+            auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>());
+
+            step_rewards_gpu_.copy_(step_res.rewards, true);
+            step_dones_gpu_.copy_(step_res.dones, true);
+
+            buffer_->insert(
+                step_obs_gpu_, actions_gpu, step_masks_gpu_, 
+                step_rewards_gpu_, step_dones_gpu_, log_probs_gpu, values_gpu.squeeze(-1)
+            );
+
+            current_obs = step_res.observations;
+            current_masks = step_res.action_masks;
+        }
+        
+        auto rollout_end = std::chrono::high_resolution_clock::now();
+
+        // GAE & Optimize
+        step_obs_gpu_.copy_(current_obs, true);
+        torch::Tensor next_values;
+        {
+            torch::NoGradGuard no_grad;
+            auto [logits, values] = actor_critic_->forward(step_obs_gpu_);
+            next_values = values.squeeze(-1);
+        }
+
+        buffer_->compute_returns_and_advantages(next_values, step_dones_gpu_);
+        auto metrics = trainer_->train_step(*buffer_);
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+        
+        std::chrono::duration<double> update_time = t_end - t_start;
+        std::chrono::duration<double> rollout_time = rollout_end - rollout_start;
+        double train_time = update_time.count() - rollout_time.count();
+
+        double total_sps = total_steps_per_update_ / update_time.count();
+        double rollout_sps = total_steps_per_update_ / rollout_time.count();
+
+        std::cout << "Update: " << update
+                  << "\n | Total SPS:   " << static_cast<int64_t>(total_sps)
+                  << "\n |  | Rollout:  " << static_cast<int64_t>(rollout_sps)
+                  << "\n | Time:        " << std::fixed << std::setprecision(2) << update_time.count() << "s"
+                  << "\n |  | Rollout:  " << rollout_time.count() << "s"
+                  << "\n |  | Train:    " << train_time << "s"
+                  << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics["policy_loss"]
+                  << "\n | Value Loss:  " << metrics["value_loss"]
+                  << "\n | Entropy:     " << metrics["entropy"] << std::endl;
+    }
+
+    save_checkpoint(checkpoint_dir + "/model_final.pt");
+}
+
+}; // namespace buta_ppo::rl

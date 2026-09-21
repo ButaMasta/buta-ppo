@@ -25,11 +25,15 @@ VecEnv::VecEnv(size_t num_envs, size_t num_threads, int ticks_per_step, size_t m
     agents_per_env_ = 2;
     total_agents_ = num_envs_ * agents_per_env_;
     single_obs_size_ = envs_[0]->get_obs_size();
+    action_space_size_ = envs_[0]->get_action_space_size();
 
-    // Reserve space for buffers.
-    batched_obs_.resize(total_agents_ * single_obs_size_, 0.0f);
-    batched_rewards_.resize(total_agents_, 0.0f);
-    batched_dones_.resize(num_envs_, 0);
+    // Allocate Tensor Buffers
+    auto pinned_opts = torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32);
+
+    batched_obs_ = torch::zeros({(int64_t)total_agents_, (int64_t)single_obs_size_}, pinned_opts);
+    batched_action_masks_ = torch::zeros({(int64_t)total_agents_, (int64_t)action_space_size_}, pinned_opts);
+    batched_rewards_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
+    batched_dones_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
 
     // Create thread pool.
     size_t actual_threads = std::min(num_threads, num_envs_);
@@ -78,9 +82,13 @@ void VecEnv::worker_loop([[maybe_unused]] size_t worker_id, size_t start_idx, si
         switch (current_worker_state_) {
         case WorkerState::RESET: {
             for (size_t i = start_idx; i < end_idx; i++) {
-                const auto& env_obs = envs_[i]->reset();
-                size_t mem_offset = i * agents_per_env_ * single_obs_size_;
-                std::memcpy(&batched_obs_[mem_offset], env_obs.data(), env_obs.size() * sizeof(float));
+                const auto& result = envs_[i]->reset();
+
+                size_t obs_offset = i * agents_per_env_ * single_obs_size_;
+                std::memcpy(batched_obs_.data_ptr<float>() + obs_offset, result.observations.data(), result.observations.size() * sizeof(float));
+
+                size_t action_mask_offset = i * agents_per_env_ * action_space_size_;
+                std::memcpy(batched_action_masks_.data_ptr<float>() + action_mask_offset, result.action_masks.data(), result.action_masks.size() * sizeof(float));
             }
             break;
         }
@@ -91,13 +99,28 @@ void VecEnv::worker_loop([[maybe_unused]] size_t worker_id, size_t start_idx, si
 
                 StepResult result = envs_[i]->step(env_actions_ptr);
 
+                const std::vector<float>* obs_src = &result.observations;
+                const std::vector<float>* mask_src = &result.action_masks;
+
+                if (result.is_done) {
+                    auto reset_res = envs_[i]->reset();
+                    obs_src = &reset_res.observations;
+                    mask_src = &reset_res.action_masks;
+                }
+
                 size_t obs_offset = i * agents_per_env_ * single_obs_size_;
-                std::memcpy(&batched_obs_[obs_offset], result.observations.data(), result.observations.size() * sizeof(float));
+                std::memcpy(batched_obs_.data_ptr<float>() + obs_offset, obs_src->data(), obs_src->size() * sizeof(float));
+
+                size_t action_mask_offset = i * agents_per_env_ * action_space_size_;
+                std::memcpy(batched_action_masks_.data_ptr<float>() + action_mask_offset, mask_src->data(), mask_src->size() * sizeof(float));
 
                 size_t reward_offset = i * agents_per_env_;
-                std::memcpy(&batched_rewards_[reward_offset], result.rewards.data(), result.rewards.size() * sizeof(float));
+                std::memcpy(batched_rewards_.data_ptr<float>() + reward_offset, result.rewards.data(), result.rewards.size() * sizeof(float));
 
-                batched_dones_[i] = result.is_done ? 1 : 0;
+                float done_val = result.is_done ? 1.0f : 0.0f;
+                for (size_t a = 0; a < agents_per_env_; ++a) {
+                    batched_dones_.data_ptr<float>()[i * agents_per_env_ + a] = done_val;
+                }
             }
             break;
         }
@@ -113,7 +136,7 @@ void VecEnv::worker_loop([[maybe_unused]] size_t worker_id, size_t start_idx, si
     }
 }
 
-const std::vector<float>& VecEnv::reset() {
+BatchedResetResult VecEnv::reset() {
     {
         std::lock_guard<std::mutex> lock(start_mutex_);
         current_worker_state_ = WorkerState::RESET;
@@ -126,13 +149,13 @@ const std::vector<float>& VecEnv::reset() {
     cv_done_.wait(lock, [this] { return pending_tasks_ == 0; });
 
     current_worker_state_ = WorkerState::IDLE;
-    return batched_obs_;
+    return { batched_obs_, batched_action_masks_ };
 }
 
-BatchedStepResult VecEnv::step(const std::vector<int>& batched_actions) {
+BatchedStepResult VecEnv::step(const int* batched_actions) {
     {
         std::lock_guard<std::mutex> lock(start_mutex_);
-        current_actions_ptr_ = batched_actions.data();
+        current_actions_ptr_ = batched_actions;
         current_worker_state_ = WorkerState::STEP;
         pending_tasks_ = workers_.size();
         batch_count_++; // New batch work is ready.
@@ -145,7 +168,7 @@ BatchedStepResult VecEnv::step(const std::vector<int>& batched_actions) {
     current_worker_state_ = WorkerState::IDLE;
     current_actions_ptr_ = nullptr;
 
-    return { batched_obs_, batched_rewards_, batched_dones_ };
+    return { batched_obs_, batched_action_masks_, batched_rewards_, batched_dones_ };
 }
 
 }; // namespace buta_ppo::env

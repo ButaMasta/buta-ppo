@@ -8,14 +8,20 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
-#include <cstdint>
+#include <torch/torch.h>
 
 namespace buta_ppo::env {
 
+struct BatchedResetResult {
+    torch::Tensor observations;
+    torch::Tensor action_masks;
+};
+
 struct BatchedStepResult {
-    const std::vector<float>& observations;
-    const std::vector<float>& rewards;
-    const std::vector<uint8_t>& dones;
+    torch::Tensor observations;
+    torch::Tensor action_masks;
+    torch::Tensor rewards;
+    torch::Tensor dones;
 };
 
 class VecEnv {
@@ -23,13 +29,15 @@ private:
     size_t num_envs_;
     size_t agents_per_env_;
     size_t single_obs_size_;
+    size_t action_space_size_;
     size_t total_agents_;
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
 
-    std::vector<float> batched_obs_;
-    std::vector<float> batched_rewards_;
-    std::vector<uint8_t> batched_dones_;
+    torch::Tensor batched_obs_;
+    torch::Tensor batched_action_masks_;
+    torch::Tensor batched_rewards_;
+    torch::Tensor batched_dones_;
 
     std::vector<std::thread> workers_;
     std::atomic<bool> terminate_pool_{false};
@@ -54,12 +62,13 @@ public:
     ~VecEnv();
 
     // NOTE: Do not read any rewards or dones after this call and before a step call as the data is stale.
-    const std::vector<float>& reset();
+    BatchedResetResult reset();
 
-    BatchedStepResult step(const std::vector<int>& batched_actions);
+    BatchedStepResult step(const int* batched_actions);
 
     [[nodiscard]] size_t get_total_agents() const { return total_agents_; };
     [[nodiscard]] size_t get_single_obs_size() const { return single_obs_size_; };
+    [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; };
 };
 
 }; // namespace buta_ppo::env

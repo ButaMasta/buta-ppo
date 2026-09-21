@@ -10,9 +10,16 @@
 
 namespace buta_ppo::env {
 
+struct ResetResult {
+    const std::vector<float>& observations;
+    const std::vector<float>& action_masks;
+};
+
 struct StepResult {
     // Every agent's observations.
     const std::vector<float>& observations;
+    // Every agent's action_masks.
+    const std::vector<float>& action_masks;
     // Every agent's accumulated rewards.
     const std::vector<float>& rewards;
     // If the step is complete, a terminal state was triggered.
@@ -34,10 +41,12 @@ private:
     std::vector<AgentMeta> agents_;
 
     std::vector<float> obs_buffer_;
+    std::vector<float> action_mask_buffer_;
     std::vector<float> reward_buffer_;
 
     int ticks_per_step_;
     size_t single_obs_size_;
+    size_t action_space_size_;
 
     AdvancedObs obs_builder_;
     RewardManager reward_manager_;
@@ -57,12 +66,13 @@ public:
     uint32_t add_agent(ffi::Team team);
 
     // Reset the episode.
-    const std::vector<float>& reset();
+    ResetResult reset();
 
     // Step environment and update obs and reward buffers for collection.
     StepResult step(const int* actions);
 
     [[nodiscard]] size_t get_obs_size() const { return single_obs_size_; }
+    [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; }
 };
 
 }; // namespace buta_ppo::env

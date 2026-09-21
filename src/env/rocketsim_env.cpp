@@ -9,6 +9,7 @@ RocketSimEnv::RocketSimEnv(int ticks_per_step, size_t max_players_per_team, uint
     : ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed) {
     arena_ = ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
+    action_space_size_ = action_parser_.get_action_space_size();
 
     // Setup Rewards.
     reward_manager_.add_reward(std::make_unique<VelocityToBallReward>(), 0.1f);
@@ -22,12 +23,13 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
 
     // Resize buffers for the new agent.
     obs_buffer_.resize(agents_.size() * single_obs_size_, 0.0f);
+    action_mask_buffer_.resize(agents_.size() * action_space_size_, 0.0f);
     reward_buffer_.resize(agents_.size(), 0.0f);
 
     return car_id;
 }
 
-const std::vector<float>& RocketSimEnv::reset() {
+ResetResult RocketSimEnv::reset() {
     ffi::reset_to_random_kickoff(arena_);
     ffi::get_arena_state(arena_, arena_state_);
     reward_manager_.reset(arena_state_);
@@ -35,8 +37,12 @@ const std::vector<float>& RocketSimEnv::reset() {
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
         obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
+
+        const ffi::CarState& car_state = arena_state_.cars[agents_[i].car_id];
+        float* agent_action_mask_ptr = action_mask_buffer_.data() + (i * action_space_size_);
+        action_parser_.get_action_mask(car_state, agent_action_mask_ptr);
     }
-    return obs_buffer_;
+    return { obs_buffer_, action_mask_buffer_ };
 }
 
 StepResult RocketSimEnv::step(const int* actions) {
@@ -68,9 +74,13 @@ StepResult RocketSimEnv::step(const int* actions) {
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
         obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
+
+        const ffi::CarState& car_state = arena_state_.cars[agents_[i].car_id];
+        float* agent_action_mask_ptr = action_mask_buffer_.data() + (i * action_space_size_);
+        action_parser_.get_action_mask(car_state, agent_action_mask_ptr);
     }
 
-    return { obs_buffer_, reward_buffer_, episode_terminated, ticks_elapsed };
+    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, ticks_elapsed };
 }
 
 // Helpers.
