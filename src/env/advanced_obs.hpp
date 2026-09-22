@@ -70,10 +70,6 @@ private:
 
     void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert_team, bool invert_x) const;
     void write_empty_car(float*& ptr) const;
-    // void write_vec3_norm(float*& ptr, const float* vec, bool invert, float cx, float cy, float cz) const;
-    // void write_vec3_norm(float*& ptr, const float* vec, bool invert, float c) const;
-    // void write_vec3_dir(float*& ptr, const float* vec, bool invert) const;
-    // void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert) const;
 };
 
 } // namespace buta_ppo::env
