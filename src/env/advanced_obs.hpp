@@ -25,6 +25,13 @@ public:
     static constexpr size_t BOOST_PADS_BIG_COUNT = 6;
     static constexpr size_t BOOST_PADS_SMALL_COUNT = 28;
 
+    // This is unfortunately the easiest way to do X-axis boost pad mirroring efficiently.
+    static constexpr size_t BIG_PAD_INVERT_X[BOOST_PADS_BIG_COUNT] = {1, 0, 3, 2, 5, 4};
+    static constexpr size_t SMALL_PAD_INVERT_X[BOOST_PADS_SMALL_COUNT] = {
+        0, 2, 1, 4, 3, 5, 7, 6, 9, 8, 11, 10, 12, 14, 13, 15, 
+        17, 16, 19, 18, 21, 20, 22, 24, 23, 26, 25, 27
+    };
+
     static constexpr float POS_COEF_X = 1.0f / 4096.0f;
     static constexpr float POS_COEF_Y = 1.0f / 6000.0f;
     static constexpr float POS_COEF_Z = 1.0f / 2044.0f;
@@ -40,8 +47,8 @@ public:
     // Returns total floats per agent.
     [[nodiscard]] size_t get_obs_size() const;
 
-    // Writes observation in-place.
-    void build_obs(
+    // Writes observation in-place. Returns X-Mirror status of this state.
+    bool build_obs(
         const ffi::ArenaState& arena_state,
         const std::vector<AgentMeta>& agents,
         uint32_t agent_idx,
@@ -56,11 +63,17 @@ private:
     std::vector<uint32_t> opponent_indices_;
 
     // Normalization & writer helpers.
-    void write_vec3_norm(float*& ptr, const float* vec, bool invert, float cx, float cy, float cz) const;
-    void write_vec3_norm(float*& ptr, const float* vec, bool invert, float c) const;
-    void write_vec3_dir(float*& ptr, const float* vec, bool invert) const;
-    void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert) const;
+    void write_pos(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
+    void write_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
+    void write_ang_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
+    void write_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
+
+    void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert_team, bool invert_x) const;
     void write_empty_car(float*& ptr) const;
+    // void write_vec3_norm(float*& ptr, const float* vec, bool invert, float cx, float cy, float cz) const;
+    // void write_vec3_norm(float*& ptr, const float* vec, bool invert, float c) const;
+    // void write_vec3_dir(float*& ptr, const float* vec, bool invert) const;
+    // void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert) const;
 };
 
 } // namespace buta_ppo::env

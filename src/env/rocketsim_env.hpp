@@ -43,6 +43,7 @@ private:
     std::vector<float> obs_buffer_;
     std::vector<float> action_mask_buffer_;
     std::vector<float> reward_buffer_;
+    std::vector<bool> agent_x_inverted_;
 
     int ticks_per_step_;
     size_t single_obs_size_;

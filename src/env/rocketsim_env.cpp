@@ -33,6 +33,7 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
     obs_buffer_.resize(agents_.size() * single_obs_size_, 0.0f);
     action_mask_buffer_.resize(agents_.size() * action_space_size_, 0.0f);
     reward_buffer_.resize(agents_.size(), 0.0f);
+    agent_x_inverted_.resize(agents_.size(), false);
 
     return car_id;
 }
@@ -44,7 +45,7 @@ ResetResult RocketSimEnv::reset() {
 
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
-        obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
+        agent_x_inverted_[i] = obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
 
         const ffi::CarState& car_state = arena_state_.cars[agents_[i].car_id];
         float* agent_action_mask_ptr = action_mask_buffer_.data() + (i * action_space_size_);
@@ -56,6 +57,13 @@ ResetResult RocketSimEnv::reset() {
 StepResult RocketSimEnv::step(const int* actions) {
     for (size_t i = 0; i < agents_.size(); i++) {
         ffi::CarControls controls = decode_action(actions[i]);
+
+        if (agent_x_inverted_[i]) {
+            controls.steer  *= -1.0f;
+            controls.yaw    *= -1.0f;
+            controls.roll   *= -1.0f;
+        }
+
         ffi::set_car_controls(arena_, agents_[i].car_id, controls);
     }
 
@@ -94,7 +102,7 @@ StepResult RocketSimEnv::step(const int* actions) {
 
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
-        obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
+        agent_x_inverted_[i] = obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
 
         const ffi::CarState& car_state = arena_state_.cars[agents_[i].car_id];
         float* agent_action_mask_ptr = action_mask_buffer_.data() + (i * action_space_size_);
