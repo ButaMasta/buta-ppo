@@ -5,6 +5,7 @@
 #include "advanced_obs.hpp"
 #include "reward_manager.hpp"
 #include "default_action.hpp"
+#include <unordered_map>
 #include <vector>
 #include <cstdint>
 
@@ -78,6 +79,10 @@ public:
     // Step environment and update obs and reward buffers for collection.
     StepResult step(const int* actions);
 
+    void update_reward_telemetry() {
+        reward_manager_.update_telemetry();
+    }
+    [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_telemetry() const { return reward_manager_.get_telemetry(); }
     [[nodiscard]] size_t get_obs_size() const { return single_obs_size_; }
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; }
 };

@@ -20,9 +20,9 @@ RocketSimEnv::RocketSimEnv(const std::vector<ffi::Team>& match_layout, int ticks
     }
 
     // Setup Rewards.
-    reward_manager_.add_reward(std::make_unique<VelocityToBallReward>(), 0.1f);
-    reward_manager_.add_reward(std::make_unique<TouchBallReward>(), 1.0f);
-    reward_manager_.add_reward(std::make_unique<GoalReward>(), 100.0f);
+    reward_manager_.add_reward("VelocityToBall", std::make_unique<VelocityToBallReward>(), 0.1f);
+    reward_manager_.add_reward("TouchBall", std::make_unique<TouchBallReward>(), 1.0f);
+    reward_manager_.add_reward("Goal", std::make_unique<GoalReward>(), 100.0f);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {

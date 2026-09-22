@@ -6,6 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Grab dependency for logging.
+find_package(Protobuf REQUIRED)
+find_package(absl REQUIRED)
+include(FetchContent)
+FetchContent_Declare(
+    tensorboard_logger
+    GIT_REPOSITORY      https://github.com/RustingSword/tensorboard_logger.git
+    GIT_TAG             master
+)
+FetchContent_MakeAvailable(tensorboard_logger)
+
 # Find the Torch package using the provided path
 set(Torch_DIR "/home/buta/Dev/libtorch/share/cmake/Torch")
 find_package(Torch REQUIRED)
@@ -50,7 +61,15 @@ target_include_directories(buta_ppo PRIVATE
 )
 
 # Link the compiled Rust library.
-target_link_libraries(buta_ppo PRIVATE ${RUST_LIB} ${TORCH_LIBRARIES})
+target_link_libraries(buta_ppo PRIVATE 
+    ${RUST_LIB} 
+    ${TORCH_LIBRARIES} 
+    tensorboard_logger
+    protobuf::libprotobuf
+    absl::log_internal_check_op
+)
+
+target_compile_options(buta_ppo PRIVATE "-I${Protobuf_INCLUDE_DIRS}")
 
 # Ensure Cargo builds the Rust library.
 add_dependencies(buta_ppo cargo_build)

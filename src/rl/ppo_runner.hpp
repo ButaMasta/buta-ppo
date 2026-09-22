@@ -3,6 +3,7 @@
 #include "ppo_trainer.hpp"
 #include "rollout_buffer.hpp"
 #include "env/vec_env.hpp"
+#include "tensorboard_logger.h"
 #include <cstddef>
 #include <stdexcept>
 #include <torch/torch.h>
@@ -117,6 +118,8 @@ private:
     torch::Tensor step_dones_gpu_;
 
     int64_t global_step_{0};
+
+    std::unique_ptr<TensorBoardLogger> logger_;
 
     void setup_dimensions_and_buffers();
     int64_t load_latest_checkpoint(const std::string& dir);

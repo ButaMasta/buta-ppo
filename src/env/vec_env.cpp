@@ -202,4 +202,19 @@ BatchedStepResult VecEnv::step(const int* batched_actions) {
     return { batched_obs_, batched_action_masks_, batched_rewards_, batched_dones_ };
 }
 
+void VecEnv::update_reward_breakdown() {
+    for (auto& [name, val] : aggregate_reward_breakdown_) {
+        val = 0.0;
+    }
+
+    for (const auto& env : envs_) {
+        env->update_reward_telemetry();
+        const auto& env_breakdown = env->get_reward_telemetry();
+
+        for (const auto& [name, val] : env_breakdown) {
+            aggregate_reward_breakdown_[name] += val;
+        }
+    }
+}
+
 }; // namespace buta_ppo::env

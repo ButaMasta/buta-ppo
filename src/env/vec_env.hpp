@@ -3,6 +3,8 @@
 
 #include "rocketsim_env.hpp"
 #include <cstddef>
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 #include <thread>
@@ -44,6 +46,8 @@ private:
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
 
+    std::unordered_map<std::string, double> aggregate_reward_breakdown_;
+
     torch::Tensor batched_obs_;
     torch::Tensor batched_action_masks_;
     torch::Tensor batched_rewards_;
@@ -76,6 +80,9 @@ public:
 
     BatchedStepResult step(const int* batched_actions);
 
+    void update_reward_breakdown();
+
+    [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
     [[nodiscard]] size_t get_total_agents() const { return total_agents_; };
     [[nodiscard]] size_t get_single_obs_size() const { return single_obs_size_; };
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; };

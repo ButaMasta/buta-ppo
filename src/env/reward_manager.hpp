@@ -2,9 +2,10 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
+#include <string>
+#include <unordered_map>
 #include <vector>
 #include <memory>
-#include <cmath>
 
 namespace buta_ppo::env {
 
@@ -42,21 +43,25 @@ public:
     float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
 };
 
+struct RewardEntry {
+    std::string name;
+    std::unique_ptr<RewardFunction> function;
+    float weight;
+    double accumulated_value;
+};
+
 class RewardManager {
 private:
-    struct RewardEntry {
-        std::unique_ptr<RewardFunction> function;
-        float weight;
-    };
-
     std::vector<RewardEntry> rewards_;
     ffi::ArenaState previous_state_;
+
+    std::unordered_map<std::string, double> telemetry_breakdown_;
 
 public:
     RewardManager() = default;
 
     // Register a reward function with a specific weight.
-    void add_reward(std::unique_ptr<RewardFunction> reward_func, float weight = 1.0f);
+    void add_reward(std::string name, std::unique_ptr<RewardFunction> reward_func, float weight = 1.0f);
 
     // Resets all reward trackers and caches the initial state.
     void reset(const ffi::ArenaState& initial_state);
@@ -66,6 +71,14 @@ public:
 
     // Updates the previous state. Called after all rewards for a tick have been fetched.
     void update_previous_state(const ffi::ArenaState& arena_state);
+
+    // Updates the internal telemetry map with new values.
+    void update_telemetry();
+
+    // Fetches the telemetry pointer. Only call AFTER `update_telemetry`.
+    [[nodiscard]] const std::unordered_map<std::string, double>& get_telemetry() const {
+        return telemetry_breakdown_;
+    }
 };
 
 } // namespace buta_ppo::env

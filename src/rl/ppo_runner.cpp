@@ -1,9 +1,11 @@
 // buta-ppo/src/rl/ppo_runner.hpp
 #include "ppo_runner.hpp"
+#include "tensorboard_logger.h"
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
+#include <memory>
 
 namespace fs = std::filesystem;
 
@@ -19,6 +21,10 @@ PPORunner::PPORunner(const RunnerConfig& config)
     } else {
         std::cout << "CUDA not found. Defaulting to CPU." << std::endl;
     }
+
+    std::string log_file = "logs/" + config_.bot_name + ".tfevents";
+    logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str());
+
     setup_dimensions_and_buffers();
 }
 
@@ -172,6 +178,16 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         // Successful rollout, increment global steps.
         global_step_ += total_steps_per_update_;
+        float mean_step_reward = buffer_->rewards_.mean().item<float>();
+        logger_->add_scalar("Reward/Mean_Step", global_step_, mean_step_reward);
+
+        vec_env_->update_reward_breakdown();
+        const auto& reward_breakdown = vec_env_->get_reward_breakdown();
+
+        for (const auto& [name, total_weighted_reward] : reward_breakdown) {
+            double avg_per_step = total_weighted_reward / static_cast<double>(total_steps_per_update_);
+            logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(avg_per_step));
+        }
         
         auto rollout_end = std::chrono::high_resolution_clock::now();
 
@@ -195,6 +211,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         double total_sps = total_steps_per_update_ / update_time.count();
         double rollout_sps = total_steps_per_update_ / rollout_time.count();
+
+        logger_->add_scalar("Performance/Total_SPS", global_step_, total_sps);
+        logger_->add_scalar("Performance/Rollout_SPS", global_step_, rollout_sps);
+        logger_->add_scalar("Loss/Policy", global_step_, metrics["policy_loss"]);
+        logger_->add_scalar("Loss/Value", global_step_, metrics["value_loss"]);
+        logger_->add_scalar("Loss/Entropy", global_step_, metrics["entropy"]);
 
         std::cout << "Update: " << update 
                   << "\nLifetime Steps: " << global_step_
