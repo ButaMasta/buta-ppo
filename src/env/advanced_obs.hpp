@@ -2,6 +2,8 @@
 
 /*
 *   Implementation is entirely based off of advanced obs used in rlgymppo_rs and GigaLearn.
+*
+* Modified to include X-Mirroring by default.
 */
 
 #pragma once
@@ -44,10 +46,23 @@ public:
 
     explicit AdvancedObs(size_t max_players_per_team = 4, uint32_t seed = std::random_device{}());
 
-    // Returns total floats per agent.
+    /**
+     * @brief Get the size of the obs.
+     * 
+     * @return size_t - The size of the obs.
+     */
     [[nodiscard]] size_t get_obs_size() const;
 
-    // Writes observation in-place. Returns X-Mirror status of this state.
+    /**
+     * @brief Writes observation in-place. Returns X-Mirror status of this state.
+     * 
+     * @param arena_state - The state of the arena containing all values from the FFI needed for obs construction.
+     * @param agents - A list of all the agents in this environment and their corresponding information.
+     * @param agent_idx - The agent to build the obs for.
+     * @param out_buffer - The float buffer to store the output of the obs. In this case it is a pointer to within a larger buffer.
+     * @return true - If the agent IS viewing a X-mirrored state. 
+     * @return false - If the agent IS NOT viewing a X-mirrored state.
+     */
     bool build_obs(
         const ffi::ArenaState& arena_state,
         const std::vector<AgentMeta>& agents,
@@ -59,10 +74,12 @@ private:
     size_t max_players_per_team_;
     std::mt19937 rng_;
 
+    // These are the lightweight buffers to shuffle when inserting cars into the obs.
     std::vector<uint32_t> teammate_indices_;
     std::vector<uint32_t> opponent_indices_;
 
     // Normalization & writer helpers.
+    // All of these methods will, as their name says, write their values into the obs pointer and increments it.
     void write_pos(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_ang_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;

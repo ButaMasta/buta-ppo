@@ -30,6 +30,7 @@ private:
     torch::nn::Linear actor_head_{nullptr};
     torch::nn::Linear critic_head_{nullptr};
 
+    // Helper method to build the libtorch neural network layers and connect them.
     torch::nn::Sequential build_block(int64_t in_size, const std::vector<int64_t>& sizes, bool use_ln);
 
 public:
@@ -37,10 +38,14 @@ public:
 
     // Takes in the observation tensor and returns {logits, values}
     std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor obs);
+
+    // Gets the actions, log probs, and values for a given obs and its corresponding action mask.
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> get_action_and_value(
         torch::Tensor obs,
         torch::Tensor action_masks
     );
+
+    // Gets the log probs of actions, entropy of those probs, and values for a given obs, action space, and action masks.
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> evaluate_actions(
         torch::Tensor obs,
         torch::Tensor actions,

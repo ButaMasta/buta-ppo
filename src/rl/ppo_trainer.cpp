@@ -55,7 +55,6 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
             torch::Tensor mb_advantages = b_advantages.index_select(0, mb_inds);
             torch::Tensor mb_returns = b_returns.index_select(0, mb_inds);
 
-            // TODO: Implement actor actions decoding.
             auto [new_log_probs, entropy, new_values] = actor_critic_->evaluate_actions(mb_obs, mb_actions, mb_action_masks);
 
             // Policy Loss

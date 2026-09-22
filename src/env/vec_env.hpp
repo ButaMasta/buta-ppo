@@ -22,12 +22,17 @@ struct MatchDistribution;
 
 namespace buta_ppo::env {
 
-
+/**
+ * @brief Batched result from resetting envs.
+ */
 struct BatchedResetResult {
     torch::Tensor observations;
     torch::Tensor action_masks;
 };
 
+/**
+ * @brief Batched result for stepping envs.
+ */
 struct BatchedStepResult {
     torch::Tensor observations;
     torch::Tensor action_masks;
@@ -35,6 +40,9 @@ struct BatchedStepResult {
     torch::Tensor dones;
 };
 
+/**
+ * @brief The core class housing the multi-threaded logic for RocketSim environments.
+ */
 class VecEnv {
 private:
     size_t num_envs_;
@@ -69,17 +77,39 @@ private:
     enum class WorkerState { IDLE, RESET, STEP };
     WorkerState current_worker_state_ = WorkerState::IDLE;
 
+    /**
+     * @brief The multi-threaded method that all threads spawned run.
+     * 
+     * @param worker_id - The ID of this thread.
+     * @param start_idx - The start idx of this worker's working area. (Which envs it is responsible for)
+     * @param end_idx - The end idx of this worker's working area.
+     */
     void worker_loop(size_t worker_id, size_t start_idx, size_t end_idx);
     
 public:
     VecEnv(size_t num_envs, const std::vector<rl::MatchDistribution>& distributions, size_t num_threads, int ticks_per_step = 8, size_t max_players_per_team = 4, bool render = false);
     ~VecEnv();
 
-    // NOTE: Do not read any rewards or dones after this call and before a step call as the data is stale.
+    /**
+     * @brief Reset the vectorized environements.
+     * 
+     * NOTE: Do not read any rewards or dones after this call and before a step call as the data is stale.
+     * 
+     * @return BatchedResetResult - The result of the reset.
+     */
     BatchedResetResult reset();
 
+    /**
+     * @brief Step the entrire worker threadpool and retrieve the batched result.
+     * 
+     * @param batched_actions - The actions to dispatch to the workers.
+     * @return BatchedStepResult - The entire result of all worker's step.
+     */
     BatchedStepResult step(const int* batched_actions);
 
+    /**
+     * @brief Update the aggregated rewards for telemetry logging.
+     */
     void update_reward_breakdown();
 
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };

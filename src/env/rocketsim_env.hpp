@@ -11,11 +11,18 @@
 
 namespace buta_ppo::env {
 
+/**
+ * @brief Struct housing the result of resetting the env.
+ */
 struct ResetResult {
     const std::vector<float>& observations;
     const std::vector<float>& action_masks;
 };
 
+/**
+ * @brief Struct housing the result of a step.
+ * 
+ */
 struct StepResult {
     // Every agent's observations.
     const std::vector<float>& observations;
@@ -29,11 +36,17 @@ struct StepResult {
     int ticks_elapsed;
 };
 
+/**
+ * @brief Helper struct to consolodate agent info that is needed in numerous locations.
+ */
 struct AgentMeta {
     uint32_t car_id;
     ffi::Team team;
 };
 
+/**
+ * @brief Core class encapsulating all logic for an environment.
+ */
 class RocketSimEnv {
 private:
     ffi::ArenaPtr arena_;
@@ -58,7 +71,12 @@ private:
 
     bool render_;
 
-    // Helpers.
+    /**
+     * @brief Wrapper method to grab the car controls for an action given by the action parser in this env.
+     * 
+     * @param action_idx - The action parser's discrete action lookup table idx.
+     * @return ffi::CarControls - The decoded car controls for this action.
+     */
     ffi::CarControls decode_action(int action_idx);
 
 public:
@@ -70,18 +88,36 @@ public:
         bool render = false
     );
 
-    // Add an agent to the env.
+    /**
+     * @brief Add an agent to the env.
+     * 
+     * @param team - The team to assign them.
+     * @return uint32_t - The agent's ID
+     */
     uint32_t add_agent(ffi::Team team);
 
-    // Reset the episode.
+    /**
+     * @brief Reset the episode.
+     * 
+     * @return ResetResult - The result of the reset in the new arena state.
+     */
     ResetResult reset();
 
-    // Step environment and update obs and reward buffers for collection.
+    /**
+     * @brief Step environment and update obs and reward buffers for collection.
+     * 
+     * @param actions - Pointer to the actions to be taken in this step for the agents.
+     * @return StepResult - The result of the step.
+     */
     StepResult step(const int* actions);
 
+    /**
+     * @brief Update the internal reward manager's telemetry.
+     */
     void update_reward_telemetry() {
         reward_manager_.update_telemetry();
     }
+
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_telemetry() const { return reward_manager_.get_telemetry(); }
     [[nodiscard]] size_t get_obs_size() const { return single_obs_size_; }
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; }

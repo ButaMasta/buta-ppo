@@ -5,6 +5,9 @@
 
 namespace buta_ppo::rl {
 
+/**
+ * @brief The core class for housing the rollout buffer of collected experience to train on.
+ */
 class RolloutBuffer {
 private:
     size_t buffer_size_;
@@ -31,10 +34,22 @@ public:
 
     RolloutBuffer(size_t buffer_size, size_t num_agents, size_t obs_size, size_t action_space_size, torch::Device device);
 
-    // Resets internal step counter for a new rollout.
+    /**
+     * @brief Resets internal step counter for a new rollout.
+     */
     void reset();
 
-    // Inserts a single step of data into the buffer at the current step index.
+    /**
+     * @brief Inserts a single step of data into the buffer at the current step index.
+     * 
+     * @param obs - The observations for this step.
+     * @param actions - The viable actions for this step.
+     * @param action_masks - The action masks for this step.
+     * @param rewards - The rewards collected for this step.
+     * @param dones - The done values for this step.
+     * @param log_probs - The log probs for this step.
+     * @param values - The critic values for this step.
+     */
     void insert(
         const torch::Tensor& obs,
         const torch::Tensor& actions,
@@ -45,7 +60,14 @@ public:
         const torch::Tensor& values
     );
 
-    // Calculates the GAE and Returns after the rollout phase.
+    /**
+     * @brief Calculates the GAE and Returns after the rollout phase.
+     * 
+     * @param last_values - The previous critic values.
+     * @param last_dones - The previous done values.
+     * @param gamma - The gamma to use in the GAE formula.
+     * @param gae_lambda - The lambda to use in the GAE formula.
+     */
     void compute_returns_and_advantages(
         const torch::Tensor& last_values,
         const torch::Tensor& last_dones,
