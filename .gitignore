@@ -69,6 +69,7 @@ vcpkg_installed/
 Testing/
 .cache/
 checkpoints/*
+logs/*
 
 # Extra
 .vscode/
