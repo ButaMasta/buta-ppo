@@ -4,6 +4,10 @@
 #include "actor_critic.hpp"
 #include "rollout_buffer.hpp"
 #include <torch/torch.h>
+#include <ATen/autocast_mode.h>
+#include <ATen/cuda/CUDAGraph.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <ATen/cuda/CUDAContext.h>
 
 namespace buta_ppo::rl {
 
@@ -24,6 +28,26 @@ struct PPOConfig {
     float critic_lr = 3e-4f;
 };
 
+struct BFloat16AutocastGuard {
+    bool prev_enabled;
+    c10::ScalarType prev_dtype;
+
+    BFloat16AutocastGuard() {
+        prev_enabled = at::autocast::is_autocast_enabled(torch::kCUDA);
+        prev_dtype = at::autocast::get_autocast_dtype(torch::kCUDA);
+
+        at::autocast::set_autocast_enabled(torch::kCUDA, true);
+        at::autocast::set_autocast_dtype(torch::kCUDA, torch::kBFloat16);
+    }
+
+    ~BFloat16AutocastGuard() {
+        at::autocast::set_autocast_enabled(torch::kCUDA, prev_enabled);
+        at::autocast::set_autocast_dtype(torch::kCUDA, prev_dtype);
+
+        at::autocast::clear_cache();
+    }
+};
+
 /**
  * @brief Core training class that encapsulates the model and updating it according to collected experience.
  */
@@ -37,6 +61,26 @@ private:
     // Mini-batch shuffling.
     torch::Tensor batch_indices_;
 
+    // CUDA Graph buffers.
+    at::cuda::CUDAGraph graph_;
+    bool graph_captured_ = false;
+
+    // Graph inputs.
+    torch::Tensor static_mb_obs_;
+    torch::Tensor static_mb_actions_;
+    torch::Tensor static_mb_action_masks_;
+    torch::Tensor static_mb_old_log_probs_;
+    torch::Tensor static_mb_advantages_;
+    torch::Tensor static_mb_returns_;
+
+    // Graph outputs.
+    torch::Tensor static_policy_loss_;
+    // torch::Tensor static_approx_kl_; // Omitted temporarily. May add back.
+    torch::Tensor static_value_loss_;
+    torch::Tensor static_entropy_;
+
+    void graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& parameters, float max_norm);
+
 public:
     PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device);
 
@@ -47,6 +91,8 @@ public:
      * @return std::unordered_map<std::string, float> - Metrics.
      */
     std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
+
+    void execute_minibatch_graph_logic();
 };
 
 }; // namespace buta_ppo::rl

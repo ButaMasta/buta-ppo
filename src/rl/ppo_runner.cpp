@@ -203,14 +203,17 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             next_values = values.squeeze(-1);
         }
 
+        auto gae_start = std::chrono::high_resolution_clock::now();
         buffer_->compute_returns_and_advantages(next_values, step_dones_gpu_);
+        auto gae_end = std::chrono::high_resolution_clock::now();
         auto metrics = trainer_->train_step(*buffer_);
 
         auto t_end = std::chrono::high_resolution_clock::now();
         
         std::chrono::duration<double> update_time = t_end - t_start;
         std::chrono::duration<double> rollout_time = rollout_end - rollout_start;
-        double train_time = update_time.count() - rollout_time.count();
+        std::chrono::duration<double> gae_time = gae_end - gae_start;
+        double train_time = update_time.count() - rollout_time.count() - gae_time.count();
 
         double total_sps = total_steps_per_update_ / update_time.count();
         double rollout_sps = total_steps_per_update_ / rollout_time.count();
@@ -225,8 +228,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\nLifetime Steps: " << global_step_
                   << "\n | Total SPS:   " << static_cast<int64_t>(total_sps)
                   << "\n |  | Rollout:  " << static_cast<int64_t>(rollout_sps)
-                  << "\n | Time:        " << std::fixed << std::setprecision(2) << update_time.count() << "s"
+                  << "\n | Time:        " << std::fixed << std::setprecision(4) << update_time.count() << "s"
                   << "\n |  | Rollout:  " << rollout_time.count() << "s"
+                  << "\n |  | GAE:      " << gae_time.count() << "s"
                   << "\n |  | Train:    " << train_time << "s"
                   << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics["policy_loss"]
                   << "\n | Value Loss:  " << metrics["value_loss"]

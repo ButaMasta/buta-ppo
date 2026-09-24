@@ -109,7 +109,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluat
     auto [logits, values] = forward(obs);
 
     torch::Tensor masked_logits = torch::where(
-        action_masks.to(torch::kBool),
+        action_masks,
         logits,
         torch::tensor(-1e8f, logits.options())
     );

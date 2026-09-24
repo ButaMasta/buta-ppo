@@ -29,7 +29,7 @@ int main() {
     RunnerConfig config;
 
     config.bot_name = "Porkchop";
-    config.render = true;
+    config.render = false;
 
     config.match_distributions = {
         {1, 1, 1.0f}
@@ -56,7 +56,7 @@ int main() {
     config.ppo_cfg.policy_lr = 3e-4f;
     config.ppo_cfg.critic_lr = 3e-4f;
     config.ppo_cfg.entropy_coef = 0.035f;
-    config.ppo_cfg.epochs = 3;
+    config.ppo_cfg.epochs = 2;
     config.ppo_cfg.target_kl = 0.015f;
 
     PPORunner runner(config);

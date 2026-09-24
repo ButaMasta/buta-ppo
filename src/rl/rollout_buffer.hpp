@@ -28,6 +28,15 @@ public:
     torch::Tensor log_probs_;
     torch::Tensor values_;
 
+    // CPU storage.
+    torch::Tensor cpu_rewards_;
+    torch::Tensor cpu_values_;
+    torch::Tensor cpu_dones_;
+    torch::Tensor cpu_advantages_;
+    torch::Tensor cpu_last_val_;
+    torch::Tensor cpu_last_dones_;
+    std::vector<float> last_gae_;
+
     // Computed tensors.
     torch::Tensor advantages_;
     torch::Tensor returns_;

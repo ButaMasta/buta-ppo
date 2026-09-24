@@ -25,6 +25,18 @@ RolloutBuffer::RolloutBuffer(size_t buffer_size, size_t num_agents, size_t obs_s
 
     advantages_     = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
     returns_        = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
+
+    // Allocate CPU tensors.
+    auto pinned_opts = torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32).pinned_memory(true);
+    cpu_rewards_    = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
+    cpu_values_     = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
+    cpu_dones_      = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
+    cpu_advantages_ = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
+
+    cpu_last_val_   = torch::zeros({(int64_t)num_agents_}, pinned_opts);
+    cpu_last_dones_   = torch::zeros({(int64_t)num_agents_}, pinned_opts);
+
+    last_gae_.resize(num_agents_, 0.0f);
 }
 
 void RolloutBuffer::reset() {
@@ -61,32 +73,43 @@ void RolloutBuffer::compute_returns_and_advantages(
     float gamma,
     float gae_lambda
 ) {
-    torch::Tensor last_gae_lam = torch::zeros({(int64_t)num_agents_}, torch::TensorOptions().device(device_).dtype(torch::kFloat32));
+    // Transfer to CPU for GAE.
+    cpu_rewards_.copy_(rewards_, true);
+    cpu_values_.copy_(values_, true);
+    cpu_dones_.copy_(dones_, true);
+    cpu_last_val_.copy_(last_values, true);
+    cpu_last_dones_.copy_(last_dones, true);
 
-    int64_t max_step = static_cast<int64_t>(buffer_size_);
+    torch::cuda::synchronize();
+    
+    float* r_ptr = cpu_rewards_.data_ptr<float>();
+    float* v_ptr = cpu_values_.data_ptr<float>();
+    float* d_ptr = cpu_dones_.data_ptr<float>();
+    float* adv_ptr = cpu_advantages_.data_ptr<float>();
+    float* lv_ptr = cpu_last_val_.data_ptr<float>();
+    float* ld_ptr = cpu_last_dones_.data_ptr<float>();
+    
+    int64_t n_steps = buffer_size_;
+    int64_t n_agents = num_agents_;
 
-    for (int64_t step = max_step - 1; step >= 0; --step) {
-        torch::Tensor next_non_terminal;
-        torch::Tensor next_values;
-
-        if (step == max_step - 1) {
-            next_non_terminal = 1.0f - last_dones;
-            next_values = last_values;
-        } else {
-            next_non_terminal = 1.0f - dones_[step + 1];
-            next_values = values_[step + 1];
+    std::fill(last_gae_.begin(), last_gae_.end(), 0.0f);
+    
+    // Compute GAE.
+    for (int64_t step = n_steps - 1; step >= 0; --step) {
+        for (int64_t agent = 0; agent < n_agents; ++agent) {
+            int64_t idx = step * n_agents + agent;
+            
+            float next_val = (step == n_steps - 1) ? lv_ptr[agent] : v_ptr[idx + n_agents];
+            float next_non_term = (step == n_steps - 1) ? (1.0f - ld_ptr[agent]) : (1.0f - d_ptr[idx + n_agents]);
+            
+            float delta = r_ptr[idx] + gamma * next_val * next_non_term - v_ptr[idx];
+            last_gae_[agent] = delta + gamma * gae_lambda * next_non_term * last_gae_[agent];
+            adv_ptr[idx] = last_gae_[agent];
         }
-
-        // TD Error (delta): r + gamma * V(s_{t+1}) * (1 - done) - V(s_t)
-        torch::Tensor delta = rewards_[step] + gamma * next_values * next_non_terminal - values_[step];
-
-        // GAE: delta + gamma * lambda * (1 - done) * last_gae
-        last_gae_lam = delta + gamma * gae_lambda * next_non_terminal * last_gae_lam;
-
-        advantages_[step].copy_(last_gae_lam);
     }
-
-    // Advantages + Critic's prediction.
+    
+    // Transfer GAE back to GPU.
+    advantages_.copy_(cpu_advantages_, true);
     returns_ = advantages_ + values_;
 }
 
