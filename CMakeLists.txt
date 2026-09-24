@@ -48,6 +48,7 @@ add_executable(buta_ppo
     src/env/reward_manager.cpp
     src/env/default_action.cpp
     src/env/vec_env.cpp
+    src/env/state_setter.cpp
     src/rl/rollout_buffer.cpp
     src/rl/actor_critic.cpp
     src/rl/ppo_trainer.cpp

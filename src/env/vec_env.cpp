@@ -15,14 +15,15 @@ namespace buta_ppo::env {
 
 VecEnv::VecEnv(
     size_t num_envs, 
-    const std::vector<rl::MatchDistribution>& distributions, 
+    const std::vector<rl::MatchDistribution>& match_distributions, 
+    const std::vector<env::StateSetterDistribution>& setter_distributions, 
     size_t num_threads, 
     int ticks_per_step, 
     size_t max_players_per_team, 
     bool render
 ) : num_envs_(num_envs) {
     
-    auto env_counts = rl::compute_env_counts(num_envs_, distributions);
+    auto env_counts = rl::compute_env_counts(num_envs_, match_distributions);
 
     envs_.reserve(num_envs_);
     env_agent_counts_.resize(num_envs_);
@@ -31,15 +32,20 @@ VecEnv::VecEnv(
     size_t current_agent_offset = 0;
     size_t env_idx = 0;
 
-    for (size_t d = 0; d < distributions.size(); d++) {
-        const rl::MatchDistribution& dist = distributions[d];
+    for (size_t d = 0; d < match_distributions.size(); d++) {
+        const rl::MatchDistribution& dist = match_distributions[d];
         size_t count_for_dist = env_counts[d];
         std::vector<ffi::Team> layout = dist.to_team_layout();
         size_t agents_in_layout = dist.total_players();
 
         for (size_t c = 0; c < count_for_dist; c++) {
             envs_.push_back(std::make_unique<RocketSimEnv>(
-                layout, ticks_per_step, max_players_per_team, std::random_device{}(), render
+                layout, 
+                setter_distributions,
+                ticks_per_step, 
+                max_players_per_team, 
+                std::random_device{}(), 
+                render
             ));
 
             env_agent_counts_[env_idx] = agents_in_layout;

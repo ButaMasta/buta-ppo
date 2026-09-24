@@ -87,7 +87,15 @@ private:
     void worker_loop(size_t worker_id, size_t start_idx, size_t end_idx);
     
 public:
-    VecEnv(size_t num_envs, const std::vector<rl::MatchDistribution>& distributions, size_t num_threads, int ticks_per_step = 8, size_t max_players_per_team = 4, bool render = false);
+    VecEnv(
+        size_t num_envs, 
+        const std::vector<rl::MatchDistribution>& match_distributions,
+        const std::vector<StateSetterDistribution>& setter_distributions,
+        size_t num_threads, 
+        int ticks_per_step = 8, 
+        size_t max_players_per_team = 4, 
+        bool render = false
+    );
     ~VecEnv();
 
     /**

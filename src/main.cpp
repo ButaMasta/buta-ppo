@@ -1,5 +1,6 @@
 // buta-ppo/src/main.cpp
 #include "rl/ppo_runner.hpp"
+#include "env/state_setter.hpp"
 #include <iostream>
 #include <csignal>
 #include <atomic>
@@ -8,6 +9,7 @@
 
 namespace ffi = buta_ppo::ffi;
 using namespace buta_ppo::rl;
+using namespace buta_ppo::env;
 
 std::atomic<bool> g_stop_training{false};
 
@@ -27,11 +29,16 @@ int main() {
     RunnerConfig config;
 
     config.bot_name = "Porkchop";
-    config.render = false;
+    config.render = true;
 
     config.match_distributions = {
-        {1, 1, 0.70f},
-        {2, 2, 0.30f}
+        {1, 1, 1.0f}
+    };
+
+    config.setter_distributions = {
+        {DefaultKickoffSetter(), 0.40f},
+        {RandomStateSetter(true, true, true), 0.30f},
+        {RandomStateSetter(true, true, false), 0.30f}
     };
 
     config.num_envs = 256;
@@ -53,7 +60,7 @@ int main() {
     config.ppo_cfg.target_kl = 0.015f;
 
     PPORunner runner(config);
-    runner.run(1'000, g_stop_training, "checkpoints");
+    runner.run(5'000, g_stop_training, "checkpoints");
 
     return 0;
 }

@@ -23,7 +23,9 @@ PPORunner::PPORunner(const RunnerConfig& config)
     }
 
     std::string log_file = "logs/" + config_.bot_name + ".tfevents";
-    logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str());
+    TensorBoardLoggerOptions logger_options_{};
+    logger_options_.resume_ = true;
+    logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options_);
 
     setup_dimensions_and_buffers();
 }
@@ -81,6 +83,7 @@ void PPORunner::setup_dimensions_and_buffers() {
     vec_env_ = std::make_unique<env::VecEnv>(
         config_.num_envs, 
         config_.match_distributions,
+        config_.setter_distributions,
         std::min(config_.num_envs, config_.num_threads), 
         config_.ticks_per_step, 
         config_.max_players_per_team,

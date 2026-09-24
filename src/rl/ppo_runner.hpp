@@ -3,6 +3,7 @@
 #include "ppo_trainer.hpp"
 #include "rollout_buffer.hpp"
 #include "env/vec_env.hpp"
+#include "env/state_setter.hpp"
 #include "tensorboard_logger.h"
 #include <cstddef>
 #include <stdexcept>
@@ -64,6 +65,8 @@ struct RunnerConfig {
     std::vector<MatchDistribution> match_distributions = {
         {1, 1, 1.0f}
     };
+    // MUST BE SET BY USER.
+    std::vector<env::StateSetterDistribution> setter_distributions;
     size_t num_envs = 256;
     size_t num_threads = 12;
     size_t max_players_per_team = 3;

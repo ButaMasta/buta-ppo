@@ -8,8 +8,13 @@
 namespace buta_ppo::env {
 
 // Public methods.
-RocketSimEnv::RocketSimEnv(const std::vector<ffi::Team>& match_layout, int ticks_per_step, size_t max_players_per_team, uint32_t seed, bool render)
-    : ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed), render_(render) {
+RocketSimEnv::RocketSimEnv(
+    const std::vector<ffi::Team>& match_layout, 
+    const std::vector<StateSetterDistribution>& setters, 
+    int ticks_per_step, size_t max_players_per_team, 
+    uint32_t seed, 
+    bool render
+) : setters_(setters), ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed), render_(render) {
     arena_ = render ? ffi::create_arena_vis(0) : ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
     action_space_size_ = action_parser_.get_action_space_size();
@@ -19,10 +24,18 @@ RocketSimEnv::RocketSimEnv(const std::vector<ffi::Team>& match_layout, int ticks
         add_agent(team);
     }
 
+    // Construct state setter dist.
+    std::vector<double> weights;
+    weights.reserve(setters_.size());
+    for (const auto& dist : setters_) {
+        weights.push_back(dist.weight);
+    }
+    setter_selector_ = std::discrete_distribution<size_t>(weights.begin(), weights.end());
+
     // Setup Rewards.
     reward_manager_.add_reward("VelocityToBall", std::make_unique<VelocityToBallReward>(), 0.1f);
     reward_manager_.add_reward("TouchBall", std::make_unique<TouchBallReward>(), 1.0f);
-    reward_manager_.add_reward("Goal", std::make_unique<GoalReward>(), 100.0f);
+    reward_manager_.add_reward("Goal", std::make_unique<GoalReward>(), 200.0f);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {
@@ -39,8 +52,8 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
 }
 
 ResetResult RocketSimEnv::reset() {
-    ffi::reset_to_random_kickoff(arena_);
-    ffi::get_arena_state(arena_, arena_state_);
+    size_t chosen_idx = setter_selector_(rng_);
+    setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     reward_manager_.reset(arena_state_);
 
     for (size_t i = 0; i < agents_.size(); i++) {
