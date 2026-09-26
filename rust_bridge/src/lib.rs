@@ -6,7 +6,7 @@ use rocketsim::{
     Arena, ArenaEvent, BallState, Car, 
     CarBodyConfig, CarControls, CarInfo, 
     CarState, GameMode, PhysState, Team,
-    BoostPadConfig,
+    BoostPadConfig
 };
 use rocketsim_vis::ArenaVisExt;
 
@@ -195,7 +195,7 @@ pub extern "C" fn rs_is_initialized() -> bool {
 #[no_mangle]
 pub extern "C" fn rs_arena_create_vis(game_mode_idx: i32) -> *mut Arena {
     // Map the integer to the RocketSim enum. Defaulting to Soccar (0).
-    let game_mode = match game_mode_idx {
+    let game_mode: GameMode = match game_mode_idx {
         0 => GameMode::Soccar,
         1 => GameMode::Hoops,
         2 => GameMode::Heatseeker,
