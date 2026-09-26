@@ -1,4 +1,0 @@
-[submodule "submodules/RocketSim"]
-	path = submodules/RocketSim
-	url = git@github.com:ZealanL/RocketSim.git
-	branch = v3-rust
