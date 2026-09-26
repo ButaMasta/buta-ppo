@@ -1,9 +1,5 @@
 // buta-ppo/src/env/advanced_obs.cpp
 
-/*
-*   Implementation is entirely based off of advanced obs used in rlgymppo_rs and GigaLearn.
-*/
-
 #include "advanced_obs.hpp"
 #include "rocketsim_env.hpp" // For AgentMeta
 #include <algorithm>
@@ -18,7 +14,7 @@ AdvancedObs::AdvancedObs(size_t max_players_per_team, uint32_t seed)
 }
 
 size_t AdvancedObs::get_obs_size() const {
-    return BALL_OBS + BOOST_PAD_OBS + (CAR_OBS * max_players_per_team_ * 2);
+    return BALL_OBS + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * max_players_per_team_ * 2 - 1);
 }
 
 void AdvancedObs::write_pos(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
@@ -54,11 +50,21 @@ void AdvancedObs::write_dir(float*& ptr, const float* vec, bool invert_team, boo
     *ptr++ = vec[2];
 }
 
-void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert_team, bool invert_x) const {
+void AdvancedObs::write_right_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
+    float x_mult = invert_team ? -1.0f : 1.0f;
+    float y_mult = (invert_team ? -1.0f : 1.0f) * (invert_x ? -1.0f : 1.0f);
+    float z_mult = invert_x ? -1.0f : 1.0f;
+    *ptr++ = vec[0] * x_mult;
+    *ptr++ = vec[1] * y_mult;
+    *ptr++ = vec[2] * z_mult;
+}
+
+void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x, bool is_agent) const {
     const auto& car = arena_state.cars[target_car_id];
+    size_t obs_size = is_agent ? AGENT_CAR_OBS : OTHER_CAR_OBS;
 
     if (car.is_demoed) {
-        for (size_t i = 0; i < CAR_OBS - 1; i++) {
+        for (size_t i = 0; i < obs_size - 1; i++) {
             *ptr++ = 0.0f;
         }
         *ptr++ = car.demo_respawn_timer * DEMO_COEF;
@@ -67,9 +73,30 @@ void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uin
 
     const auto& phys = car.phys;
     write_pos(ptr, phys.pos, invert_team, invert_x);
+
+    if (!is_agent) {
+        float rel_pos[3] = {
+            phys.pos[0] - agent_pos[0],
+            phys.pos[1] - agent_pos[1],
+            phys.pos[2] - agent_pos[2]
+        };
+        write_pos(ptr, rel_pos, invert_team, invert_x);
+    }
+
     write_dir(ptr, phys.rot_mat[0], invert_team, invert_x);
+    write_right_dir(ptr, phys.rot_mat[1], invert_team, invert_x);
     write_dir(ptr, phys.rot_mat[2], invert_team, invert_x);
     write_vel(ptr, phys.vel, invert_team, invert_x);
+
+    if (!is_agent) {
+        float rel_vel[3] = {
+            phys.vel[0] - agent_vel[0],
+            phys.vel[1] - agent_vel[1],
+            phys.vel[2] - agent_vel[2]
+        };
+        write_vel(ptr, rel_vel, invert_team, invert_x);
+    }
+
     write_ang_vel(ptr, phys.ang_vel, invert_team, invert_x);
 
     *ptr++ = car.boost * BOOST_COEF;
@@ -82,7 +109,7 @@ void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uin
 }
 
 void AdvancedObs::write_empty_car(float*& ptr) const {
-    for (size_t i = 0; i < CAR_OBS; i++) {
+    for (size_t i = 0; i < OTHER_CAR_OBS; i++) {
         *ptr++ = 0.0f;
     }
 }
@@ -96,9 +123,13 @@ bool AdvancedObs::build_obs(
     const AgentMeta& agent = agents[agent_idx];
     float* ptr = out_buffer;
 
+    const auto& agent_phys = arena_state.cars[agent.car_id].phys;
+    const float* agent_pos = agent_phys.pos;
+    const float* agent_vel = agent_phys.vel;
+
     bool invert_team = (agent.team == ffi::Team::Orange);
 
-    float perceived_x = arena_state.cars[agent.car_id].phys.pos[0] * (invert_team ? -1.0f : 1.0f);
+    float perceived_x = agent_pos[0] * (invert_team ? -1.0f : 1.0f);
     bool invert_x = perceived_x < 0.0f;
 
     // Ball State.
@@ -125,7 +156,7 @@ bool AdvancedObs::build_obs(
     }
 
     // Agent Car.
-    write_car(ptr, arena_state, agent.car_id, invert_team, invert_x);
+    write_car(ptr, arena_state, agent.car_id, agent_pos, agent_vel, invert_team, invert_x, true);
 
     // Teammate Cars.
     teammate_indices_.clear();
@@ -136,7 +167,7 @@ bool AdvancedObs::build_obs(
     }
     std::shuffle(teammate_indices_.begin(), teammate_indices_.end(), rng_);
     for (uint32_t teammate_id : teammate_indices_) {
-        write_car(ptr, arena_state, teammate_id, invert_team, invert_x);
+        write_car(ptr, arena_state, teammate_id, agent_pos, agent_vel, invert_team, invert_x, false);
     }
     for (size_t i = teammate_indices_.size(); i < max_players_per_team_ - 1; i++) {
         write_empty_car(ptr);
@@ -151,7 +182,7 @@ bool AdvancedObs::build_obs(
     }
     std::shuffle(opponent_indices_.begin(), opponent_indices_.end(), rng_);
     for (uint32_t opponent_id : opponent_indices_) {
-        write_car(ptr, arena_state, opponent_id, invert_team, invert_x);
+        write_car(ptr, arena_state, opponent_id, agent_pos, agent_vel, invert_team, invert_x, false);
         // write_car(ptr, arena_state, opponent_id, invert);
     }
     for (size_t i = opponent_indices_.size(); i < max_players_per_team_; i++) {

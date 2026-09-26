@@ -1,11 +1,5 @@
 // buta-ppo/src/env/advanced_obs.hpp
 
-/*
-*   Implementation is entirely based off of advanced obs used in rlgymppo_rs and GigaLearn.
-*
-* Modified to include X-Mirroring by default.
-*/
-
 #pragma once
 
 #include "buta_ppo/ffi.h"
@@ -20,8 +14,9 @@ struct AgentMeta;
 
 class AdvancedObs {
 public:
-    static constexpr size_t CAR_OBS = 22;
-    static constexpr size_t BALL_OBS = 9;
+    static constexpr size_t AGENT_CAR_OBS = 25; // base features.
+    static constexpr size_t OTHER_CAR_OBS = 31; // + rel pos/vel.
+    static constexpr size_t BALL_OBS = 15; // + rel pos/vel.
     static constexpr size_t BOOST_PAD_OBS = 34;
 
     static constexpr size_t BOOST_PADS_BIG_COUNT = 6;
@@ -84,8 +79,9 @@ private:
     void write_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_ang_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
+    void write_right_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
 
-    void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, bool invert_team, bool invert_x) const;
+    void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x, bool is_agent) const;
     void write_empty_car(float*& ptr) const;
 };
 

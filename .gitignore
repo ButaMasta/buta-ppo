@@ -71,6 +71,7 @@ Testing/
 checkpoints/*
 logs/*
 tests/*
+clean.fish
 
 # Extra
 .vscode/

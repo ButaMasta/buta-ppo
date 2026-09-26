@@ -29,7 +29,7 @@ int main() {
     RunnerConfig config;
 
     config.bot_name = "Porkchop";
-    config.render = false;
+    config.render = true;
 
     config.match_distributions = {
         {1, 1, 1.0f}
@@ -46,17 +46,17 @@ int main() {
     config.ticks_per_step = 8;
 
     config.target_steps_per_update = 50'000;
-    config.num_minibatches = 4;
+    config.num_minibatches = 1;
 
-    config.ac_cfg.shared_layers = { 1024, 768 };
-    config.ac_cfg.actor_layers  = { 512, 512 };
-    config.ac_cfg.critic_layers = { 1024, 1024 };
+    config.ac_cfg.shared_layers = { 1024, 1024, 768 };
+    config.ac_cfg.actor_layers  = { 512 };
+    config.ac_cfg.critic_layers = { 1024 };
     config.ac_cfg.use_layer_norm = true;
 
     config.ppo_cfg.policy_lr = 3e-4f;
     config.ppo_cfg.critic_lr = 3e-4f;
     config.ppo_cfg.entropy_coef = 0.035f;
-    config.ppo_cfg.epochs = 2;
+    config.ppo_cfg.epochs = 1;
     config.ppo_cfg.target_kl = 0.015f;
 
     PPORunner runner(config);
