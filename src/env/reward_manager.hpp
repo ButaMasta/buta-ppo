@@ -2,15 +2,16 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
+
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <memory>
 
-namespace buta_ppo::env {
+// Forward declaration.
+namespace buta_ppo::env { struct AgentMeta; }
 
-// Forward declaration of AgentMeta from rocketsim_env.
-struct AgentMeta;
+namespace buta_ppo::env {
 
 // Template function all other functions will extend.
 class RewardFunction {

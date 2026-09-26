@@ -1,8 +1,8 @@
 // buta-ppo/src/env/vec_env.cpp
 
-#include "vec_env.hpp"
 #include "buta_ppo/ffi.h"
-#include "env/rocketsim_env.hpp"
+#include "rocketsim_env.hpp"
+#include "vec_env.hpp"
 #include "rl/ppo_runner.hpp"
 #include <algorithm>
 #include <cstddef>

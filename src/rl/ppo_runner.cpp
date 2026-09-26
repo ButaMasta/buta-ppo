@@ -1,6 +1,8 @@
 // buta-ppo/src/rl/ppo_runner.hpp
 #include "ppo_runner.hpp"
+#include "rollout_buffer.hpp"
 #include "tensorboard_logger.h"
+#include "env/vec_env.hpp"
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -29,6 +31,8 @@ PPORunner::PPORunner(const RunnerConfig& config)
 
     setup_dimensions_and_buffers();
 }
+
+PPORunner::~PPORunner() = default;
 
 int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
     if (!fs::exists(dir)) {

@@ -6,9 +6,13 @@
 #include "reward_manager.hpp"
 #include "default_action.hpp"
 #include "state_setter.hpp"
+
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
+#include <random>
+#include <string>
+#include <cstddef>
 
 namespace buta_ppo::env {
 

@@ -1,14 +1,16 @@
 // buta-ppo/src/env/default_action.hpp
 
 /*
-*   Implementation is based off of actions used in rlgymppo_rs and GigaLearn.
+*   Implementation is based off of actions used in GigaLearn.
 *
 */
 
 #pragma once
 
 #include "buta_ppo/ffi.h"
+
 #include <array>
+#include <cstddef>
 
 namespace buta_ppo::env {
 

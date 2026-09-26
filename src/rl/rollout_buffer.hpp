@@ -2,6 +2,8 @@
 #pragma once
 
 #include <torch/torch.h>
+#include <cstddef>
+#include <vector>
 
 namespace buta_ppo::rl {
 

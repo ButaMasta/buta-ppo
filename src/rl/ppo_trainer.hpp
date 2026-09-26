@@ -2,12 +2,17 @@
 #pragma once
 
 #include "actor_critic.hpp"
-#include "rollout_buffer.hpp"
+
 #include <torch/torch.h>
 #include <ATen/autocast_mode.h>
 #include <ATen/cuda/CUDAGraph.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <ATen/cuda/CUDAContext.h>
+#include <memory>
+#include <unordered_map>
+#include <string>
+#include <vector>
+
+// Forward declaration.
+namespace buta_ppo::rl { class RolloutBuffer; }
 
 namespace buta_ppo::rl {
 

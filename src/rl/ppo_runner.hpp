@@ -1,20 +1,24 @@
 // buta-ppo/src/rl/ppo_runner.hpp
+#pragma once
+
 #include "buta_ppo/ffi.h"
 #include "ppo_trainer.hpp"
-#include "rollout_buffer.hpp"
-#include "env/vec_env.hpp"
+#include "actor_critic.hpp"
 #include "env/state_setter.hpp"
-#include "tensorboard_logger.h"
+
 #include <cstddef>
 #include <stdexcept>
 #include <torch/torch.h>
 #include <memory>
 #include <atomic>
-#include <cstring>
 #include <string>
 #include <vector>
 #include <stdexcept>
 
+// Forward declarations.
+class TensorBoardLogger;
+namespace buta_ppo::env { class VecEnv; }
+namespace buta_ppo::rl  { class RolloutBuffer; }
 
 namespace buta_ppo::rl {
 
@@ -190,6 +194,7 @@ private:
 
 public:
     explicit PPORunner(const RunnerConfig& config);
+    ~PPORunner();
 
     /**
      * @brief Saves a checkpoint of the bot.

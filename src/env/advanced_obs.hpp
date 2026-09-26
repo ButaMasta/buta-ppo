@@ -1,16 +1,17 @@
 // buta-ppo/src/env/advanced_obs.hpp
-
 #pragma once
 
 #include "buta_ppo/ffi.h"
+
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 #include <random>
 
-namespace buta_ppo::env {
+// Forward declaration.
+namespace buta_ppo::env { struct AgentMeta; }
 
-// Forward declaration of AgentMeta.
-struct AgentMeta;
+namespace buta_ppo::env {
 
 class AdvancedObs {
 public:

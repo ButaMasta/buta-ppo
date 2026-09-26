@@ -1,6 +1,10 @@
 // buta-ppo/src/rl/actor_critic.hpp
+#pragma once
 
 #include <torch/torch.h>
+#include <vector>
+#include <cstdint>
+#include <tuple>
 
 namespace buta_ppo::rl {
 

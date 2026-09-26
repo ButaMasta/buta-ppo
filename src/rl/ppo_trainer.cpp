@@ -1,5 +1,9 @@
 // buta-ppo/src/rl/ppo_trainer.cpp
 #include "ppo_trainer.hpp"
+#include "rollout_buffer.hpp"
+
+#include <c10/cuda/CUDAGuard.h>
+#include <ATen/cuda/CUDAContext.h>
 
 namespace buta_ppo::rl {
 

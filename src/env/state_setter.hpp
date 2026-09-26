@@ -2,15 +2,17 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
+
 #include <vector>
 #include <random>
 #include <memory>
 #include <type_traits>
-
-namespace buta_ppo::env {
+#include <utility>
 
 // Forward declaration.
-struct AgentMeta;
+namespace buta_ppo::env { struct AgentMeta; }
+
+namespace buta_ppo::env {
 
 class StateSetter {
 public:

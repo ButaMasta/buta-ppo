@@ -1,7 +1,8 @@
 // buta-ppo/src/env/vec_env.hpp
 #pragma once
 
-#include "rocketsim_env.hpp"
+#include "state_setter.hpp"
+
 #include <cstddef>
 #include <string>
 #include <unordered_map>
@@ -13,12 +14,9 @@
 #include <atomic>
 #include <torch/torch.h>
 
-namespace buta_ppo::rl {
-
-// Forward declaration.
-struct MatchDistribution;
-
-}; // namespace buta_ppo::rl
+// Forward declarations.
+namespace buta_ppo::rl  { struct MatchDistribution; }
+namespace buta_ppo::env { class RocketSimEnv; }
 
 namespace buta_ppo::env {
 
