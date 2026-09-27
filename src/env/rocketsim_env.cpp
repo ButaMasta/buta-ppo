@@ -1,25 +1,29 @@
-// buta-ppo/src/env/rocketsim_env.hpp
+// buta-ppo/src/env/rocketsim_env.cpp
 #include "rocketsim_env.hpp"
 #include "buta_ppo/ffi.h"
+
 #include <algorithm>
 #include <thread>
 #include <chrono>
 
 namespace buta_ppo::env {
 
-// Public methods.
 RocketSimEnv::RocketSimEnv(
     const std::vector<ffi::Team>& match_layout, 
     const std::vector<StateSetterDistribution>& setters, 
     int ticks_per_step, size_t max_players_per_team, 
     uint32_t seed, 
     bool render
-) : setters_(setters), ticks_per_step_(ticks_per_step), obs_builder_(max_players_per_team, seed), render_(render) {
+) : setters_(setters), 
+    ticks_per_step_(ticks_per_step), 
+    obs_builder_(max_players_per_team, seed), 
+    render_(render) {
+
     arena_ = render ? ffi::create_arena_vis(0) : ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
     action_space_size_ = action_parser_.get_action_space_size();
 
-    // Fill teams
+    // Fill teams.
     for (const ffi::Team team : match_layout) {
         add_agent(team);
     }
@@ -39,7 +43,7 @@ RocketSimEnv::RocketSimEnv(
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {
-    uint32_t car_id = ffi::add_car(arena_, team);
+    const uint32_t car_id = ffi::add_car(arena_, team);
     agents_.push_back({car_id, team});
 
     // Resize buffers for the new agent.
@@ -52,7 +56,7 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
 }
 
 ResetResult RocketSimEnv::reset() {
-    size_t chosen_idx = setter_selector_(rng_);
+    const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     reward_manager_.reset(arena_state_);
 
@@ -64,6 +68,7 @@ ResetResult RocketSimEnv::reset() {
         float* agent_action_mask_ptr = action_mask_buffer_.data() + (i * action_space_size_);
         action_parser_.get_action_mask(car_state, agent_action_mask_ptr);
     }
+
     return { obs_buffer_, action_mask_buffer_ };
 }
 
@@ -71,6 +76,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     for (size_t i = 0; i < agents_.size(); i++) {
         ffi::CarControls controls = decode_action(actions[i]);
 
+        // Invert necessary controls if the state was X-mirrored.
         if (agent_x_inverted_[i]) {
             controls.steer  *= -1.0f;
             controls.yaw    *= -1.0f;
@@ -104,7 +110,7 @@ StepResult RocketSimEnv::step(const int* actions) {
             ++ticks_since_last_touch_;
         }
 
-        bool should_terminate = arena_state_.events.is_ball_scored || ticks_since_last_touch_ >= ticks_until_terminal_state_;
+        const bool should_terminate = arena_state_.events.is_ball_scored || ticks_since_last_touch_ >= ticks_until_terminal_state_;
         if (should_terminate) {
             ticks_since_last_touch_ = 0;
             ticks_elapsed = i + 1;
@@ -125,8 +131,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, ticks_elapsed };
 }
 
-// Helpers.
-ffi::CarControls RocketSimEnv::decode_action(int action_idx) {
+ffi::CarControls RocketSimEnv::decode_action(size_t action_idx) {
     return action_parser_.get_action(action_idx);
 }
 
