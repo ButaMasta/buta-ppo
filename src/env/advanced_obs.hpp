@@ -16,20 +16,21 @@ namespace buta_ppo::env {
 
 class AdvancedObs {
 public:
-    static constexpr size_t AGENT_CAR_OBS = 25; // base features.
-    static constexpr size_t OTHER_CAR_OBS = 31; // + rel pos/vel.
-    static constexpr size_t BALL_OBS = 15; // + rel pos/vel.
+    static constexpr size_t AGENT_CAR_OBS = 25;
+    static constexpr size_t OTHER_CAR_OBS = 31;
+    static constexpr size_t BALL_OBS = 15;
 
     static constexpr size_t BALL_PRED_TICKS_COUNT = 6;
     static constexpr size_t BALL_PRED_TICKS[BALL_PRED_TICKS_COUNT] = {
-        1,  // 8 ticks into the future (next action). 
-        7,  // ~0.47 seconds into the future. (7 actions in the future).
-        15, // 1 second into the future. (15 actions in the future).
-        30, // 2 seconds into the future. (30 actions in the future).
-        45, // 3 seconds into the future. (45 actions in the future).
-        60  // 4 seconds into the future. (60 actions in the future).
+        1,  // Next action (8 ticks).
+        7,  // ~0.47 seconds (7 actions).
+        15, // 1.00 seconds (15 actions).
+        30, // 2.00 seconds (30 actions).
+        45, // 3.00 seconds (45 actions).
+        60  // 4.00 seconds (60 actions).
     };
     static constexpr size_t BALL_PRED_BUFFER_SIZE = BALL_PRED_TICKS[BALL_PRED_TICKS_COUNT - 1];
+
     static constexpr float POS_MOE = 1.0f;
     static constexpr float VEL_MOE = 3.5f;
     static constexpr float ANG_VEL_MOE = 1.5f;
@@ -68,12 +69,12 @@ public:
     /**
      * @brief Writes observation in-place. Returns X-Mirror status of this state.
      * 
-     * @param arena_state - The state of the arena containing all values from the FFI needed for obs construction.
-     * @param agents - A list of all the agents in this environment and their corresponding information.
-     * @param agent_idx - The agent to build the obs for.
-     * @param out_buffer - The float buffer to store the output of the obs. In this case it is a pointer to within a larger buffer.
-     * @return true - If the agent IS viewing a X-mirrored state. 
-     * @return false - If the agent IS NOT viewing a X-mirrored state.
+     * @param arena_state The state of the arena containing all values from the FFI needed for obs construction.
+     * @param agents A list of all the agents in this environment and their corresponding information.
+     * @param agent_idx The agent to build the obs for.
+     * @param out_buffer The float buffer to store the output of the obs. In this case it is a pointer to within a larger buffer.
+     * @return true If the agent IS viewing a X-mirrored state. 
+     * @return false If the agent IS NOT viewing a X-mirrored state.
      */
     bool build_obs(
         const ffi::ArenaState& arena_state,
@@ -92,20 +93,23 @@ private:
     std::array<ffi::BallSimBallState, BALL_PRED_BUFFER_SIZE> ball_pred_;
     ffi::BallSimBallState state_to_verify_{};
     size_t ball_pred_head_ = 0;
-    uint64_t tick_last_updated_ball_pred_ = 999; // idk, this should work and i cant just use a negative.
+
+    // Tracks the last arena tick that the prediction was updated to avoid unnecessary repredictions.
+    uint64_t tick_last_updated_ball_pred_ = UINT64_MAX;
 
     // These are the lightweight buffers to shuffle when inserting cars into the obs.
     std::vector<uint32_t> team_A_indices_;
     std::vector<uint32_t> team_B_indices_;
+
     void pre_step_rand(const std::vector<AgentMeta>& agents);
 
     // Ball Sim helpers.
-    bool exceeds_moe(const float a, const float b, const float moe) const;
+    bool exceeds_moe(const float& a, const float& b, const float& moe) const;
     bool needs_repred(const ffi::BallSimBallState& curr_arena_ball_state) const;
     void pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_state, uint64_t ticks_at_update);
 
-    // Normalization & writer helpers.
-    // All of these methods will, as their name says, write their values into the obs pointer and increments it.
+    // Obs writer helpers.
+    // All of these methods will, as their name says, write their values into the obs pointer and increment it.
     void write_pos(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_ang_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;

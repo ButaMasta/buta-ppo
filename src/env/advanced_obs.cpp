@@ -23,7 +23,7 @@ void AdvancedObs::pre_step_rand(const std::vector<AgentMeta>& agents) {
     team_A_indices_.clear();
     team_B_indices_.clear();
 
-    for (const auto& agent : agents) {
+    for (const AgentMeta& agent : agents) {
         if (agent.team == ffi::Team::Blue) {
             team_A_indices_.push_back(agent.car_id);
         } else {
@@ -35,7 +35,7 @@ void AdvancedObs::pre_step_rand(const std::vector<AgentMeta>& agents) {
     std::shuffle(team_B_indices_.begin(), team_B_indices_.end(), rng_);
 }
 
-bool AdvancedObs::exceeds_moe(const float a, const float b, const float moe) const {
+bool AdvancedObs::exceeds_moe(const float& a, const float& b, const float& moe) const {
     return std::abs(a - b) > moe;
 }
 
@@ -71,6 +71,7 @@ void AdvancedObs::pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_stat
 
         ball_pred_head_ = (ball_pred_head_ + 1) % BALL_PRED_BUFFER_SIZE;
     }
+
     state_to_verify_ = ball_pred_[ball_pred_head_];
     tick_last_updated_ball_pred_ = ticks_at_update;
 }
@@ -123,11 +124,13 @@ void AdvancedObs::write_ball_pred(float*& ptr, const float* agent_pos, const flo
         const ffi::BallSimPhysState& curr_pred_phys = ball_pred_[ring_buff_idx].phys;
         
         write_pos(ptr, curr_pred_phys.pos, invert_team, invert_x);
+
         float rel_pos[3];
         math::sub_vec3(curr_pred_phys.pos, agent_pos, rel_pos);
         write_pos(ptr, rel_pos, invert_team, invert_x);
 
         write_vel(ptr, curr_pred_phys.vel, invert_team, invert_x);
+        
         float rel_vel[3];
         math::sub_vec3(curr_pred_phys.vel, agent_vel, rel_vel);
         write_vel(ptr, rel_vel, invert_team, invert_x);
@@ -140,6 +143,7 @@ void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uin
     const auto& car = arena_state.cars[target_car_id];
     size_t obs_size = is_agent ? AGENT_CAR_OBS : OTHER_CAR_OBS;
 
+    // Pad with zeros if the car is demoed and leave only the respawn timer.
     if (car.is_demoed) {
         for (size_t i = 0; i < obs_size - 1; i++) {
             *ptr++ = 0.0f;
@@ -199,41 +203,32 @@ bool AdvancedObs::build_obs(
     const float* agent_vel = agent_phys.vel;
 
     bool invert_team = (agent.team == ffi::Team::Orange);
-
     float perceived_x = agent_pos[0] * (invert_team ? -1.0f : 1.0f);
     bool invert_x = perceived_x < 0.0f;
 
     // Ball State.
     const auto& ball_phys = arena_state.ball.phys;
     write_pos(ptr, ball_phys.pos, invert_team, invert_x);
+
     float rel_pos[3];
     math::sub_vec3(ball_phys.pos, agent_pos, rel_pos);
     write_pos(ptr, rel_pos, invert_team, invert_x);
+    
     write_vel(ptr, ball_phys.vel, invert_team, invert_x);
+    
     float rel_vel[3];
     math::sub_vec3(ball_phys.vel, agent_vel, rel_vel);
     write_vel(ptr, rel_vel, invert_team, invert_x);
+    
     write_ang_vel(ptr, ball_phys.ang_vel, invert_team, invert_x);
 
     // Ball Pred.
     const ffi::BallState& arena_ball = arena_state.ball;
     ffi::BallSimBallState curr_state = {
         {
-            {
-                arena_ball.phys.pos[0],
-                arena_ball.phys.pos[1],
-                arena_ball.phys.pos[2],
-            },
-            {
-                arena_ball.phys.vel[0],
-                arena_ball.phys.vel[1],
-                arena_ball.phys.vel[2],
-            },
-            {
-                arena_ball.phys.ang_vel[0],
-                arena_ball.phys.ang_vel[1],
-                arena_ball.phys.ang_vel[2]
-            }
+            { arena_ball.phys.pos[0], arena_ball.phys.pos[1], arena_ball.phys.pos[2] },
+            { arena_ball.phys.vel[0], arena_ball.phys.vel[1], arena_ball.phys.vel[2] },
+            { arena_ball.phys.ang_vel[0], arena_ball.phys.ang_vel[1], arena_ball.phys.ang_vel[2] }
         }
     };
     pred_ballsim(curr_state, arena_state.tick_count);
