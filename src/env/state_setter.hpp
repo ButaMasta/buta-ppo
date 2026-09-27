@@ -15,16 +15,24 @@ namespace buta_ppo::env { struct AgentMeta; }
 namespace buta_ppo::env {
 
 /**
- * @brief The core class to be extended ensuring state setters have the necessary methods.
+ * @brief Abstract base class to be extended ensuring state setters have the necessary methods.
  */
 class StateSetter {
 public:
     virtual ~StateSetter() = default;
 
+    /**
+     * @brief Applies the state setters configuration to the supplied arena.
+     * 
+     * @param arena The arena to set the state for.
+     * @param current_state The current state buffer to fill when the state setter is complete.
+     * @param agents The list of agents in the arena.
+     * @param rng The random device to use.
+     */
     virtual void apply(
         const ffi::ArenaPtr& arena,
         ffi::ArenaState& current_state,
-        [[maybe_unused]] const std::vector<AgentMeta>& agents,
+        const std::vector<AgentMeta>& agents,
         std::mt19937& rng
     ) = 0;
 
@@ -36,7 +44,12 @@ public:
  */
 class DefaultKickoffSetter : public StateSetter {
 public:
-    void apply(const ffi::ArenaPtr& arena, ffi::ArenaState& current_state, [[maybe_unused]] const std::vector<AgentMeta>& agents, std::mt19937& rng) override;
+    void apply(
+        const ffi::ArenaPtr& arena, 
+        ffi::ArenaState& current_state, 
+        const std::vector<AgentMeta>& agents, 
+        std::mt19937& rng
+    ) override;
 
     [[nodiscard]] std::unique_ptr<StateSetter> clone() const override;
 };
@@ -54,7 +67,12 @@ public:
     RandomStateSetter(bool rand_ball_speed, bool rand_car_speed, bool cars_on_ground)
         : rand_ball_speed_(rand_ball_speed), rand_car_speed_(rand_car_speed), cars_on_ground_(cars_on_ground) {}
     
-    void apply(const ffi::ArenaPtr& arena, ffi::ArenaState& current_state, const std::vector<AgentMeta>& agents, std::mt19937& rng) override;
+    void apply(
+        const ffi::ArenaPtr& arena, 
+        ffi::ArenaState& current_state, 
+        const std::vector<AgentMeta>& agents, 
+        std::mt19937& rng
+    ) override;
 
     [[nodiscard]] std::unique_ptr<StateSetter> clone() const override;
 };
@@ -85,4 +103,4 @@ struct StateSetterDistribution {
     }
 };
 
-}; // namespace buta_ppo::env
+} // namespace buta_ppo::env

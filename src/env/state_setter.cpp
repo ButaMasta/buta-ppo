@@ -10,7 +10,7 @@ void DefaultKickoffSetter::apply(const ffi::ArenaPtr& arena, ffi::ArenaState& cu
     ffi::get_arena_state(arena, current_state);
 }
 
-[[nodiscard]] std::unique_ptr<StateSetter> DefaultKickoffSetter::clone() const {
+std::unique_ptr<StateSetter> DefaultKickoffSetter::clone() const {
     return std::make_unique<DefaultKickoffSetter>(*this);
 }
 
@@ -44,9 +44,9 @@ void RandomStateSetter::apply(const ffi::ArenaPtr& arena, ffi::ArenaState& curre
         current_state.ball.phys.vel[1] = dir[1] * s;
         current_state.ball.phys.vel[2] = dir[2] * s;
     } else {
-        current_state.ball.phys.vel[0] = 0;
-        current_state.ball.phys.vel[1] = 0;
-        current_state.ball.phys.vel[2] = 0;
+        current_state.ball.phys.vel[0] = 0.0f;
+        current_state.ball.phys.vel[1] = 0.0f;
+        current_state.ball.phys.vel[2] = 0.0f;
     }
 
     ffi::set_ball_state(arena, current_state.ball);
@@ -69,9 +69,9 @@ void RandomStateSetter::apply(const ffi::ArenaPtr& arena, ffi::ArenaState& curre
                 car.phys.vel[1] = car.phys.rot_mat[0][1] * s;
             }
             car.phys.vel[2] = 0;
-            car.phys.ang_vel[0] = 0;
-            car.phys.ang_vel[1] = 0;
-            car.phys.ang_vel[2] = 0;
+            car.phys.ang_vel[0] = 0.0f;
+            car.phys.ang_vel[1] = 0.0f;
+            car.phys.ang_vel[2] = 0.0f;
         } else {
             math::euler_to_mat3(rand_pitch(rng), rand_yaw(rng), rand_roll(rng), car.phys.rot_mat);
             if (rand_car_speed_) {
