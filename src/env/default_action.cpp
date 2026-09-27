@@ -43,7 +43,7 @@ DefaultAction::DefaultAction() {
         }
     }
 
-    size_t num_ground_actions = idx;
+    const size_t num_ground_actions = idx;
 
     // Aerial Actions.
     const float pitches[] = {-1.0f, 0.0f, 1.0f};
@@ -62,7 +62,7 @@ DefaultAction::DefaultAction() {
                         if (pitch == 0.0f && roll == 0.0f && !jump) continue;
 
                         // Enable handbrake for potential wavedashes.
-                        bool handbrake = jump && (pitch != 0.0f || yaw != 0.0f || roll != 0.0f);
+                        const bool handbrake = jump && (pitch != 0.0f || yaw != 0.0f || roll != 0.0f);
 
                         ffi::CarControls action{};
                         action.throttle = boost ? 1.0f : 0.0f;
@@ -105,7 +105,7 @@ DefaultAction::DefaultAction() {
     }
 }
 
-ffi::CarControls DefaultAction::get_action(int action_index) const {
+ffi::CarControls DefaultAction::get_action(size_t action_index) const {
     return actions_table_[action_index];
 }
 
