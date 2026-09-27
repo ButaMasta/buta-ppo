@@ -1,6 +1,7 @@
 // buta-ppo/src/main.cpp
 #include "rl/ppo_runner.hpp"
 #include "env/state_setter.hpp"
+
 #include <iostream>
 #include <csignal>
 #include <atomic>
@@ -13,7 +14,7 @@ using namespace buta_ppo::env;
 std::atomic<bool> g_stop_training{false};
 
 void handle_sigint(int) {
-    g_stop_training = true;
+    g_stop_training.store(true, std::memory_order_relaxed);
 }
 
 int main() {
@@ -21,11 +22,11 @@ int main() {
     std::signal(SIGINT, handle_sigint);
 
     if (!ffi::init("assets/collision_meshes", true)) {
-        std::cerr << "[ERROR] Failed to initialize RocketSim." << std::endl;
+        std::cerr << "[ERROR] Failed to initialize RocketSim.\n";
         return 1;
     }
     if (!ffi::init_ball_sim("assets/collision_meshes", true)) {
-        std::cerr << "[ERROR] Failed to initialize BallSim." << std::endl;
+        std::cerr << "[ERROR] Failed to initialize BallSim.\n";
         return 1;
     }
 
