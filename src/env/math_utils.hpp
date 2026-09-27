@@ -49,7 +49,7 @@ inline void euler_to_mat3(float pitch, float yaw, float roll, float out_mat[3][3
 }
 
 /**
- * @brief Creates a random normalization vector ensuring even spherical sampling.
+ * @brief Creates a uniformly distributed random normalization vector via rejection sampling.
  * 
  * @param rng The rng device to use.
  * @param out_vec The vector reference to store the result to.
@@ -69,4 +69,4 @@ inline void random_norm_vec(std::mt19937& rng, float out_vec[3]) {
     }
 }
 
-}; // namespace buta_ppo::env::math
+} // namespace buta_ppo::env::math
