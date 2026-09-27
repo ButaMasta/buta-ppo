@@ -4,7 +4,7 @@
 #include <cmath>
 #include <random>
 
-namespace buta_ppo::env::math {
+namespace buta_ppo::util::math {
 
 /**
  * @brief Subtracts two vectors and stores the result in a provided buffer.

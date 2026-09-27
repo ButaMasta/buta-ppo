@@ -11,7 +11,7 @@
 // Forward declaration.
 namespace buta_ppo::env { struct AgentMeta; }
 
-namespace buta_ppo::env {
+namespace buta_ppo::reward {
 
 /**
  * @brief Abstract class for defining environment rewards.
@@ -37,7 +37,7 @@ public:
      * @return The scalar -1.0f to 1.0f to multiply the weight of the reward by.
      */
     virtual float get_reward(
-        const AgentMeta& agent, 
+        const env::AgentMeta& agent, 
         const ffi::ArenaState& current_state,
         const ffi::ArenaState& previous_state
     ) = 0;
@@ -48,7 +48,7 @@ public:
  */
 class TouchBallReward : public RewardFunction {
 public:
-    float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
+    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
 };
 
 /**
@@ -56,7 +56,7 @@ public:
  */
 class GoalReward : public RewardFunction {
 public:
-    float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
+    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
 };
 
 /**
@@ -64,7 +64,7 @@ public:
  */
 class VelocityToBallReward : public RewardFunction {
 public:
-    float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
+    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
 };
 
 struct RewardEntry {
@@ -109,7 +109,7 @@ public:
      * @param current_state The current arena state to utilize in reward calculation.
      * @return The total weighted reward output for this agent.
      */
-    [[nodiscard]] float get_reward(const AgentMeta& agent, const ffi::ArenaState& current_state);
+    [[nodiscard]] float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state);
 
     /**
      * @brief Updates the previous state. Called after all rewards for a tick have been fetched.

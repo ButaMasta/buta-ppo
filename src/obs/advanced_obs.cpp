@@ -1,12 +1,14 @@
 // buta-ppo/src/env/advanced_obs.cpp
 
 #include "advanced_obs.hpp"
-#include "rocketsim_env.hpp" // For AgentMeta
-#include "math_utils.hpp"
+#include "env/rocketsim_env.hpp" // For AgentMeta
+#include "util/math_utils.hpp"
 #include <algorithm>
 #include <cstddef>
 
-namespace buta_ppo::env {
+namespace math = buta_ppo::util::math;
+
+namespace buta_ppo::obs {
 
 AdvancedObs::AdvancedObs(size_t max_players_per_team, uint32_t seed)
     : max_players_per_team_(max_players_per_team), rng_(seed), tick_last_updated_ball_pred_(9999) {
@@ -19,11 +21,11 @@ size_t AdvancedObs::get_obs_size() const {
     return BALL_OBS + (BALL_OBS * BALL_PRED_TICKS_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * max_players_per_team_ * 2 - 1);
 }
 
-void AdvancedObs::pre_step_rand(const std::vector<AgentMeta>& agents) {
+void AdvancedObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
     team_A_indices_.clear();
     team_B_indices_.clear();
 
-    for (const AgentMeta& agent : agents) {
+    for (const env::AgentMeta& agent : agents) {
         if (agent.team == ffi::Team::Blue) {
             team_A_indices_.push_back(agent.car_id);
         } else {
@@ -191,11 +193,11 @@ void AdvancedObs::write_empty_car(float*& ptr) const {
 
 bool AdvancedObs::build_obs(
     const ffi::ArenaState& arena_state,
-    const std::vector<AgentMeta>& agents,
+    const std::vector<env::AgentMeta>& agents,
     uint32_t agent_idx,
     float* out_buffer
 ) {
-    const AgentMeta& agent = agents[agent_idx];
+    const env::AgentMeta& agent = agents[agent_idx];
     float* ptr = out_buffer;
 
     const auto& agent_phys = arena_state.cars[agent.car_id].phys;

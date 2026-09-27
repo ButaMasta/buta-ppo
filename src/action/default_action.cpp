@@ -6,7 +6,7 @@
 
 #include "default_action.hpp"
 
-namespace buta_ppo::env {
+namespace buta_ppo::action {
 
 DefaultAction::DefaultAction() {
     ground_mask_.fill(false);

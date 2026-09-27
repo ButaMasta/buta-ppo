@@ -43,12 +43,12 @@ add_compile_options(-Wall -Wextra -O3 -march=native -pthread)
 # Define the C++ executable.
 add_executable(buta_ppo 
     src/main.cpp
+    src/action/default_action.cpp
     src/env/rocketsim_env.cpp
-    src/env/advanced_obs.cpp
-    src/env/reward_manager.cpp
-    src/env/default_action.cpp
     src/env/vec_env.cpp
     src/env/state_setter.cpp
+    src/obs/advanced_obs.cpp
+    src/reward/reward_manager.cpp
     src/rl/rollout_buffer.cpp
     src/rl/actor_critic.cpp
     src/rl/ppo_trainer.cpp

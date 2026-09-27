@@ -2,9 +2,9 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
-#include "advanced_obs.hpp"
-#include "reward_manager.hpp"
-#include "default_action.hpp"
+#include "obs/advanced_obs.hpp"
+#include "reward/reward_manager.hpp"
+#include "action/default_action.hpp"
 #include "state_setter.hpp"
 
 #include <unordered_map>
@@ -74,9 +74,9 @@ private:
     static constexpr int ticks_until_terminal_state_ = 1200;
     int ticks_since_last_touch_ = 0;
 
-    AdvancedObs obs_builder_;
-    RewardManager reward_manager_;
-    DefaultAction action_parser_;
+    obs::AdvancedObs obs_builder_;
+    reward::RewardManager reward_manager_;
+    action::DefaultAction action_parser_;
 
     bool render_;
 

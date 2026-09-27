@@ -1,20 +1,20 @@
 // buta-ppo/src/env/reward_manager.cpp
 #include "reward_manager.hpp"
-#include "rocketsim_env.hpp"
+#include "env/rocketsim_env.hpp"
 
 #include <utility>
 #include <cmath>
 
-namespace buta_ppo::env {
+namespace buta_ppo::reward {
 
-float TouchBallReward::get_reward(const AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
+float TouchBallReward::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
     if (state.events.car_hit_ball[agent.car_id]) {
         return 1.0f;
     }
     return 0.0f;
 }
 
-float GoalReward::get_reward(const AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
+float GoalReward::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
     if (!state.events.is_ball_scored) {
         return 0.0f;
     }
@@ -26,7 +26,7 @@ float GoalReward::get_reward(const AgentMeta& agent, const ffi::ArenaState& stat
     return -1.0f;
 }
 
-float VelocityToBallReward::get_reward(const AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
+float VelocityToBallReward::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
     const auto& car_phys = state.cars[agent.car_id].phys;
     const auto& ball_phys = state.ball.phys;
 
@@ -67,7 +67,7 @@ void RewardManager::reset(const ffi::ArenaState& initial_state) {
     }
 }
 
-float RewardManager::get_reward(const AgentMeta& agent, const ffi::ArenaState& current_state) {
+float RewardManager::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state) {
     float total_reward = 0.0f;
 
     for (auto& entry : rewards_) {

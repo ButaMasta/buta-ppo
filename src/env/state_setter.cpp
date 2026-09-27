@@ -1,7 +1,9 @@
 // buta-ppo/src/env/state_setter.cpp
 #include "state_setter.hpp"
 #include "rocketsim_env.hpp"
-#include "math_utils.hpp"
+#include "util/math_utils.hpp"
+
+namespace math = buta_ppo::util::math;
 
 namespace buta_ppo::env {
 

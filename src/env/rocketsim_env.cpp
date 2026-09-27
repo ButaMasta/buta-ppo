@@ -6,6 +6,8 @@
 #include <thread>
 #include <chrono>
 
+using namespace buta_ppo::reward;
+
 namespace buta_ppo::env {
 
 RocketSimEnv::RocketSimEnv(

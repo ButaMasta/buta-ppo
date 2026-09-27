@@ -12,7 +12,7 @@
 #include <array>
 #include <cstddef>
 
-namespace buta_ppo::env {
+namespace buta_ppo::action {
 
 class DefaultAction {
 private:

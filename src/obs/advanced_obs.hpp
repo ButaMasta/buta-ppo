@@ -12,7 +12,7 @@
 // Forward declaration.
 namespace buta_ppo::env { struct AgentMeta; }
 
-namespace buta_ppo::env {
+namespace buta_ppo::obs {
 
 class AdvancedObs {
 public:
@@ -78,7 +78,7 @@ public:
      */
     bool build_obs(
         const ffi::ArenaState& arena_state,
-        const std::vector<AgentMeta>& agents,
+        const std::vector<env::AgentMeta>& agents,
         uint32_t agent_idx,
         float* out_buffer
     );
@@ -101,7 +101,7 @@ private:
     std::vector<uint32_t> team_A_indices_;
     std::vector<uint32_t> team_B_indices_;
 
-    void pre_step_rand(const std::vector<AgentMeta>& agents);
+    void pre_step_rand(const std::vector<env::AgentMeta>& agents);
 
     // Ball Sim helpers.
     bool exceeds_moe(const float& a, const float& b, const float& moe) const;
