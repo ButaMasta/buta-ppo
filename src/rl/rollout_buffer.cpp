@@ -1,6 +1,7 @@
 // buta-ppo/src/rl/rollout_buffer.cpp
 #include "rollout_buffer.hpp"
 #include <cstdint>
+#include <stdexcept>
 
 namespace buta_ppo::rl {
 
@@ -10,31 +11,33 @@ RolloutBuffer::RolloutBuffer(size_t buffer_size, size_t num_agents, size_t obs_s
     // Allocate all tensors on the GPU.
 
     // Types for convenience.
-    auto float32_opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
-    auto int64_opts = torch::TensorOptions().device(device_).dtype(torch::kInt64);
-    auto bool_opts = torch::TensorOptions().device(device_).dtype(torch::kBool);
+    const auto float32_opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
+    const auto int64_opts = torch::TensorOptions().device(device_).dtype(torch::kInt64);
+    const auto bool_opts = torch::TensorOptions().device(device_).dtype(torch::kBool);
 
-    obs_            = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_, (int64_t)obs_size_}, float32_opts);
+    const int64_t b_size = static_cast<int64_t>(buffer_size_);
+    const int64_t n_agents = static_cast<int64_t>(num_agents_);
+    const int64_t o_size = static_cast<int64_t>(obs_size_);
+    const int64_t a_size = static_cast<int64_t>(action_space_size_);
 
-    actions_        = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, int64_opts);
-    action_masks_   = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_, (int64_t)action_space_size_}, bool_opts);
-    rewards_        = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
-    dones_          = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
-    log_probs_      = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
-    values_         = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
-
-    advantages_     = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
-    returns_        = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, float32_opts);
+    obs_            = torch::zeros({b_size, n_agents, o_size}, float32_opts);
+    actions_        = torch::zeros({b_size, n_agents}, int64_opts);
+    action_masks_   = torch::zeros({b_size, n_agents, a_size}, bool_opts);
+    rewards_        = torch::zeros({b_size, n_agents}, float32_opts);
+    dones_          = torch::zeros({b_size, n_agents}, float32_opts);
+    log_probs_      = torch::zeros({b_size, n_agents}, float32_opts);
+    values_         = torch::zeros({b_size, n_agents}, float32_opts);
+    advantages_     = torch::zeros({b_size, n_agents}, float32_opts);
+    returns_        = torch::zeros({b_size, n_agents}, float32_opts);
 
     // Allocate CPU tensors.
-    auto pinned_opts = torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32).pinned_memory(true);
-    cpu_rewards_    = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
-    cpu_values_     = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
-    cpu_dones_      = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
-    cpu_advantages_ = torch::zeros({(int64_t)buffer_size_, (int64_t)num_agents_}, pinned_opts);
-
-    cpu_last_val_   = torch::zeros({(int64_t)num_agents_}, pinned_opts);
-    cpu_last_dones_   = torch::zeros({(int64_t)num_agents_}, pinned_opts);
+    const auto pinned_opts = torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32).pinned_memory(true);
+    cpu_rewards_    = torch::zeros({b_size, n_agents}, pinned_opts);
+    cpu_values_     = torch::zeros({b_size, n_agents}, pinned_opts);
+    cpu_dones_      = torch::zeros({b_size, n_agents}, pinned_opts);
+    cpu_advantages_ = torch::zeros({b_size, n_agents}, pinned_opts);
+    cpu_last_val_   = torch::zeros({n_agents}, pinned_opts);
+    cpu_last_dones_ = torch::zeros({n_agents}, pinned_opts);
 
     last_gae_.resize(num_agents_, 0.0f);
 }
@@ -80,29 +83,30 @@ void RolloutBuffer::compute_returns_and_advantages(
     cpu_last_val_.copy_(last_values, true);
     cpu_last_dones_.copy_(last_dones, true);
 
+    // Ensure all copies are done before accessing pointers.
     torch::cuda::synchronize();
     
-    float* r_ptr = cpu_rewards_.data_ptr<float>();
-    float* v_ptr = cpu_values_.data_ptr<float>();
-    float* d_ptr = cpu_dones_.data_ptr<float>();
+    const float* r_ptr = cpu_rewards_.data_ptr<float>();
+    const float* v_ptr = cpu_values_.data_ptr<float>();
+    const float* d_ptr = cpu_dones_.data_ptr<float>();
     float* adv_ptr = cpu_advantages_.data_ptr<float>();
-    float* lv_ptr = cpu_last_val_.data_ptr<float>();
-    float* ld_ptr = cpu_last_dones_.data_ptr<float>();
+    const float* lv_ptr = cpu_last_val_.data_ptr<float>();
+    const float* ld_ptr = cpu_last_dones_.data_ptr<float>();
     
-    int64_t n_steps = buffer_size_;
-    int64_t n_agents = num_agents_;
+    const int64_t n_steps = buffer_size_;
+    const int64_t n_agents = num_agents_;
 
     std::fill(last_gae_.begin(), last_gae_.end(), 0.0f);
     
     // Compute GAE.
     for (int64_t step = n_steps - 1; step >= 0; --step) {
         for (int64_t agent = 0; agent < n_agents; ++agent) {
-            int64_t idx = step * n_agents + agent;
+            const int64_t idx = step * n_agents + agent;
             
-            float next_val = (step == n_steps - 1) ? lv_ptr[agent] : v_ptr[idx + n_agents];
-            float next_non_term = (step == n_steps - 1) ? (1.0f - ld_ptr[agent]) : (1.0f - d_ptr[idx + n_agents]);
+            const float next_val = (step == n_steps - 1) ? lv_ptr[agent] : v_ptr[idx + n_agents];
+            const float next_non_term = (step == n_steps - 1) ? (1.0f - ld_ptr[agent]) : (1.0f - d_ptr[idx + n_agents]);
             
-            float delta = r_ptr[idx] + gamma * next_val * next_non_term - v_ptr[idx];
+            const float delta = r_ptr[idx] + gamma * next_val * next_non_term - v_ptr[idx];
             last_gae_[agent] = delta + gamma * gae_lambda * next_non_term * last_gae_[agent];
             adv_ptr[idx] = last_gae_[agent];
         }
@@ -113,4 +117,4 @@ void RolloutBuffer::compute_returns_and_advantages(
     returns_ = advantages_ + values_;
 }
 
-}; // namespace buta_ppo::rl
+} // namespace buta_ppo::rl

@@ -8,7 +8,7 @@
 namespace buta_ppo::rl {
 
 /**
- * @brief The core class for housing the rollout buffer of collected experience to train on.
+ * @brief The core class for housing the rollout buffer of collected experience during the rollout phase to train on.
  */
 class RolloutBuffer {
 private:
@@ -53,13 +53,13 @@ public:
     /**
      * @brief Inserts a single step of data into the buffer at the current step index.
      * 
-     * @param obs - The observations for this step.
-     * @param actions - The viable actions for this step.
-     * @param action_masks - The action masks for this step.
-     * @param rewards - The rewards collected for this step.
-     * @param dones - The done values for this step.
-     * @param log_probs - The log probs for this step.
-     * @param values - The critic values for this step.
+     * @param obs The batched observations for this step.
+     * @param actions The batched viable actions selected by the policy for this step.
+     * @param action_masks The batched action masks for this step.
+     * @param rewards The batched rewards collected for this step.
+     * @param dones The batched done values for this step.
+     * @param log_probs The batched log probs for this step.
+     * @param values The batched critic values for this step.
      */
     void insert(
         const torch::Tensor& obs,
@@ -72,12 +72,12 @@ public:
     );
 
     /**
-     * @brief Calculates the GAE and Returns after the rollout phase.
+     * @brief Calculates the GAE and Returns after the rollout phase on the CPU.
      * 
-     * @param last_values - The previous critic values.
-     * @param last_dones - The previous done values.
-     * @param gamma - The gamma to use in the GAE formula.
-     * @param gae_lambda - The lambda to use in the GAE formula.
+     * @param last_values The previous critic values.
+     * @param last_dones The previous done values.
+     * @param gamma The discount factor for future rewards.
+     * @param gae_lambda The bias-variance tradeoff parameter for advantage estimation.
      */
     void compute_returns_and_advantages(
         const torch::Tensor& last_values,
@@ -91,4 +91,4 @@ public:
 };
 
 
-}; // namespace buta_ppo::rl
+} // namespace buta_ppo::rl
