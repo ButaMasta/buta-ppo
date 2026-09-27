@@ -11,7 +11,8 @@ use rocketsim_vis::ArenaVisExt;
 use ball_sim::{
     Arena as BallSimArena,
     BallState as BallSimBallState,
-    GameMode as BallSimGameMode
+    GameMode as BallSimGameMode,
+    PhysState as BallSimPhysState
 };
 
 //// C++ State Interface Structs. ////
@@ -58,8 +59,42 @@ impl From<CPhysState> for PhysState {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct CBallSimPhysState {
+    pub pos: [f32; 3],
+    pub vel: [f32; 3],
+    pub ang_vel: [f32; 3]
+}
+
+impl From<CBallSimPhysState> for BallSimPhysState {
+    fn from(c: CBallSimPhysState) -> Self {
+        Self {
+            pos: Vec3A::from_array(c.pos),
+            vel: Vec3A::from_array(c.vel),
+            ang_vel: Vec3A::from_array(c.ang_vel),
+        }
+    }
+}
+
+impl From<&BallSimPhysState> for CBallSimPhysState {
+    fn from(phys: &BallSimPhysState) -> Self {
+        Self {
+            pos: phys.pos.into(),
+            vel: phys.vel.into(),
+            ang_vel: phys.ang_vel.into()
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct CBallState {
     pub phys: CPhysState,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct CBallSimBallState {
+    pub phys: CBallSimPhysState,
 }
 
 #[repr(C)]
@@ -250,11 +285,39 @@ pub extern "C" fn rs_arena_create(game_mode_idx: i32) -> *mut Arena {
 }
 
 #[no_mangle]
+pub extern "C" fn rs_arena_create_ball_sim(game_mode_idx: i32) -> *mut BallSimArena {
+    // Map the integer to the ball_sim enum. Defaulting to Soccar (0).
+    let game_mode: BallSimGameMode = match game_mode_idx {
+        0 => BallSimGameMode::Soccar,
+        1 => BallSimGameMode::Hoops,
+        2 => BallSimGameMode::Heatseeker,
+        3 => BallSimGameMode::Snowday,
+        4 => BallSimGameMode::Dropshot,
+        _ => BallSimGameMode::Soccar, 
+    };
+
+    let arena: BallSimArena = BallSimArena::new(game_mode);
+    
+    // Move the Arena to the heap and hand the pointer to C++.
+    Box::into_raw(Box::new(arena))
+}
+
+#[no_mangle]
 pub extern "C" fn rs_arena_free(arena_ptr: *mut Arena) {
     if !arena_ptr.is_null() {
         // Reconstruct the Box from the raw pointer so Rust can drop it.
         unsafe {
             let _ = Box::from_raw(arena_ptr);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rs_arena_free_ball_sim(ball_sim_arena_ptr: *mut BallSimArena) {
+    if !ball_sim_arena_ptr.is_null() {
+        // Reconstruct the Box from the raw pointer so Rust can drop it.
+        unsafe {
+            let _ = Box::from_raw(ball_sim_arena_ptr);
         }
     }
 }
@@ -292,6 +355,21 @@ pub extern "C" fn rs_arena_step(arena_ptr: *mut Arena) {
     
     // Advance the physics engine by one tick.
     arena.step_tick();
+}
+
+#[no_mangle]
+pub extern "C" fn rs_arena_step_ball_sim(arena_ptr: *mut BallSimArena, ticks_to_step: u8) {
+    if arena_ptr.is_null() {
+        return;
+    }
+
+    // Convert raw C pointer into a Rust mutable reference.
+    let arena: &mut BallSimArena = unsafe { &mut *arena_ptr };
+    
+    // Advance the physics engine by ticks_to_step ticks.
+    for _ in 0..ticks_to_step {
+        arena.step_tick();
+    }
 }
 
 /// Core function to grab the entire arena state in one call.
@@ -378,6 +456,22 @@ pub extern "C" fn rs_arena_get_arena_state(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn rs_ball_sim_arena_get_ball_state(
+    arena_ptr: *const BallSimArena,
+    out_ball_state: *mut CBallSimBallState,
+) {
+    if arena_ptr.is_null() || out_ball_state.is_null() {
+        return;
+    }
+
+    let arena: &BallSimArena = unsafe { &*arena_ptr };
+    let state: &mut CBallSimBallState = unsafe { &mut *out_ball_state };
+
+    let ball: &BallSimBallState = arena.get_ball_state();
+    state.phys = CBallSimPhysState::from(&ball.phys);
+}
+
 /// Sets the car controls.
 #[no_mangle]
 pub extern "C" fn rs_arena_set_car_controls(
@@ -401,6 +495,18 @@ pub extern "C" fn rs_arena_set_ball_state(arena_ptr: *mut Arena, ball_state: CBa
 
     let mut curr_ball: BallState = *arena.get_ball_state();
     curr_ball.phys = PhysState::from(ball_state.phys);
+    arena.set_ball_state(curr_ball);
+}
+
+#[no_mangle]
+pub extern "C" fn rs_arena_set_ball_state_ball_sim(arena_ptr: *mut BallSimArena, ball_state: CBallSimBallState) {
+    if arena_ptr.is_null() {
+        return;
+    }
+    let arena: &mut BallSimArena = unsafe { &mut *arena_ptr };
+
+    let mut curr_ball: BallSimBallState = *arena.get_ball_state();
+    curr_ball.phys = BallSimPhysState::from(ball_state.phys);
     arena.set_ball_state(curr_ball);
 }
 

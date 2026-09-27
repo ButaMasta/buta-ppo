@@ -15,8 +15,18 @@ extern "C" {
         float ang_vel[3];
     };
 
+    struct rs_ball_sim_phys_state {
+        float pos[3];
+        float vel[3];
+        float ang_vel[3];
+    };
+
     struct rs_ball_state {
         rs_phys_state phys;
+    };
+
+    struct rs_ball_sim_ball_state {
+        rs_ball_sim_phys_state phys;
     };
 
     struct rs_car_state {
@@ -77,15 +87,20 @@ extern "C" {
     // Arena Creation.
     struct rs_arena; // Opaque type representing the Rust Arena struct.
     rs_arena* rs_arena_create(int game_mode_idx);
+    rs_arena* rs_arena_create_ball_sim(int ball_sim_game_mode_idx);
     rs_arena* rs_arena_create_vis(int game_mode_idx);
     void rs_arena_free(rs_arena* arena_ptr);
+    void rs_arena_free_ball_sim(rs_arena* ball_sim_arena_ptr);
 
     // Arena Util.
     uint32_t rs_arena_add_car(rs_arena* arena_ptr, int team_idx);
     void rs_arena_step(rs_arena* arena_ptr);
+    void rs_arena_step_ball_sim(rs_arena* ball_sim_arena_ptr, uint8_t ticks_to_step);
     void rs_arena_get_arena_state(const rs_arena* arena_ptr, rs_arena_state* out_state);
+    void rs_ball_sim_arena_get_ball_state(const rs_arena* arena_ptr, rs_ball_sim_ball_state* out_state);
     void rs_arena_set_car_controls(rs_arena* arena_ptr, uint32_t car_idx, rs_car_controls controls);
     void rs_arena_set_ball_state(rs_arena* arena_ptr, rs_ball_state ball_state);
+    void rs_arena_set_ball_state_ball_sim(rs_arena* ball_sim_arena_ptr, rs_ball_sim_ball_state ball_state);
     void rs_arena_set_car_state(rs_arena* arena_ptr, uint32_t car_idx, rs_car_state car_state);
     void rs_arena_reset_to_random_kickoff(rs_arena* arena_ptr, uint64_t seed, bool use_seed);
 }
@@ -93,7 +108,9 @@ extern "C" {
 namespace buta_ppo::ffi {
 
 using PhysState = rs_phys_state;
+using BallSimPhysState = rs_ball_sim_phys_state;
 using BallState = rs_ball_state;
+using BallSimBallState = rs_ball_sim_ball_state;
 using CarState = rs_car_state;
 using BoostPadState = rs_boost_pad_state;
 using ArenaEvents = rs_arena_events;
@@ -115,10 +132,23 @@ struct ArenaDeleter {
     }
 };
 
+struct BallSimArenaDeleter {
+    void operator()(rs_arena* ptr) const {
+        if (ptr) {
+            rs_arena_free_ball_sim(ptr);
+        }
+    }
+};
+
 using ArenaPtr = std::unique_ptr<rs_arena, ArenaDeleter>;
+using BallSimArenaPtr = std::unique_ptr<rs_arena, BallSimArenaDeleter>;
 
 inline ArenaPtr create_arena(int game_mode = 0) {
     return ArenaPtr(rs_arena_create(game_mode));
+}
+
+inline BallSimArenaPtr create_arena_ball_sim(int ball_sim_game_mode = 0) {
+    return BallSimArenaPtr(rs_arena_create_ball_sim(ball_sim_game_mode));
 }
 
 inline ArenaPtr create_arena_vis(int game_mode = 0) {
@@ -146,9 +176,21 @@ inline void step_arena(const ArenaPtr& arena) {
     }
 }
 
+inline void step_arena_ball_sim(const BallSimArenaPtr& ball_sim_arena, uint8_t ticks_to_step) {
+    if (ball_sim_arena) {
+        rs_arena_step_ball_sim(ball_sim_arena.get(), ticks_to_step);
+    }
+}
+
 inline void get_arena_state(const ArenaPtr& arena, ArenaState& out_state) {
     if (arena) {
         rs_arena_get_arena_state(arena.get(), &out_state);
+    }
+}
+
+inline void get_ball_sim_arena_ball_state(const BallSimArenaPtr& ball_sim_arena, BallSimBallState& out_ball_state) {
+    if (ball_sim_arena) {
+        rs_ball_sim_arena_get_ball_state(ball_sim_arena.get(), &out_ball_state);
     }
 }
 
@@ -161,6 +203,12 @@ inline void set_car_controls(const ArenaPtr& arena, uint32_t car_idx, const CarC
 inline void set_ball_state(const ArenaPtr& arena, const BallState& state) {
     if (arena) {
         rs_arena_set_ball_state(arena.get(), state);
+    }
+}
+
+inline void set_ball_state_ball_sim(const BallSimArenaPtr& ball_sim_arena, const BallSimBallState& state) {
+    if (ball_sim_arena) {
+        rs_arena_set_ball_state_ball_sim(ball_sim_arena.get(), state);
     }
 }
 

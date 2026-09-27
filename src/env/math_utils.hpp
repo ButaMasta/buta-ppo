@@ -6,6 +6,12 @@
 
 namespace buta_ppo::env::math {
 
+inline void sub_vec3(const float* vec_a, const float* vec_b, float* result) {
+    result[0] = vec_a[0] - vec_b[0];
+    result[1] = vec_a[1] - vec_b[1];
+    result[2] = vec_a[2] - vec_b[2];
+}
+
 inline void euler_to_mat3(float pitch, float yaw, float roll, float out_mat[3][3]) {
     float sy = std::sin(yaw), cy = std::cos(yaw);
     float sp = std::sin(pitch), cp = std::cos(pitch);

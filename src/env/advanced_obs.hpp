@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <random>
+#include <array>
 
 // Forward declaration.
 namespace buta_ppo::env { struct AgentMeta; }
@@ -18,6 +19,21 @@ public:
     static constexpr size_t AGENT_CAR_OBS = 25; // base features.
     static constexpr size_t OTHER_CAR_OBS = 31; // + rel pos/vel.
     static constexpr size_t BALL_OBS = 15; // + rel pos/vel.
+
+    static constexpr size_t BALL_PRED_TICKS_COUNT = 6;
+    static constexpr size_t BALL_PRED_TICKS[BALL_PRED_TICKS_COUNT] = {
+        1,  // 8 ticks into the future (next action). 
+        7,  // ~0.47 seconds into the future. (7 actions in the future).
+        15, // 1 second into the future. (15 actions in the future).
+        30, // 2 seconds into the future. (30 actions in the future).
+        45, // 3 seconds into the future. (45 actions in the future).
+        60  // 4 seconds into the future. (60 actions in the future).
+    };
+    static constexpr size_t BALL_PRED_BUFFER_SIZE = BALL_PRED_TICKS[BALL_PRED_TICKS_COUNT - 1];
+    static constexpr float POS_MOE = 1.0f;
+    static constexpr float VEL_MOE = 3.5f;
+    static constexpr float ANG_VEL_MOE = 1.5f;
+
     static constexpr size_t BOOST_PAD_OBS = 34;
 
     static constexpr size_t BOOST_PADS_BIG_COUNT = 6;
@@ -70,9 +86,23 @@ private:
     size_t max_players_per_team_;
     std::mt19937 rng_;
 
+    ffi::BallSimArenaPtr ball_pred_arena_;
+
+    // Holds ball prediction data for this obs builder (1 per env).
+    std::array<ffi::BallSimBallState, BALL_PRED_BUFFER_SIZE> ball_pred_;
+    ffi::BallSimBallState state_to_verify_{};
+    size_t ball_pred_head_ = 0;
+    uint64_t tick_last_updated_ball_pred_ = 999; // idk, this should work and i cant just use a negative.
+
     // These are the lightweight buffers to shuffle when inserting cars into the obs.
-    std::vector<uint32_t> teammate_indices_;
-    std::vector<uint32_t> opponent_indices_;
+    std::vector<uint32_t> team_A_indices_;
+    std::vector<uint32_t> team_B_indices_;
+    void pre_step_rand(const std::vector<AgentMeta>& agents);
+
+    // Ball Sim helpers.
+    bool exceeds_moe(const float a, const float b, const float moe) const;
+    bool needs_repred(const ffi::BallSimBallState& curr_arena_ball_state) const;
+    void pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_state, uint64_t ticks_at_update);
 
     // Normalization & writer helpers.
     // All of these methods will, as their name says, write their values into the obs pointer and increments it.
@@ -82,6 +112,7 @@ private:
     void write_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
     void write_right_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const;
 
+    void write_ball_pred(float*& ptr, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x);
     void write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x, bool is_agent) const;
     void write_empty_car(float*& ptr) const;
 };
