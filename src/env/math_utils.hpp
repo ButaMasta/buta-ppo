@@ -6,12 +6,27 @@
 
 namespace buta_ppo::env::math {
 
+/**
+ * @brief Subtracts two vectors and stores the result in a provided buffer.
+ * 
+ * @param vec_a The first vector.
+ * @param vec_b The Second vector.
+ * @param result The result location to store the subtraction.
+ */
 inline void sub_vec3(const float* vec_a, const float* vec_b, float* result) {
     result[0] = vec_a[0] - vec_b[0];
     result[1] = vec_a[1] - vec_b[1];
     result[2] = vec_a[2] - vec_b[2];
 }
 
+/**
+ * @brief Converts euler angles to a 3x3 rotation matrix.
+ * 
+ * @param pitch The pitch angle.
+ * @param yaw The yaw angle.
+ * @param roll The roll angle.
+ * @param out_mat The matrix to store the resulting conversion into.
+ */
 inline void euler_to_mat3(float pitch, float yaw, float roll, float out_mat[3][3]) {
     float sy = std::sin(yaw), cy = std::cos(yaw);
     float sp = std::sin(pitch), cp = std::cos(pitch);
@@ -33,6 +48,12 @@ inline void euler_to_mat3(float pitch, float yaw, float roll, float out_mat[3][3
     out_mat[2][2] = cp * cr;
 }
 
+/**
+ * @brief Creates a random normalization vector ensuring even spherical sampling.
+ * 
+ * @param rng The rng device to use.
+ * @param out_vec The vector reference to store the result to.
+ */
 inline void random_norm_vec(std::mt19937& rng, float out_vec[3]) {
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
     while (true) {

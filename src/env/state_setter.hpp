@@ -14,6 +14,9 @@ namespace buta_ppo::env { struct AgentMeta; }
 
 namespace buta_ppo::env {
 
+/**
+ * @brief The core class to be extended ensuring state setters have the necessary methods.
+ */
 class StateSetter {
 public:
     virtual ~StateSetter() = default;
@@ -28,6 +31,9 @@ public:
     [[nodiscard]] virtual std::unique_ptr<StateSetter> clone() const = 0;
 };
 
+/**
+ * @brief The state setter to represent normal rocket league random kickoff selection.
+ */
 class DefaultKickoffSetter : public StateSetter {
 public:
     void apply(const ffi::ArenaPtr& arena, ffi::ArenaState& current_state, [[maybe_unused]] const std::vector<AgentMeta>& agents, std::mt19937& rng) override;
@@ -35,6 +41,9 @@ public:
     [[nodiscard]] std::unique_ptr<StateSetter> clone() const override;
 };
 
+/**
+ * @brief Creates a random state with configurable values for enabling randomness of: ball speed, car speed, and cars on ground.
+ */
 class RandomStateSetter : public StateSetter {
 private:
     bool rand_ball_speed_;
@@ -50,6 +59,9 @@ public:
     [[nodiscard]] std::unique_ptr<StateSetter> clone() const override;
 };
 
+/**
+ * @brief Allows for a user friendly way to define a state setter with a desired weight to appear.
+ */
 struct StateSetterDistribution {
     std::unique_ptr<StateSetter> setter;
     float weight = 1.0f;
