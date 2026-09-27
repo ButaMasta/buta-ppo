@@ -58,7 +58,6 @@ ActorCriticImpl::ActorCriticImpl(const ActorCriticConfig& config) {
 
 std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor obs) {
     torch::Tensor shared_features = obs;
-
     if (shared_mlp_) {
         shared_features = shared_mlp_->forward(shared_features);
     }
@@ -87,6 +86,8 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::get_act
 
     auto [logits, values] = forward(obs);
 
+    // Apply negative penalty to invalid action to make their softmax probs near zero.
+    // NOTE: action_masks is of float type here so the cast is necessary.
     torch::Tensor masked_logits = torch::where(
         action_masks.to(torch::kBool),
         logits,
@@ -108,6 +109,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluat
 ) {
     auto [logits, values] = forward(obs);
 
+    // NOTE: action_masks is of bool type here so the cast is not needed.
     torch::Tensor masked_logits = torch::where(
         action_masks,
         logits,
@@ -115,7 +117,6 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluat
     );
 
     torch::Tensor log_softmax_logits = torch::log_softmax(masked_logits, -1);
-
     torch::Tensor log_probs = log_softmax_logits.gather(-1, actions.unsqueeze(-1)).squeeze(-1);
 
     torch::Tensor probs = torch::softmax(masked_logits, -1);

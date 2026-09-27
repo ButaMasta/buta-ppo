@@ -8,7 +8,11 @@
 
 namespace buta_ppo::rl {
 
-// User MUST fill out these fields. Default values are intentionally omitted.
+/**
+ * @brief Config params to define the MLP layout.
+ * 
+ * NOTE: User MUST fill out these fields. Default values are intentionally omitted.
+ */
 struct ActorCriticConfig {
     int64_t obs_size;
     int64_t action_size;
@@ -21,6 +25,9 @@ struct ActorCriticConfig {
     bool use_layer_norm;
 };
 
+/**
+ * @brief LibTorch module implementation for the network.
+ */
 class ActorCriticImpl : public torch::nn::Module {
 private:
     // Shared initial layers.
@@ -40,16 +47,34 @@ private:
 public:
     explicit ActorCriticImpl(const ActorCriticConfig& config);
 
-    // Takes in the observation tensor and returns {logits, values}
-    std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor obs);
+    /**
+     * @brief Performs a forward pass through the shared, actor, and critic networks. 
+     * 
+     * @param obs The batched obs tensor.
+     * @return A tuple containing the unnormalized action logits and the state value predictions.
+     */
+    [[nodiscard]] std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor obs);
 
-    // Gets the actions, log probs, and values for a given obs and its corresponding action mask.
+    /**
+     * @brief Samples actions from the policy dist and estimates state values during rollout.
+     * 
+     * @param obs The batched obs tensor.
+     * @param action_masks The bool mask tensor indicating valid env actions.
+     * @return A tuple containing sampled actions, their log probs, and the state values.
+     */
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> get_action_and_value(
         torch::Tensor obs,
         torch::Tensor action_masks
     );
 
-    // Gets the log probs of actions, entropy of those probs, and values for a given obs, action space, and action masks.
+    /**
+     * @brief Evaluates historical actions to compute log probs and policy entropy during back prop.
+     * 
+     * @param obs The batched obs tensor.
+     * @param actions The tensor of actions previously selected by the policy.
+     * @param action_masks The bool mask tensor indicating valid env actions.
+     * @return A tuple containing the log probs, dist entropy, and state values. 
+     */
     std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> evaluate_actions(
         torch::Tensor obs,
         torch::Tensor actions,
@@ -60,4 +85,4 @@ public:
 // Wrap class in torch module.
 TORCH_MODULE(ActorCritic);
 
-}; // namespace buta_ppo::rl 
+} // namespace buta_ppo::rl 
