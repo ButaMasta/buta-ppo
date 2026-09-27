@@ -109,12 +109,26 @@ Executing the compiled binary will automatically search the `checkpoints/` direc
 
 To safely interrupt training, send a `SIGINT` (Ctrl+C). The framework will catch the signal, complete the active optimization epoch, serialize the model state to disk, and exit.
 
-**TensorBoard Logging:**
-Metrics including policy loss, value loss, entropy, and individual reward component averages are written to `logs/`.
+### TensorBoard Logging:
+Metrics including policy loss, value loss, entropy, and individual reward component averages are written to `logs/`. In order to setup tensorboard follow these steps:
 
+1. **Choose A Location For Your Virtual Environment:** This can be anywhere you'd like.
+2. **Create The Virtual Environment:**
 ```bash
-tensorboard --logdir=logs/
+python -m venv .venv
+```
+3. **Activate The Environment:** This will have to be done anytime you want to view the tensorboard if the environment is not already active. Note that the specific `activate` file you select depends on your terminal.
+```bash
+source .venv/bin/activate
+```
+4. **Install TensorBoard:**
+```bash
+pip install tensorboard
+```
+5. **Run TensorBoard:**
+```bash
+tensorboard --logdir=/path/to/logs --host 0.0.0.0 --port=6006
 ```
 
-**Visualizer Mode:**
+### Visualizer Mode:
 Setting `config.render = true;` in `main.cpp` will bypass the optimization loop, restrict execution to a single environment thread, and launch the RocketSim visualizer for real-time policy evaluation.
