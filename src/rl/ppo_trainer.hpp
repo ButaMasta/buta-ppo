@@ -6,6 +6,7 @@
 #include <torch/torch.h>
 #include <ATen/autocast_mode.h>
 #include <ATen/cuda/CUDAGraph.h>
+
 #include <memory>
 #include <unordered_map>
 #include <string>
@@ -33,6 +34,9 @@ struct PPOConfig {
     float critic_lr = 3e-4f;
 };
 
+/**
+ * @brief Enforces BFloat16 mixed-precision within scoped execution blocks.
+ */
 struct BFloat16AutocastGuard {
     bool prev_enabled;
     c10::ScalarType prev_dtype;
@@ -84,6 +88,7 @@ private:
     torch::Tensor static_value_loss_;
     torch::Tensor static_entropy_;
 
+    // An implementations of torch utils' clip grad norm that works with CUDA graphs.
     void graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& parameters, float max_norm);
 
 public:
@@ -92,12 +97,15 @@ public:
     /**
      * @brief Executes PPO optimization loop over collected rollouts.
      * 
-     * @param buffer - The Rollout buffer containing all the data for training.
-     * @return std::unordered_map<std::string, float> - Metrics.
+     * @param buffer The Rollout buffer containing all the data for training.
+     * @return Metrics (loss and entropy).
      */
-    std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
+    [[nodiscard]] std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
 
+    /**
+     * @brief The core compute during consumption designed for CUDA graph capture and replay.
+     */
     void execute_minibatch_graph_logic();
 };
 
-}; // namespace buta_ppo::rl
+} // namespace buta_ppo::rl

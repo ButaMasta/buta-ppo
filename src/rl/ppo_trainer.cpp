@@ -5,18 +5,20 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <ATen/cuda/CUDAContext.h>
 
+#include <algorithm>
+
 namespace buta_ppo::rl {
 
 PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device)
     : config_(config), actor_critic_(actor_critic), device_(device) {
-    auto opt_opts = torch::optim::AdamOptions(config_.policy_lr);
+    const auto opt_opts = torch::optim::AdamOptions(config_.policy_lr);
     optimizer_ = std::make_unique<torch::optim::Adam>(actor_critic_->parameters(), opt_opts);
 }
 
 void PPOTrainer::graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& parameters, float max_norm) {
     if (parameters.empty()) return;
 
-    auto options = parameters[0].options();
+    const auto options = parameters[0].options();
     torch::Tensor total_norm_sq = torch::zeros({1}, options);
     std::vector<torch::Tensor> grads;
 
@@ -30,9 +32,7 @@ void PPOTrainer::graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& par
     if (grads.empty()) return;
 
     torch::Tensor total_norm = total_norm_sq.sqrt();
-
     torch::Tensor clip_coef = max_norm / (total_norm + 1e-6f);
-
     torch::Tensor clamp_coef = torch::clamp_max(clip_coef, 1.0f);
 
     for (auto& g : grads) {
@@ -74,6 +74,7 @@ void PPOTrainer::execute_minibatch_graph_logic() {
         static_value_loss_.copy_(value_loss.detach());
         static_entropy_.copy_(entropy.mean().detach());
     }
+
     // Optim.
     optimizer_->zero_grad();
     loss.backward();
@@ -85,7 +86,7 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     actor_critic_->train();
 
     // Flatten buffers.
-    int64_t total_batch_size = buffer.obs_.size(0) * buffer.obs_.size(1);
+    const int64_t total_batch_size = buffer.obs_.size(0) * buffer.obs_.size(1);
 
     torch::Tensor b_obs = buffer.obs_.view({ total_batch_size, -1 });
     torch::Tensor b_actions = buffer.actions_.view({ total_batch_size });
@@ -106,26 +107,27 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     torch::Tensor total_policy_loss_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_value_loss_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_entropy_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
+    
     int updates = 0;
-    bool early_stop = false;
+    // bool early_stop = false; // Ommited, was only used when KL divergence was monitored.
 
     // PPO Epoch loop.
     for (int epoch = 0; epoch < config_.epochs; ++epoch) {
-        if (early_stop) break;
+        // if (early_stop) break;
 
         // Shuffle.
         torch::randperm_out(batch_indices_, total_batch_size);
 
         for (int64_t start = 0; start < total_batch_size; start += config_.mini_batch_size) {
-            int64_t end = std::min(start + config_.mini_batch_size, total_batch_size);
-            torch::Tensor mb_inds = batch_indices_.slice(0, start, end);
+            const int64_t end = std::min(start + config_.mini_batch_size, total_batch_size);
+            const torch::Tensor mb_inds = batch_indices_.slice(0, start, end);
 
             if (!static_mb_obs_.defined()) {
-                auto float_opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
-                auto int_opts = torch::TensorOptions().device(device_).dtype(torch::kInt64);
-                auto bool_opts = torch::TensorOptions().device(device_).dtype(torch::kBool);
+                const auto float_opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
+                const auto int_opts = torch::TensorOptions().device(device_).dtype(torch::kInt64);
+                const auto bool_opts = torch::TensorOptions().device(device_).dtype(torch::kBool);
 
-                int64_t mb_size = mb_inds.size(0);
+                const int64_t mb_size = mb_inds.size(0);
 
                 static_mb_obs_ = torch::empty({mb_size, b_obs.size(1)}, float_opts);
                 static_mb_actions_ = torch::empty({mb_size}, int_opts);
@@ -204,4 +206,4 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     };
 }
 
-}; // namespace buta_ppo::rl
+} // namespace buta_ppo::rl

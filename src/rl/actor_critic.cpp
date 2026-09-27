@@ -34,14 +34,14 @@ ActorCriticImpl::ActorCriticImpl(const ActorCriticConfig& config) {
     }
 
     // Build actor layers.
-    int64_t actor_out_size = config.obs_size;
+    int64_t actor_out_size = shared_out_size;
     if (!config.actor_layers.empty()) {
         actor_mlp_ = register_module("actor_mlp", build_block(shared_out_size, config.actor_layers, config.use_layer_norm));
         actor_out_size = config.actor_layers.back();
     }
 
     // Build critic layers.
-    int64_t critic_out_size = config.obs_size;
+    int64_t critic_out_size = shared_out_size;
     if (!config.critic_layers.empty()) {
         critic_mlp_ = register_module("critic_mlp", build_block(shared_out_size, config.critic_layers, config.use_layer_norm));
         critic_out_size = config.critic_layers.back();
@@ -128,4 +128,4 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluat
     return { log_probs, entropy, values };
 }
 
-}; // namespace buta_ppo::rl 
+} // namespace buta_ppo::rl 
