@@ -4,7 +4,6 @@
 #include <iostream>
 #include <csignal>
 #include <atomic>
-#include <iostream>
 #include <locale>
 
 namespace ffi = buta_ppo::ffi;

@@ -13,7 +13,6 @@
 #include <atomic>
 #include <string>
 #include <vector>
-#include <stdexcept>
 
 // Forward declarations.
 class TensorBoardLogger;
