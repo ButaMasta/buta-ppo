@@ -12,6 +12,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+
 #include <torch/torch.h>
 
 // Forward declarations.
@@ -39,7 +40,7 @@ struct BatchedStepResult {
 };
 
 /**
- * @brief The core class housing the multi-threaded logic for RocketSim environments.
+ * @brief Manages the thread pool for multiple RocketSim envs in parallel and construct batches.
  */
 class VecEnv {
 private:
@@ -51,7 +52,6 @@ private:
     size_t total_agents_;
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
-
     std::unordered_map<std::string, double> aggregate_reward_breakdown_;
 
     torch::Tensor batched_obs_;
@@ -63,7 +63,8 @@ private:
     std::atomic<bool> terminate_pool_{false};
     std::atomic<int> pending_tasks_{0};
 
-    std::atomic<int> batch_count_{0}; // Identifier for what batch number is expected of all workers.
+    // Identifier for what batch number is expected of all workers.
+    std::atomic<int> batch_count_{0};
 
     std::mutex start_mutex_;
     std::condition_variable cv_start_;
@@ -78,9 +79,9 @@ private:
     /**
      * @brief The multi-threaded method that all threads spawned run.
      * 
-     * @param worker_id - The ID of this thread.
-     * @param start_idx - The start idx of this worker's working area. (Which envs it is responsible for)
-     * @param end_idx - The end idx of this worker's working area.
+     * @param worker_id The ID of this thread.
+     * @param start_idx The start idx of this worker's working area. (Which envs it is responsible for)
+     * @param end_idx The end idx of this worker's working area.
      */
     void worker_loop(size_t worker_id, size_t start_idx, size_t end_idx);
     
@@ -94,6 +95,7 @@ public:
         size_t max_players_per_team = 4, 
         bool render = false
     );
+
     ~VecEnv();
 
     /**
@@ -101,17 +103,17 @@ public:
      * 
      * NOTE: Do not read any rewards or dones after this call and before a step call as the data is stale.
      * 
-     * @return BatchedResetResult - The result of the reset.
+     * @return BatchedResetResult The result of the reset.
      */
-    BatchedResetResult reset();
+    [[nodiscard]] BatchedResetResult reset();
 
     /**
      * @brief Step the entrire worker threadpool and retrieve the batched result.
      * 
-     * @param batched_actions - The actions to dispatch to the workers.
-     * @return BatchedStepResult - The entire result of all worker's step.
+     * @param batched_actions The actions to dispatch to the workers.
+     * @return BatchedStepResult The entire result of all worker's step.
      */
-    BatchedStepResult step(const int* batched_actions);
+    [[nodiscard]] BatchedStepResult step(const int* batched_actions);
 
     /**
      * @brief Update the aggregated rewards for telemetry logging.
@@ -124,4 +126,4 @@ public:
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; };
 };
 
-}; // namespace buta_ppo::env
+} // namespace buta_ppo::env
