@@ -6,9 +6,10 @@
 #include "actor_critic.hpp"
 #include "env/state_setter.hpp"
 
+#include <torch/torch.h>
+
 #include <cstddef>
 #include <stdexcept>
-#include <torch/torch.h>
 #include <memory>
 #include <atomic>
 #include <string>
@@ -35,7 +36,7 @@ struct MatchDistribution {
     /**
      * @brief Total players in this match disctribution.
      * 
-     * @return size_t - total.
+     * @return Total players across both teams.
      */
     [[nodiscard]] size_t total_players() const {
         return blue_players + orange_players;
@@ -44,7 +45,7 @@ struct MatchDistribution {
     /**
      * @brief Translates from this struct format to a team layout using the FFI Team enum.
      * 
-     * @return std::vector<ffi::Team> - The vector of all team member's Team enum.
+     * @return The vector of all team member's Team enum.
      */
     [[nodiscard]] std::vector<ffi::Team> to_team_layout() const {
         std::vector<ffi::Team> layout;
@@ -60,6 +61,13 @@ struct MatchDistribution {
  * 
  * Contains all of the configuration values for a bot with defaults in place 
  * allowing the user to have a baseline before customizing it to their needs.
+ * 
+ * NOTE: `setter_distributions` MUST be set by the user.
+ * NOTE: `num_minibatches` is HIGHLY hardware and network layer setup dependent. Experiement 
+ * on your own. Start small on steps per iteration and high on num minibatches. For me with 
+ * 12gb VRAM I was able to comfortably get away with 50'000 steps per iter and 1
+ * minibatch. I honestly dont know what happens if you exceed available VRAM but it should
+ * crash immediately and just be the program... probably.  
  */
 struct RunnerConfig {
     std::string bot_name = "default";
@@ -68,14 +76,15 @@ struct RunnerConfig {
     std::vector<MatchDistribution> match_distributions = {
         {1, 1, 1.0f}
     };
-    // MUST BE SET BY USER.
+
     std::vector<env::StateSetterDistribution> setter_distributions;
+
     size_t num_envs = 256;
     size_t num_threads = 12;
     size_t max_players_per_team = 3;
     int ticks_per_step = 8;
 
-    size_t target_steps_per_update = 50'000;
+    size_t target_steps_per_update = 50'000; // Good starting values to guage your hardware with your network size.
     size_t num_minibatches = 4;
 
     ActorCriticConfig ac_cfg;
@@ -85,11 +94,11 @@ struct RunnerConfig {
 /**
  * @brief Given the desired match distributions, evenly allocate environments to represent them.
  * 
- * @param target_total_envs - The total envs to have.
- * @param distributions - The distributions and weights to allocate envs to.
- * @return std::vector<size_t> - The number of envs correlating to the match distributions.
+ * @param target_total_envs The total envs to have.
+ * @param distributions The distributions and weights to allocate envs to.
+ * @return A vector containing the number of envs correlating to the match distributions.
  */
-inline std::vector<size_t> compute_env_counts(
+[[nodiscard]] inline std::vector<size_t> compute_env_counts(
     size_t target_total_envs,
     const std::vector<MatchDistribution>& distributions
 ) {
@@ -115,7 +124,7 @@ inline std::vector<size_t> compute_env_counts(
     float max_weight = -1.0f;
 
     for (size_t i = 0; i < distributions.size(); i++) {
-        float norm_weight = distributions[i].weight / weight_sum;
+        const float norm_weight = distributions[i].weight / weight_sum;
         counts[i] = static_cast<size_t>(target_total_envs * norm_weight);
         allocated += counts[i];
 
@@ -133,7 +142,7 @@ inline std::vector<size_t> compute_env_counts(
 }
 
 /**
- * @brief The core class that encapsulates the logic for actually running the training.
+ * @brief The core class that encapsulates the logic for actually running the entire training process.
  */
 class PPORunner {
 private:
@@ -145,9 +154,9 @@ private:
     std::unique_ptr<PPOTrainer> trainer_;
     std::unique_ptr<RolloutBuffer> buffer_;
 
-    size_t total_agents_;
-    size_t buffer_size_;
-    int64_t total_steps_per_update_;
+    size_t total_agents_{0};
+    size_t buffer_size_{0};
+    int64_t total_steps_per_update_{0};
 
     torch::Tensor actions_cpu_;
     torch::Tensor step_obs_gpu_;
@@ -170,24 +179,24 @@ private:
     /**
      * @brief Attempts to find a load a checkpoint for a given bot.
      * 
-     * @param dir - The directory to search for checkpoints with the format: <bot name>_<total steps trained>.pt
-     * @return int64_t - If a checkpoint was found then the total steps trained, otherwise -1.
+     * @param dir The directory to search for checkpoints with the format: <bot name>_<total steps trained>.pt
+     * @return If a checkpoint was found then the total steps trained, otherwise -1.
      */
     int64_t load_latest_checkpoint(const std::string& dir);
     
     /**
      * @brief Runs bot training and handles all associated processes.
      * 
-     * @param num_updates - The number of updates to run the training for.
-     * @param stop_flag - The atomic flag to indicate that the training loop should stop and save.
-     * @param checkpoint_dir - The directory to save a checkpoint to.
+     * @param num_updates The number of updates to run the training for.
+     * @param stop_flag The atomic flag to indicate that the training loop should stop and save.
+     * @param checkpoint_dir The directory to save a checkpoint to.
      */
     void run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
 
     /**
      * @brief Handles running a single environment as a render of the bot in RocketSim.
      * 
-     * @param stop_flag - The atomic flad to indicate that the render loop should stop.
+     * @param stop_flag The atomic flad to indicate that the render loop should stop.
      */
     void run_render(const std::atomic<bool>& stop_flag);
 
@@ -198,18 +207,18 @@ public:
     /**
      * @brief Saves a checkpoint of the bot.
      * 
-     * @param dir - The directory to save the checkpoint to.
+     * @param dir The directory to save the checkpoint to.
      */
     void save_checkpoint(const std::string& dir) const;
 
     /**
      * @brief Chooses between running render or training based on the config.
      * 
-     * @param num_updates - The number of updates to run the training for.
-     * @param stop_flag - The atomic flag to indicate that the training loop should stop and save.
-     * @param checkpoint_dir - The directory to save a checkpoint to.
+     * @param num_updates The number of updates to run the training for.
+     * @param stop_flag The atomic flag to indicate that the training loop should stop and save.
+     * @param checkpoint_dir The directory to save a checkpoint to.
      */
     void run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
 };
 
-}; // namespace buta_ppo::rl
+} // namespace buta_ppo::rl

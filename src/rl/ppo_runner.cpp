@@ -3,6 +3,7 @@
 #include "rollout_buffer.hpp"
 #include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
+
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -17,14 +18,14 @@ PPORunner::PPORunner(const RunnerConfig& config)
     : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU) {
     
     if (torch::cuda::is_available()) {
-        std::cout << "CUDA detected. Running on GPU." << std::endl;
+        std::cout << "CUDA detected. Running on GPU.\n";
         at::globalContext().setUserEnabledCuDNN(true);
         at::globalContext().setBenchmarkCuDNN(true);
     } else {
-        std::cout << "CUDA not found. Defaulting to CPU." << std::endl;
+        std::cout << "CUDA not found. Defaulting to CPU.\n";
     }
 
-    std::string log_file = "logs/" + config_.bot_name + ".tfevents";
+    const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
     TensorBoardLoggerOptions logger_options_{};
     logger_options_.resume_ = true;
     logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options_);
@@ -46,16 +47,16 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
     // Scan directory for .pt files
     for (const auto& entry : fs::directory_iterator(dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".pt") {
-            std::string filename = entry.path().stem().string();
-            
-            size_t delim_pos = filename.find_last_of('_');
+            const std::string filename = entry.path().stem().string();
+            const size_t delim_pos = filename.find_last_of('_');
+
             if (delim_pos != std::string::npos) {
                 try {
                     // Extract the string after the last '_' and convert to int64
-                    int64_t steps = std::stoll(filename.substr(delim_pos + 1));
+                    const int64_t steps = std::stoll(filename.substr(delim_pos + 1));
                     
                     // Only load if the name prefix matches the config
-                    std::string prefix = filename.substr(0, delim_pos);
+                    const std::string prefix = filename.substr(0, delim_pos);
                     if (prefix == config_.bot_name && steps > max_steps) {
                         max_steps = steps;
                         latest_file = entry.path().string();
@@ -95,8 +96,8 @@ void PPORunner::setup_dimensions_and_buffers() {
     );
 
     total_agents_ = vec_env_->get_total_agents();
-    size_t obs_size = vec_env_->get_single_obs_size();
-    size_t action_space_size = vec_env_->get_action_space_size();
+    const size_t obs_size = vec_env_->get_single_obs_size();
+    const size_t action_space_size = vec_env_->get_action_space_size();
 
     if (config_.render) {
         config_.target_steps_per_update = total_agents_;
@@ -110,8 +111,8 @@ void PPORunner::setup_dimensions_and_buffers() {
     total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * total_agents_);
     config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
 
-    config_.ac_cfg.obs_size = obs_size;
-    config_.ac_cfg.action_size = action_space_size;
+    config_.ac_cfg.obs_size = static_cast<int64_t>(obs_size);
+    config_.ac_cfg.action_size = static_cast<int64_t>(action_space_size);
     
     actor_critic_ = ActorCritic(config_.ac_cfg);
     actor_critic_->to(device_);
@@ -122,14 +123,15 @@ void PPORunner::setup_dimensions_and_buffers() {
         buffer_size_, total_agents_, obs_size, action_space_size, device_
     );
 
-    auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU).pinned_memory(true);
-    actions_cpu_ = torch::empty({(int64_t)total_agents_}, cpu_int_opts);
+    const int64_t t_agents = static_cast<int64_t>(total_agents_);
+    const auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU).pinned_memory(true);
+    actions_cpu_ = torch::empty({t_agents}, cpu_int_opts);
 
-    auto float_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
-    step_obs_gpu_ = torch::empty({(int64_t)total_agents_, (int64_t)obs_size}, float_opts);
-    step_masks_gpu_ = torch::empty({(int64_t)total_agents_, (int64_t)action_space_size}, float_opts);
-    step_rewards_gpu_ = torch::empty({(int64_t)total_agents_}, float_opts);
-    step_dones_gpu_ = torch::empty({(int64_t)total_agents_}, float_opts);
+    const auto float_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
+    step_obs_gpu_ = torch::empty({t_agents, static_cast<int64_t>(obs_size)}, float_opts);
+    step_masks_gpu_ = torch::empty({t_agents, static_cast<int64_t>(action_space_size)}, float_opts);
+    step_rewards_gpu_ = torch::empty({t_agents}, float_opts);
+    step_dones_gpu_ = torch::empty({t_agents}, float_opts);
 }
 
 void PPORunner::save_checkpoint(const std::string& dir) const {
@@ -137,9 +139,9 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
         fs::create_directories(dir);
     }
     
-    std::string path = dir + "/" + config_.bot_name + "_" + std::to_string(global_step_) + ".pt";
+    const std::string path = dir + "/" + config_.bot_name + "_" + std::to_string(global_step_) + ".pt";
     torch::save(actor_critic_, path);
-    std::cout << "Model checkpoint saved to: " << path << std::endl;
+    std::cout << "Model checkpoint saved to: " << path << "\n";
 }
 
 void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
@@ -149,17 +151,17 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     for (int update = 1; update <= num_updates; ++update) {
 
         if (stop_flag) {
-            std::cout << "\nTraining interrupted by user. Stopping..." << std::endl;
+            std::cout << "\nTraining interrupted by user. Stopping...\n";
             break;
         }
 
-        auto t_start = std::chrono::high_resolution_clock::now();
+        const auto t_start = std::chrono::high_resolution_clock::now();
         buffer_->reset();
 
         torch::Tensor current_obs = reset_res.observations;
         torch::Tensor current_masks = reset_res.action_masks;
 
-        auto rollout_start = std::chrono::high_resolution_clock::now();
+        const auto rollout_start = std::chrono::high_resolution_clock::now();
         
         while (!buffer_->is_full()) {
             step_obs_gpu_.copy_(current_obs, true);
@@ -167,7 +169,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
             auto [actions_gpu, log_probs_gpu, values_gpu] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
 
-            actions_cpu_.copy_(actions_gpu, false); // Blocking sync required for physics
+            // Blocking sync required for physics.
+            actions_cpu_.copy_(actions_gpu, false);
             
             auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>());
 
@@ -185,20 +188,20 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         // Successful rollout, increment global steps.
         global_step_ += total_steps_per_update_;
-        float mean_step_reward = buffer_->rewards_.mean().item<float>();
+        const float mean_step_reward = buffer_->rewards_.mean().item<float>();
         logger_->add_scalar("Reward/Mean_Step", global_step_, mean_step_reward);
 
         vec_env_->update_reward_breakdown();
         const auto& reward_breakdown = vec_env_->get_reward_breakdown();
 
         for (const auto& [name, total_weighted_reward] : reward_breakdown) {
-            double avg_per_step = total_weighted_reward / static_cast<double>(total_steps_per_update_);
+            const double avg_per_step = total_weighted_reward / static_cast<double>(total_steps_per_update_);
             logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(avg_per_step));
         }
         
-        auto rollout_end = std::chrono::high_resolution_clock::now();
+        const auto rollout_end = std::chrono::high_resolution_clock::now();
 
-        // GAE & Optimize
+        // GAE & Optimize.
         step_obs_gpu_.copy_(current_obs, true);
         torch::Tensor next_values;
         {
@@ -207,26 +210,26 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             next_values = values.squeeze(-1);
         }
 
-        auto gae_start = std::chrono::high_resolution_clock::now();
+        const auto gae_start = std::chrono::high_resolution_clock::now();
         buffer_->compute_returns_and_advantages(next_values, step_dones_gpu_);
-        auto gae_end = std::chrono::high_resolution_clock::now();
-        auto metrics = trainer_->train_step(*buffer_);
+        const auto gae_end = std::chrono::high_resolution_clock::now();
+        const auto metrics = trainer_->train_step(*buffer_);
 
-        auto t_end = std::chrono::high_resolution_clock::now();
+        const auto t_end = std::chrono::high_resolution_clock::now();
         
-        std::chrono::duration<double> update_time = t_end - t_start;
-        std::chrono::duration<double> rollout_time = rollout_end - rollout_start;
-        std::chrono::duration<double> gae_time = gae_end - gae_start;
-        double train_time = update_time.count() - rollout_time.count() - gae_time.count();
+        const std::chrono::duration<double> update_time = t_end - t_start;
+        const std::chrono::duration<double> rollout_time = rollout_end - rollout_start;
+        const std::chrono::duration<double> gae_time = gae_end - gae_start;
+        const double train_time = update_time.count() - rollout_time.count() - gae_time.count();
 
-        double total_sps = total_steps_per_update_ / update_time.count();
-        double rollout_sps = total_steps_per_update_ / rollout_time.count();
+        const double total_sps = total_steps_per_update_ / update_time.count();
+        const double rollout_sps = total_steps_per_update_ / rollout_time.count();
 
         logger_->add_scalar("Performance/Total_SPS", global_step_, total_sps);
         logger_->add_scalar("Performance/Rollout_SPS", global_step_, rollout_sps);
-        logger_->add_scalar("Loss/Policy", global_step_, metrics["policy_loss"]);
-        logger_->add_scalar("Loss/Value", global_step_, metrics["value_loss"]);
-        logger_->add_scalar("Loss/Entropy", global_step_, metrics["entropy"]);
+        logger_->add_scalar("Loss/Policy", global_step_, metrics.at("policy_loss"));
+        logger_->add_scalar("Loss/Value", global_step_, metrics.at("value_loss"));
+        logger_->add_scalar("Loss/Entropy", global_step_, metrics.at("entropy"));
 
         std::cout << "Update: " << update 
                   << "\nLifetime Steps: " << global_step_
@@ -236,9 +239,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n |  | Rollout:  " << rollout_time.count() << "s"
                   << "\n |  | GAE:      " << gae_time.count() << "s"
                   << "\n |  | Train:    " << train_time << "s"
-                  << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics["policy_loss"]
-                  << "\n | Value Loss:  " << metrics["value_loss"]
-                  << "\n | Entropy:     " << metrics["entropy"] << std::endl;
+                  << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics.at("policy_loss")
+                  << "\n | Value Loss:  " << metrics.at("value_loss")
+                  << "\n | Entropy:     " << metrics.at("entropy") << "\n";
     }
 
     save_checkpoint(checkpoint_dir);
@@ -249,7 +252,7 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
     torch::Tensor current_obs = reset_res.observations;
     torch::Tensor current_masks = reset_res.action_masks;
 
-    std::cout << "Starting visualizer... Press Ctrl+C to stop." << std::endl;
+    std::cout << "Starting visualizer... Press Ctrl+C to stop.\n";
 
     while (!stop_flag) {
         step_obs_gpu_.copy_(current_obs, true);
@@ -259,7 +262,7 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
 
         actions_cpu_.copy_(actions_gpu, false);
         
-        // vec_env_->step() will now naturally block for ~66ms while rendering smoothly
+        // VecEnv blocks to maintain regular time scale.
         auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>()); 
 
         current_obs = step_res.observations;
@@ -277,4 +280,4 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
     }
 }
 
-}; // namespace buta_ppo::rl
+} // namespace buta_ppo::rl
