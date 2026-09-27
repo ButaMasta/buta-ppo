@@ -1,7 +1,7 @@
 // buta-ppo/src/env/default_action.cpp
 
 /*
-*   Implementation is entirely based off of actions used in rlgymppo_rs and GigaLearn.
+*   Implementation is entirely based off of actions used in GigaLearn.
 */
 
 #include "default_action.hpp"
