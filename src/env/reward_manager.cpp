@@ -1,7 +1,9 @@
 // buta-ppo/src/env/reward_manager.cpp
 #include "reward_manager.hpp"
 #include "rocketsim_env.hpp"
+
 #include <utility>
+#include <cmath>
 
 namespace buta_ppo::env {
 
@@ -19,9 +21,9 @@ float GoalReward::get_reward(const AgentMeta& agent, const ffi::ArenaState& stat
     bool blue_scored = state.ball.phys.pos[1] > 0;
     if ((agent.team == ffi::Team::Blue && blue_scored) || (agent.team == ffi::Team::Orange && !blue_scored)) {
         return 1.0f;
-    } else {
-        return -1.0f;
     }
+
+    return -1.0f;
 }
 
 float VelocityToBallReward::get_reward(const AgentMeta& agent, const ffi::ArenaState& state, [[maybe_unused]] const ffi::ArenaState& prev_state) {
@@ -54,8 +56,8 @@ float VelocityToBallReward::get_reward(const AgentMeta& agent, const ffi::ArenaS
 }
 
 void RewardManager::add_reward(std::string name, std::unique_ptr<RewardFunction> reward_func, float weight) {
-    rewards_.push_back({std::move(name), std::move(reward_func), weight, 0.0});
     telemetry_breakdown_[name] = 0.0;
+    rewards_.push_back({std::move(name), std::move(reward_func), weight, 0.0});
 }
 
 void RewardManager::reset(const ffi::ArenaState& initial_state) {

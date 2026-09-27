@@ -13,32 +13,55 @@ namespace buta_ppo::env { struct AgentMeta; }
 
 namespace buta_ppo::env {
 
-// Template function all other functions will extend.
+/**
+ * @brief Abstract class for defining environment rewards.
+ */
 class RewardFunction {
 public:
     virtual ~RewardFunction() = default;
 
-    // Called at the start of an episode.
-    virtual void reset([[maybe_unused]] const ffi::ArenaState& initial_state) {}
+    /**
+     * @brief Resets any internal state of the reward function after an environment reset.
+     * 
+     * @param initial_state The starting state of the environment.
+     */
+    virtual void reset(const ffi::ArenaState& /*initial_state*/) {}
 
     // Called every tick. Receives the current state and the previous state.
+    /**
+     * @brief Computes the reward value for a specific agent at the current sim tick.
+     * 
+     * @param agent The agent recieving the reward.
+     * @param current_state The current tick state.
+     * @param previous_state The previous tick state.
+     * @return The scalar -1.0f to 1.0f to multiply the weight of the reward by.
+     */
     virtual float get_reward(
         const AgentMeta& agent, 
         const ffi::ArenaState& current_state,
-        [[maybe_unused]] const ffi::ArenaState& previous_state
+        const ffi::ArenaState& previous_state
     ) = 0;
 };
 
+/**
+ * @brief Rewards the bot for touching the ball.
+ */
 class TouchBallReward : public RewardFunction {
 public:
     float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
 };
 
+/**
+ * @brief Rewards the bot for scoring a goal, punishes them for being scored on.
+ */
 class GoalReward : public RewardFunction {
 public:
     float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
 };
 
+/**
+ * @brief Rewards the bot based on a factor of their speed to the ball, punishes them for negative velocity to the ball.
+ */
 class VelocityToBallReward : public RewardFunction {
 public:
     float get_reward(const AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
@@ -51,11 +74,13 @@ struct RewardEntry {
     double accumulated_value;
 };
 
+/**
+ * @brief Manages the set of rewards for the following actions: computing, weighting, and accumulating telemetry.
+ */
 class RewardManager {
 private:
     std::vector<RewardEntry> rewards_;
     ffi::ArenaState previous_state_;
-
     std::unordered_map<std::string, double> telemetry_breakdown_;
 
 public:
@@ -64,14 +89,14 @@ public:
     /**
      * @brief Register a reward function with a specific weight and name.
      * 
-     * @param name - The visual name for the reward. (Used in metrics)
-     * @param reward_func - The pointer to the function itself.
-     * @param weight - The weight for the result of the reward function.
+     * @param name The visual name for the reward. (Used in metrics).
+     * @param reward_func The pointer to the function itself.
+     * @param weight The weight for the result of the reward function.
      */
     void add_reward(std::string name, std::unique_ptr<RewardFunction> reward_func, float weight = 1.0f);
 
     /**
-     * @brief Resets all reward trackers and caches the initial state.
+     * @brief Resets all reward trackers with a new state at the end of an episode.
      * 
      * @param initial_state The initial arena state to reset to.
      */
@@ -80,16 +105,16 @@ public:
     /**
      * @brief Calculates the weighted sum of all rewards for a given agent.
      * 
-     * @param agent - The agent to get the rewards for.
-     * @param current_state - The current arena state to utilize in reward calculation.
-     * @return float - The total reward output for this agent.
+     * @param agent The agent to get the rewards for.
+     * @param current_state The current arena state to utilize in reward calculation.
+     * @return The total weighted reward output for this agent.
      */
-    float get_reward(const AgentMeta& agent, const ffi::ArenaState& current_state);
+    [[nodiscard]] float get_reward(const AgentMeta& agent, const ffi::ArenaState& current_state);
 
     /**
      * @brief Updates the previous state. Called after all rewards for a tick have been fetched.
      * 
-     * @param arena_state - The state to set the previous state to.
+     * @param arena_state The state to set the previous state to.
      */
     void update_previous_state(const ffi::ArenaState& arena_state);
 
