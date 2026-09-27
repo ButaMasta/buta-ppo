@@ -25,6 +25,10 @@ int main() {
         std::cerr << "[ERROR] Failed to initialize RocketSim." << std::endl;
         return 1;
     }
+    if (!ffi::init_ball_sim("assets/collision_meshes", true)) {
+        std::cerr << "[ERROR] Failed to initialize BallSim." << std::endl;
+        return 1;
+    }
 
     RunnerConfig config;
 
@@ -48,9 +52,9 @@ int main() {
     config.target_steps_per_update = 50'000;
     config.num_minibatches = 1;
 
-    config.ac_cfg.shared_layers = { 1024, 1024, 768 };
-    config.ac_cfg.actor_layers  = { 512 };
-    config.ac_cfg.critic_layers = { 1024 };
+    config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
+    config.ac_cfg.actor_layers  = { 768, 512 };
+    config.ac_cfg.critic_layers = { 1024, 768 };
     config.ac_cfg.use_layer_norm = true;
 
     config.ppo_cfg.policy_lr = 3e-4f;

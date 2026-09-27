@@ -1,14 +1,18 @@
 // buta-ppo/rust_bridge/src/lib.rs
 use std::{ffi::CStr};
 use std::os::raw::c_char;
-use glam::{Mat3A, Vec3A};
 use rocketsim::{
     Arena, ArenaEvent, BallState, Car, 
     CarBodyConfig, CarControls, CarInfo, 
     CarState, GameMode, PhysState, Team,
-    BoostPadConfig
+    BoostPadConfig, Mat3A, Vec3A
 };
 use rocketsim_vis::ArenaVisExt;
+use ball_sim::{
+    Arena as BallSimArena,
+    BallState as BallSimBallState,
+    GameMode as BallSimGameMode
+};
 
 //// C++ State Interface Structs. ////
 
@@ -183,6 +187,22 @@ pub extern "C" fn rs_init(collision_meshes_folder: *const c_char, silent: bool) 
     };
 
     rocketsim::init(path_str, silent).is_ok()
+}
+
+#[no_mangle]
+pub extern "C" fn rs_init_ball_sim(collision_meshes_folder: *const c_char, silent: bool) -> bool {
+    if collision_meshes_folder.is_null() {
+        return false;
+    }
+    
+    // Parse the C-string pointer into a Rust string slice.
+    let c_str: &CStr = unsafe { CStr::from_ptr(collision_meshes_folder) };
+    let path_str: &str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    ball_sim::init(path_str, silent).is_ok()
 }
 
 #[no_mangle]

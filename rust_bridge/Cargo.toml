@@ -7,14 +7,6 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-glam = "0.33.5"
-# Point this to the local submodule path
-rocketsim = { git = "https://github.com/ZealanL/RocketSim.git", branch = "v3-rust" }
-rocketsim_vis = { git = "https://github.com/ZealanL/RocketSim.git", branch = "v3-rust" }
-# rocketsim = { path = "../submodules/RocketSim/rocketsim" }
-# rocketsim_vis = { path = "../submodules/RocketSim/rocketsim_vis" }
-
-[target.'cfg(not(any(target_arch = "x86", target_arch = "x86_64")))'.dependencies]
-# use glam with experimental support for portable SIMD when not running on x86
-# architectures
-glam = { version = "0.33.5", features = ["core-simd"], optional = true }
+rocketsim = { version = "0.1.0", features = ["glam"] }
+rocketsim_vis = "0.1.0"
+ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git" }

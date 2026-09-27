@@ -72,6 +72,7 @@ extern "C" {
 
     // Mesh Initialization.
     bool rs_init(const char* collision_meshes_folder, bool silent);
+    bool rs_init_ball_sim(const char* collision_meshes_folder, bool silent);
 
     // Arena Creation.
     struct rs_arena; // Opaque type representing the Rust Arena struct.
@@ -126,6 +127,10 @@ inline ArenaPtr create_arena_vis(int game_mode = 0) {
 
 inline bool init(const std::string& collision_meshes_folder, bool silent = true) {
     return rs_init(collision_meshes_folder.c_str(), silent);
+}
+
+inline bool init_ball_sim(const std::string& collision_meshes_folder, bool silent = true) {
+    return rs_init_ball_sim(collision_meshes_folder.c_str(), silent);
 }
 
 inline uint32_t add_car(const ArenaPtr& arena, Team team = Team::Blue) {
