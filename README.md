@@ -45,20 +45,29 @@ buta-ppo/
 The build process is automated via CMake, which will automatically fetch required C++ dependencies and compile the Rust FFI bridge during the build phase.
 
 1. **Configure LibTorch Path:** Open `CMakeLists.txt` and update the `Torch_DIR` variable to point to the `share/cmake/Torch` directory of your local LibTorch installation.
-
-
 ```cmake
 set(Torch_DIR "/path/to/your/libtorch/share/cmake/Torch")
 ```
-
-
-2. **Build the Project:**
+2. **Make Necessary Directories:** Place your `collision_meshes/` directory in the `assets/` directory.
 ```bash
-mkdir build && cd build
+mkdir assets logs
+```
+3. **Build the Project:**
+```bash
+mkdir build
+cd build
 cmake ..
 make -j$(nproc)
+cd ..
 ```
-
+4. **Subsequent Builds:** From the project root you can recompile using:
+```bash
+cmake --build build -j$(nproc)
+```
+5. **Execute the Framework:** Run the compiled binary from the root of the project to ensure the collision meshes are located correctly:
+```bash
+./build/buta_ppo
+```
 
 
 ## Configuration
