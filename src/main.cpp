@@ -32,7 +32,7 @@ int main() {
 
     RunnerConfig config;
 
-    config.bot_name = "Porkchop";
+    config.bot_name = "default";
     config.render = false;
 
     config.match_distributions = {
@@ -50,11 +50,11 @@ int main() {
     config.ticks_per_step = 8;
 
     config.target_steps_per_update = 50'000;
-    config.num_minibatches = 1;
+    config.num_minibatches = 2;
 
-    config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
-    config.ac_cfg.actor_layers  = { 768, 512 };
-    config.ac_cfg.critic_layers = { 1024, 768 };
+    config.ac_cfg.shared_layers = { 512, 512 };
+    config.ac_cfg.actor_layers  = { 256, 256 };
+    config.ac_cfg.critic_layers = { 512, 512 };
     config.ac_cfg.use_layer_norm = true;
 
     config.ppo_cfg.policy_lr = 3e-4f;

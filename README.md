@@ -97,9 +97,9 @@ config.setter_distributions = {
 The Actor-Critic implementation supports a shared multilayer perceptron (MLP) feature extractor that branches into independent actor and critic heads.
 
 ```cpp
-config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
-config.ac_cfg.actor_layers  = { 768, 512 };
-config.ac_cfg.critic_layers = { 1024, 768 };
+config.ac_cfg.shared_layers = { 512, 512 };
+config.ac_cfg.actor_layers  = { 256, 256 };
+config.ac_cfg.critic_layers = { 512, 512 };
 config.ac_cfg.use_layer_norm = true;
 ```
 
