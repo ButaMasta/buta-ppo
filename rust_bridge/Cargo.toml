@@ -7,6 +7,6 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-rocketsim = { version = "0.1.0", features = ["glam"] }
-rocketsim_vis = "0.1.0"
+rocketsim = { version = "0.2.0", features = ["glam"] }
+rocketsim_vis = "0.2.0"
 ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git" }
