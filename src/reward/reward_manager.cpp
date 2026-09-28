@@ -90,5 +90,4 @@ void RewardManager::update_previous_state(const ffi::ArenaState& arena_state) {
     previous_state_ = arena_state;
 }
 
-
-} // namespace buta_ppo::env
+} // namespace buta_ppo::reward

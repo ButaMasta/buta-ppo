@@ -130,4 +130,4 @@ void DefaultAction::get_action_mask(const ffi::CarState& car_state, float* out_m
     }
 }
 
-} // namespace buta_ppo::env
+} // namespace buta_ppo::action

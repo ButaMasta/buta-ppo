@@ -121,4 +121,4 @@ private:
     void write_empty_car(float*& ptr) const;
 };
 
-} // namespace buta_ppo::env
+} // namespace buta_ppo::obs

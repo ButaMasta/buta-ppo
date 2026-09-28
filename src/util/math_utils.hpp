@@ -69,4 +69,4 @@ inline void random_norm_vec(std::mt19937& rng, float out_vec[3]) {
     }
 }
 
-} // namespace buta_ppo::env::math
+} // namespace buta_ppo::util::math

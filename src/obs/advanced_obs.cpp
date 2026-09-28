@@ -283,4 +283,4 @@ bool AdvancedObs::build_obs(
     return invert_x;
 }
 
-} // namespace buta_ppo::env
+} // namespace buta_ppo::obs

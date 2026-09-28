@@ -48,4 +48,4 @@ public:
     [[nodiscard]] constexpr size_t get_action_space_size() const { return ACTION_SPACE_SIZE; }
 };
 
-} // namespace buta_ppo::env
+} // namespace buta_ppo::action
