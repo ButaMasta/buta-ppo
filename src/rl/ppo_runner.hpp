@@ -4,7 +4,7 @@
 #include "buta_ppo/ffi.h"
 #include "ppo_trainer.hpp"
 #include "actor_critic.hpp"
-#include "env/state_setter.hpp"
+#include "state/state_setter.hpp"
 
 #include <torch/torch.h>
 
@@ -77,7 +77,7 @@ struct RunnerConfig {
         {1, 1, 1.0f}
     };
 
-    std::vector<env::StateSetterDistribution> setter_distributions;
+    std::vector<state::StateSetterDistribution> setter_distributions;
 
     size_t num_envs = 256;
     size_t num_threads = 12;

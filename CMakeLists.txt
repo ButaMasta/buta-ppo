@@ -46,7 +46,6 @@ add_executable(buta_ppo
     src/action/default_action.cpp
     src/env/rocketsim_env.cpp
     src/env/vec_env.cpp
-    src/env/state_setter.cpp
     src/obs/advanced_obs.cpp
     src/reward/reward_manager.cpp
     src/reward/event_goal.cpp
@@ -56,6 +55,8 @@ add_executable(buta_ppo
     src/rl/actor_critic.cpp
     src/rl/ppo_trainer.cpp
     src/rl/ppo_runner.cpp
+    src/state/default_kickoff.cpp
+    src/state/random_state.cpp
 )
 
 # Expose include/ directory.

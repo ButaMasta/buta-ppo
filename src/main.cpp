@@ -1,6 +1,6 @@
 // buta-ppo/src/main.cpp
 #include "rl/ppo_runner.hpp"
-#include "env/state_setter.hpp"
+#include "state/setters.hpp"
 
 #include <iostream>
 #include <csignal>
@@ -10,6 +10,7 @@
 namespace ffi = buta_ppo::ffi;
 using namespace buta_ppo::rl;
 using namespace buta_ppo::env;
+using namespace buta_ppo::state;
 
 std::atomic<bool> g_stop_training{false};
 
@@ -40,9 +41,9 @@ int main() {
     };
 
     config.setter_distributions = {
-        {DefaultKickoffSetter(), 0.40f},
-        {RandomStateSetter(true, true, true), 0.30f},
-        {RandomStateSetter(true, true, false), 0.30f}
+        {create_default_kickoff_setter(), 0.40f},
+        {create_random_state_setter(true, true, true), 0.30f},
+        {create_random_state_setter(true, true, false), 0.30f}
     };
 
     config.num_envs = 256;

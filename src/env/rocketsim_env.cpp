@@ -13,7 +13,7 @@ namespace buta_ppo::env {
 
 RocketSimEnv::RocketSimEnv(
     const std::vector<ffi::Team>& match_layout, 
-    const std::vector<StateSetterDistribution>& setters, 
+    const std::vector<state::StateSetterDistribution>& setters, 
     int ticks_per_step, size_t max_players_per_team, 
     uint32_t seed, 
     bool render

@@ -5,7 +5,7 @@
 #include "obs/advanced_obs.hpp"
 #include "reward/reward_manager.hpp"
 #include "action/default_action.hpp"
-#include "state_setter.hpp"
+#include "state/state_setter.hpp"
 
 #include <unordered_map>
 #include <vector>
@@ -64,7 +64,7 @@ private:
     std::vector<float> reward_buffer_;
     std::vector<bool> agent_x_inverted_;
 
-    std::vector<StateSetterDistribution> setters_;
+    std::vector<state::StateSetterDistribution> setters_;
     std::discrete_distribution<size_t> setter_selector_;
     std::mt19937 rng_;
 
@@ -91,7 +91,7 @@ private:
 public:
     explicit RocketSimEnv(
         const std::vector<ffi::Team>& match_layout,
-        const std::vector<StateSetterDistribution>& setters,
+        const std::vector<state::StateSetterDistribution>& setters,
         int ticks_per_step = 8, 
         size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}(),

@@ -17,7 +17,7 @@ namespace buta_ppo::env {
 VecEnv::VecEnv(
     size_t num_envs, 
     const std::vector<rl::MatchDistribution>& match_distributions, 
-    const std::vector<env::StateSetterDistribution>& setter_distributions, 
+    const std::vector<state::StateSetterDistribution>& setter_distributions, 
     size_t num_threads, 
     int ticks_per_step, 
     size_t max_players_per_team, 
