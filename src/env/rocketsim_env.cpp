@@ -1,6 +1,7 @@
 // buta-ppo/src/env/rocketsim_env.cpp
 #include "rocketsim_env.hpp"
 #include "buta_ppo/ffi.h"
+#include "reward/rewards.hpp"
 
 #include <algorithm>
 #include <thread>
@@ -39,9 +40,9 @@ RocketSimEnv::RocketSimEnv(
     setter_selector_ = std::discrete_distribution<size_t>(weights.begin(), weights.end());
 
     // Setup Rewards.
-    reward_manager_.add_reward("VelocityToBall", std::make_unique<VelocityToBallReward>(), 0.1f);
-    reward_manager_.add_reward("TouchBall", std::make_unique<TouchBallReward>(), 1.0f);
-    reward_manager_.add_reward("Goal", std::make_unique<GoalReward>(), 200.0f);
+    reward_manager_.add_reward("VelocityToBall", reward::create_velocity_to_ball_reward(), 0.1f);
+    reward_manager_.add_reward("TouchBall", reward::create_touch_ball_reward(), 1.0f);
+    reward_manager_.add_reward("Goal", reward::create_goal_reward(), 200.0f);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {

@@ -43,30 +43,6 @@ public:
     ) = 0;
 };
 
-/**
- * @brief Rewards the bot for touching the ball.
- */
-class TouchBallReward : public RewardFunction {
-public:
-    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
-};
-
-/**
- * @brief Rewards the bot for scoring a goal, punishes them for being scored on.
- */
-class GoalReward : public RewardFunction {
-public:
-    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
-};
-
-/**
- * @brief Rewards the bot based on a factor of their speed to the ball, punishes them for negative velocity to the ball.
- */
-class VelocityToBallReward : public RewardFunction {
-public:
-    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& prev_state) override;
-};
-
 struct RewardEntry {
     std::string name;
     std::unique_ptr<RewardFunction> function;

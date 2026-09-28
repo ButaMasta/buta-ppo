@@ -49,6 +49,9 @@ add_executable(buta_ppo
     src/env/state_setter.cpp
     src/obs/advanced_obs.cpp
     src/reward/reward_manager.cpp
+    src/reward/event_goal.cpp
+    src/reward/touch_ball.cpp
+    src/reward/velocity_to_ball.cpp
     src/rl/rollout_buffer.cpp
     src/rl/actor_critic.cpp
     src/rl/ppo_trainer.cpp
