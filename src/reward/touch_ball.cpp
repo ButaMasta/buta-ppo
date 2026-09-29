@@ -8,8 +8,8 @@
 namespace buta_ppo::reward {
 
 /**
-    * @brief Rewards the bot for touching the ball.
-    */
+* @brief Rewards the bot for touching the ball.
+*/
 class TouchBallReward : public RewardFunction {
 public:
     float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& /*prev_state*/) override {

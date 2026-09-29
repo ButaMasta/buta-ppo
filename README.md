@@ -28,6 +28,7 @@ buta-ppo/
     ├── obs/                 # Observation vector generation and normalization
     ├── reward/              # Extensible reward functions and logging metrics
     ├── rl/                  # LibTorch PPO models, buffers, and training loops
+    ├── state/               # State setters and distribution
     ├── util/                # Inline math and vector operations
     └── main.cpp             # Framework entry point and hyperparameter definition
 ```
@@ -79,16 +80,24 @@ Hyperparameters, match types, and network topologies are strictly defined in `sr
 The framework allocates active environment threads across defined match distributions and initial state setters.
 
 ```cpp
-// Allocate environments based on relative weights
+// Configure match distributions by a weight.
 config.match_distributions = {
-    {1, 1, 1.0f} // 1v1 Matches
+    {1, 1, 0.5f},   // 1v1 at 50% weight.
+    {2, 2, 0.5f}    // 2v2 at 50% weight.
 };
 
-// Define initial physical states
+// Configure state setter distributions by weight.
 config.setter_distributions = {
-    {DefaultKickoffSetter(), 0.40f},              // Standard kickoff
-    {RandomStateSetter(true, true, true), 0.30f}, // Randomized bounds (Grounded)
-    {RandomStateSetter(true, true, false), 0.30f} // Randomized bounds (Aerial)
+    {create_default_kickoff_setter(), 0.40f},               // Regular kickoffs at 40%.
+    {create_random_state_setter(true, true, true), 0.30f},  // Random with cars on the ground at 30%.
+    {create_random_state_setter(true, true, false), 0.30f}  // Truly random at 30%.
+};
+
+// Configure rewards with their metrics names and their weights.
+config.reward_entries = {
+    {"VelocityToBall", create_velocity_to_ball_reward(), 0.1f}, // Velocity to ball at 0.1 weight.
+    {"TouchBall", create_touch_ball_reward(), 1.0f},            // Touch ball at 1.0 weight.
+    {"Goal", create_goal_reward(), 200.0f}                      // Goal at 200.0 weight.
 };
 ```
 
