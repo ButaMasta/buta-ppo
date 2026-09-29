@@ -54,7 +54,7 @@ int main() {
         {"Goal", create_goal_reward(), 200.0f}
     };
 
-    config.num_envs = 256;
+    config.num_envs_per_thread = 21;
     config.num_threads = 12;
     config.ticks_per_step = 8;
 

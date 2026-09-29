@@ -81,16 +81,17 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
 void PPORunner::setup_dimensions_and_buffers() {
 
     if (config_.render) {
-        config_.num_envs = 1;
+        config_.num_envs_per_thread = 1;
+        config_.num_threads = 1;
         config_.num_minibatches = 1;
     }
 
     vec_env_ = std::make_unique<env::VecEnv>(
-        config_.num_envs, 
+        config_.num_envs_per_thread, 
         config_.match_distributions,
         config_.setter_distributions,
         config_.reward_entries,
-        std::min(config_.num_envs, config_.num_threads), 
+        config_.num_threads, 
         config_.ticks_per_step, 
         config_.max_players_per_team,
         config_.render

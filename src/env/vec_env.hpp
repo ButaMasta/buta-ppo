@@ -88,7 +88,7 @@ private:
     
 public:
     VecEnv(
-        size_t num_envs, 
+        size_t num_envs_per_thread, 
         const std::vector<rl::MatchDistribution>& match_distributions,
         const std::vector<state::StateSetterDistribution>& setter_distributions,
         const std::vector<reward::RewardEntry>& reward_entries,

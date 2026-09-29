@@ -5,7 +5,6 @@
 #include "vec_env.hpp"
 #include "rl/ppo_runner.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -15,7 +14,7 @@
 namespace buta_ppo::env {
 
 VecEnv::VecEnv(
-    size_t num_envs, 
+    size_t num_envs_per_thread, 
     const std::vector<rl::MatchDistribution>& match_distributions, 
     const std::vector<state::StateSetterDistribution>& setter_distributions, 
     const std::vector<reward::RewardEntry>& reward_entries,
@@ -23,7 +22,8 @@ VecEnv::VecEnv(
     int ticks_per_step, 
     size_t max_players_per_team, 
     bool render
-) : num_envs_(num_envs) {
+) {
+    num_envs_ = num_envs_per_thread * num_threads;
     
     const auto env_counts = rl::compute_env_counts(num_envs_, match_distributions);
 
@@ -72,13 +72,9 @@ VecEnv::VecEnv(
     batched_dones_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
 
     // Create thread pool.
-    size_t actual_threads = std::min(num_threads, num_envs_);
-    size_t envs_per_thread = num_envs_ / actual_threads;
-    size_t remainder = num_envs_ % actual_threads;
-
     size_t current_start = 0;
-    for (size_t i = 0; i < actual_threads; i++) {
-        size_t chunk_size = envs_per_thread + (i < remainder ? 1 : 0);
+    for (size_t i = 0; i < num_threads; i++) {
+        size_t chunk_size = num_envs_per_thread;
         size_t current_end = current_start + chunk_size;
 
         workers_.emplace_back(&VecEnv::worker_loop, this, i, current_start, current_end);

@@ -81,7 +81,7 @@ struct RunnerConfig {
     std::vector<state::StateSetterDistribution> setter_distributions;
     std::vector<reward::RewardEntry> reward_entries;
 
-    size_t num_envs = 256;
+    size_t num_envs_per_thread = 20;
     size_t num_threads = 12;
     size_t max_players_per_team = 3;
     int ticks_per_step = 8;
