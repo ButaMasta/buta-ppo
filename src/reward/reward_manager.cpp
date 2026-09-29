@@ -2,14 +2,14 @@
 #include "reward_manager.hpp"
 #include "env/rocketsim_env.hpp"
 
-#include <utility>
-
 namespace buta_ppo::reward {
 
-void RewardManager::add_reward(std::string name, std::unique_ptr<RewardFunction> reward_func, float weight) {
-    telemetry_breakdown_[name] = 0.0;
-    rewards_.push_back({std::move(name), std::move(reward_func), weight, 0.0});
-}
+void RewardManager::set_rewards(const std::vector<RewardEntry>& rewards) {
+        rewards_ = rewards;
+        for (const RewardEntry& entry : rewards) {
+            telemetry_breakdown_[entry.name] = 0.0;
+        }
+    }
 
 void RewardManager::reset(const ffi::ArenaState& initial_state) {
     previous_state_ = initial_state;

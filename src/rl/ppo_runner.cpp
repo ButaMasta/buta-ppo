@@ -89,6 +89,7 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.num_envs, 
         config_.match_distributions,
         config_.setter_distributions,
+        config_.reward_entries,
         std::min(config_.num_envs, config_.num_threads), 
         config_.ticks_per_step, 
         config_.max_players_per_team,

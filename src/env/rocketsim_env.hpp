@@ -92,6 +92,7 @@ public:
     explicit RocketSimEnv(
         const std::vector<ffi::Team>& match_layout,
         const std::vector<state::StateSetterDistribution>& setters,
+        const std::vector<reward::RewardEntry>& rewards,
         int ticks_per_step = 8, 
         size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}(),

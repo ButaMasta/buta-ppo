@@ -2,6 +2,7 @@
 #pragma once
 
 #include "state/state_setter.hpp"
+#include "reward/reward_manager.hpp"
 
 #include <cstddef>
 #include <string>
@@ -90,6 +91,7 @@ public:
         size_t num_envs, 
         const std::vector<rl::MatchDistribution>& match_distributions,
         const std::vector<state::StateSetterDistribution>& setter_distributions,
+        const std::vector<reward::RewardEntry>& reward_entries,
         size_t num_threads, 
         int ticks_per_step = 8, 
         size_t max_players_per_team = 4, 

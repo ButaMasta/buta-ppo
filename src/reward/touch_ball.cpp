@@ -18,6 +18,10 @@ public:
         }
         return 0.0f;
     }
+
+    [[nodiscard]] virtual std::unique_ptr<RewardFunction> clone() const override {
+        return std::make_unique<TouchBallReward>(*this);
+    }
 };
 
 std::unique_ptr<RewardFunction> create_touch_ball_reward() {

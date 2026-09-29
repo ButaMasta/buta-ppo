@@ -41,6 +41,10 @@ public:
         constexpr float CAR_MAX_SPEED = 2300.0f;
         return dot_product / CAR_MAX_SPEED;
     }
+
+    [[nodiscard]] virtual std::unique_ptr<RewardFunction> clone() const override {
+        return std::make_unique<VelocityToBallReward>(*this);
+    }
 };
 
 std::unique_ptr<RewardFunction> create_velocity_to_ball_reward() {

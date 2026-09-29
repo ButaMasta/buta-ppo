@@ -23,6 +23,10 @@ public:
 
         return -1.0f;
     }
+
+    [[nodiscard]] virtual std::unique_ptr<RewardFunction> clone() const override {
+        return std::make_unique<GoalReward>(*this);
+    }
 };
 
 std::unique_ptr<RewardFunction> create_goal_reward() {

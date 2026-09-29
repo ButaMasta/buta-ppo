@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 #include <memory>
+#include <utility>
 
 // Forward declaration.
 namespace buta_ppo::env { struct AgentMeta; }
@@ -41,13 +42,33 @@ public:
         const ffi::ArenaState& current_state,
         const ffi::ArenaState& previous_state
     ) = 0;
+
+
+    [[nodiscard]] virtual std::unique_ptr<RewardFunction> clone() const = 0;
 };
 
 struct RewardEntry {
     std::string name;
     std::unique_ptr<RewardFunction> function;
     float weight;
-    double accumulated_value;
+    double accumulated_value = 0.0;
+
+    RewardEntry(std::string n, std::unique_ptr<RewardFunction> f, float w)
+        : name(std::move(n)), function(std::move(f)), weight(w) {}
+    
+    RewardEntry(const RewardEntry& other)
+        : name(other.name), function(other.function->clone()), 
+          weight(other.weight), accumulated_value(other.accumulated_value) {}
+    
+    RewardEntry& operator=(const RewardEntry& other) {
+        if (this != &other) {
+            name = other.name;
+            function = other.function->clone();
+            weight = other.weight;
+            accumulated_value = other.accumulated_value;
+        }
+        return *this;
+    }
 };
 
 /**
@@ -63,13 +84,12 @@ public:
     RewardManager() = default;
 
     /**
-     * @brief Register a reward function with a specific weight and name.
+     * @brief Set the rewards for this manager based on a vector of desired rewards. 
+     * Also initializes its telemetry entry.
      * 
-     * @param name The visual name for the reward. (Used in metrics).
-     * @param reward_func The pointer to the function itself.
-     * @param weight The weight for the result of the reward function.
+     * @param rewards The desired rewards, these are deep copied.
      */
-    void add_reward(std::string name, std::unique_ptr<RewardFunction> reward_func, float weight = 1.0f);
+    void set_rewards(const std::vector<RewardEntry>& rewards);
 
     /**
      * @brief Resets all reward trackers with a new state at the end of an episode.
