@@ -5,20 +5,33 @@
 #include "util/math_utils.hpp"
 #include <algorithm>
 #include <cstddef>
+#include <cmath>
 
 namespace math = buta_ppo::util::math;
 
 namespace buta_ppo::obs {
 
-AdvancedObs::AdvancedObs(size_t max_players_per_team, uint32_t seed)
-    : max_players_per_team_(max_players_per_team), rng_(seed), tick_last_updated_ball_pred_(9999) {
+AdvancedObs::AdvancedObs(size_t max_players_per_team, uint8_t tick_skip, uint32_t seed)
+    : max_players_per_team_(max_players_per_team), tick_skip_(tick_skip), rng_(seed), tick_last_updated_ball_pred_(9999) {
     ball_pred_arena_ = ffi::create_arena_ball_sim(0);
     team_A_indices_.reserve(max_players_per_team_);
     team_B_indices_.reserve(max_players_per_team_);
+
+    // Find action steps needed to hit target prediction times.
+    for (size_t i = 0; i < BALL_PRED_TIMES_COUNT; i++) {
+        float target_ticks = BALL_PRED_TIMES[i] * 120.0f;
+        size_t action_steps = static_cast<size_t>(std::round(target_ticks / tick_skip_));
+
+        // Ensure the first is the next action step.
+        ball_pred_indices_[i] = std::max<size_t>(1, action_steps);
+    }
+
+    ball_pred_buffer_size_ = ball_pred_indices_.back();
+    ball_pred_.resize(ball_pred_buffer_size_);
 }
 
 size_t AdvancedObs::get_obs_size() const {
-    return BALL_OBS + (BALL_OBS * BALL_PRED_TICKS_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * max_players_per_team_ * 2 - 1);
+    return BALL_OBS + (BALL_OBS * BALL_PRED_TIMES_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * max_players_per_team_ * 2 - 1);
 }
 
 void AdvancedObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
@@ -63,15 +76,15 @@ void AdvancedObs::pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_stat
         ffi::set_ball_state_ball_sim(ball_pred_arena_, curr_arena_ball_state);
         ball_pred_head_ = 0;
 
-        for (size_t i = 0; i < BALL_PRED_BUFFER_SIZE; i++) {
-            ffi::step_arena_ball_sim(ball_pred_arena_, 8);
+        for (size_t i = 0; i < ball_pred_buffer_size_; i++) {
+            ffi::step_arena_ball_sim(ball_pred_arena_, tick_skip_);
             ffi::get_ball_sim_arena_ball_state(ball_pred_arena_, ball_pred_[i]);
         }
     } else {
-        ffi::step_arena_ball_sim(ball_pred_arena_, 8);
+        ffi::step_arena_ball_sim(ball_pred_arena_, tick_skip_);
         ffi::get_ball_sim_arena_ball_state(ball_pred_arena_, ball_pred_[ball_pred_head_]);
 
-        ball_pred_head_ = (ball_pred_head_ + 1) % BALL_PRED_BUFFER_SIZE;
+        ball_pred_head_ = (ball_pred_head_ + 1) % ball_pred_buffer_size_;
     }
 
     state_to_verify_ = ball_pred_[ball_pred_head_];
@@ -121,8 +134,9 @@ void AdvancedObs::write_right_dir(float*& ptr, const float* vec, bool invert_tea
 }
 
 void AdvancedObs::write_ball_pred(float*& ptr, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x) {
-    for (size_t i = 0; i < BALL_PRED_TICKS_COUNT; i++) {
-        size_t ring_buff_idx = (ball_pred_head_ + BALL_PRED_TICKS[i] - 1) % BALL_PRED_BUFFER_SIZE;
+    for (size_t i = 0; i < BALL_PRED_TIMES_COUNT; i++) {
+        size_t step_offset = ball_pred_indices_[i];
+        size_t ring_buff_idx = (ball_pred_head_ + step_offset - 1) % ball_pred_buffer_size_;
         const ffi::BallSimPhysState& curr_pred_phys = ball_pred_[ring_buff_idx].phys;
         
         write_pos(ptr, curr_pred_phys.pos, invert_team, invert_x);

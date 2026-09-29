@@ -20,16 +20,15 @@ public:
     static constexpr size_t OTHER_CAR_OBS = 31;
     static constexpr size_t BALL_OBS = 15;
 
-    static constexpr size_t BALL_PRED_TICKS_COUNT = 6;
-    static constexpr size_t BALL_PRED_TICKS[BALL_PRED_TICKS_COUNT] = {
-        1,  // Next action (8 ticks).
-        7,  // ~0.47 seconds (7 actions).
-        15, // 1.00 seconds (15 actions).
-        30, // 2.00 seconds (30 actions).
-        45, // 3.00 seconds (45 actions).
-        60  // 4.00 seconds (60 actions).
+    static constexpr size_t BALL_PRED_TIMES_COUNT = 6;
+    static constexpr float BALL_PRED_TIMES[BALL_PRED_TIMES_COUNT] = {
+        0.01f,  // Next action since these are rounded to tick_skip_ intervals.
+        0.50f,  // ~0.5 seconds.
+        1.00f, // 1.00 seconds.
+        2.00f, // 2.00 seconds.
+        3.00f, // 3.00 seconds.
+        4.00f  // 4.00 seconds.
     };
-    static constexpr size_t BALL_PRED_BUFFER_SIZE = BALL_PRED_TICKS[BALL_PRED_TICKS_COUNT - 1];
 
     static constexpr float POS_MOE = 1.0f;
     static constexpr float VEL_MOE = 3.5f;
@@ -57,7 +56,7 @@ public:
     static constexpr float COOLDOWN_BIG_COEF = 1.0f / 10.0f;
     static constexpr float COOLDOWN_SMALL_COEF = 1.0f / 4.0f;
 
-    explicit AdvancedObs(size_t max_players_per_team = 4, uint32_t seed = std::random_device{}());
+    explicit AdvancedObs(size_t max_players_per_team = 4, uint8_t tick_skip = 8, uint32_t seed = std::random_device{}());
 
     /**
      * @brief Get the size of the obs.
@@ -85,12 +84,18 @@ public:
 
 private:
     size_t max_players_per_team_;
+    uint8_t tick_skip_;
     std::mt19937 rng_;
 
     ffi::BallSimArenaPtr ball_pred_arena_;
 
     // Holds ball prediction data for this obs builder (1 per env).
-    std::array<ffi::BallSimBallState, BALL_PRED_BUFFER_SIZE> ball_pred_;
+    std::vector<ffi::BallSimBallState> ball_pred_;
+
+    // Indices to skip to for ball prediction.
+    std::array<size_t, BALL_PRED_TIMES_COUNT> ball_pred_indices_{};
+    size_t ball_pred_buffer_size_ = 0;
+
     ffi::BallSimBallState state_to_verify_{};
     size_t ball_pred_head_ = 0;
 
