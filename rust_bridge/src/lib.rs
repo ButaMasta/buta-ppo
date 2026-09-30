@@ -208,7 +208,7 @@ impl From<CCarControls> for CarControls {
 
 
 //// Mesh initialization. ////
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_init(collision_meshes_folder: *const c_char, silent: bool) -> bool {
     if collision_meshes_folder.is_null() {
         return false;
@@ -224,7 +224,7 @@ pub extern "C" fn rs_init(collision_meshes_folder: *const c_char, silent: bool) 
     rocketsim::init(path_str, silent).is_ok()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_init_ball_sim(collision_meshes_folder: *const c_char, silent: bool) -> bool {
     if collision_meshes_folder.is_null() {
         return false;
@@ -240,14 +240,14 @@ pub extern "C" fn rs_init_ball_sim(collision_meshes_folder: *const c_char, silen
     ball_sim::init(path_str, silent).is_ok()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_is_initialized() -> bool {
     rocketsim::is_initialized()
 }
 
 
 //// Arena Creation. ////
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_create_vis(game_mode_idx: i32) -> *mut Arena {
     // Map the integer to the RocketSim enum. Defaulting to Soccar (0).
     let game_mode: GameMode = match game_mode_idx {
@@ -266,7 +266,7 @@ pub extern "C" fn rs_arena_create_vis(game_mode_idx: i32) -> *mut Arena {
     Box::into_raw(Box::new(arena))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_create(game_mode_idx: i32) -> *mut Arena {
     // Map the integer to the RocketSim enum. Defaulting to Soccar (0).
     let game_mode = match game_mode_idx {
@@ -284,7 +284,7 @@ pub extern "C" fn rs_arena_create(game_mode_idx: i32) -> *mut Arena {
     Box::into_raw(Box::new(arena))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_create_ball_sim(game_mode_idx: i32) -> *mut BallSimArena {
     // Map the integer to the ball_sim enum. Defaulting to Soccar (0).
     let game_mode: BallSimGameMode = match game_mode_idx {
@@ -302,7 +302,7 @@ pub extern "C" fn rs_arena_create_ball_sim(game_mode_idx: i32) -> *mut BallSimAr
     Box::into_raw(Box::new(arena))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_free(arena_ptr: *mut Arena) {
     if !arena_ptr.is_null() {
         // Reconstruct the Box from the raw pointer so Rust can drop it.
@@ -312,7 +312,7 @@ pub extern "C" fn rs_arena_free(arena_ptr: *mut Arena) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_free_ball_sim(ball_sim_arena_ptr: *mut BallSimArena) {
     if !ball_sim_arena_ptr.is_null() {
         // Reconstruct the Box from the raw pointer so Rust can drop it.
@@ -325,7 +325,7 @@ pub extern "C" fn rs_arena_free_ball_sim(ball_sim_arena_ptr: *mut BallSimArena) 
 
 //// Arena Util. ////
 /// Creates and adds a car to the arena, returning the index of the car in the cars vector.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_add_car(arena_ptr: *mut Arena, team_idx: i32) -> u32 {
     if arena_ptr.is_null() {
         return 0;
@@ -344,7 +344,7 @@ pub extern "C" fn rs_arena_add_car(arena_ptr: *mut Arena, team_idx: i32) -> u32 
 }
 
 /// Steps the arena for 1 tick, returning the events produced during that tick.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_step(arena_ptr: *mut Arena) {
     if arena_ptr.is_null() {
         return;
@@ -357,7 +357,7 @@ pub extern "C" fn rs_arena_step(arena_ptr: *mut Arena) {
     arena.step_tick();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_step_ball_sim(arena_ptr: *mut BallSimArena, ticks_to_step: u8) {
     if arena_ptr.is_null() {
         return;
@@ -373,7 +373,7 @@ pub extern "C" fn rs_arena_step_ball_sim(arena_ptr: *mut BallSimArena, ticks_to_
 }
 
 /// Core function to grab the entire arena state in one call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_get_arena_state(
     arena_ptr: *const Arena,
     out_state: *mut CArenaState,
@@ -456,7 +456,7 @@ pub extern "C" fn rs_arena_get_arena_state(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_ball_sim_arena_get_ball_state(
     arena_ptr: *const BallSimArena,
     out_ball_state: *mut CBallSimBallState,
@@ -473,7 +473,7 @@ pub extern "C" fn rs_ball_sim_arena_get_ball_state(
 }
 
 /// Sets the car controls.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_set_car_controls(
     arena_ptr: *mut Arena,
     car_idx: u32,
@@ -486,7 +486,7 @@ pub extern "C" fn rs_arena_set_car_controls(
 }
 
 /// Set ball phys state.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_set_ball_state(arena_ptr: *mut Arena, ball_state: CBallState) {
     if arena_ptr.is_null() {
         return;
@@ -498,7 +498,7 @@ pub extern "C" fn rs_arena_set_ball_state(arena_ptr: *mut Arena, ball_state: CBa
     arena.set_ball_state(curr_ball);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_set_ball_state_ball_sim(arena_ptr: *mut BallSimArena, ball_state: CBallSimBallState) {
     if arena_ptr.is_null() {
         return;
@@ -511,7 +511,7 @@ pub extern "C" fn rs_arena_set_ball_state_ball_sim(arena_ptr: *mut BallSimArena,
 }
 
 /// Set a car's state, phys and flags/amounts.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_set_car_state(
     arena_ptr: *mut Arena,
     car_idx: u32,
@@ -547,7 +547,7 @@ pub extern "C" fn rs_arena_set_car_state(
 }
 
 /// Reset arena to random kickoff state.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_reset_to_random_kickoff(
     arena_ptr: *mut Arena,
     seed: u64,

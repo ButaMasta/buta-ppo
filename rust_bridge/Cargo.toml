@@ -1,12 +1,21 @@
 [package]
 name = "rust_bridge"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+cmake = "0.1"
 
 [dependencies]
 rocketsim = { version = "0.2.0", features = ["glam"] }
 rocketsim_vis = "0.2.0"
 ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git" }
+rlbot-rocketsim = "0.1.0"
+libc = "0.2"
+
+[[bin]]
+name = "buta_ppo_bot"
+path = "src/main.rs"

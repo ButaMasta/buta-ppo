@@ -78,3 +78,6 @@ clean.fish
 rust_bridge/Cargo.lock
 rust_bridge/target
 assets/*
+bot/*
+!bot/bot.toml
+!bot/loadout.toml

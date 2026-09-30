@@ -56,6 +56,14 @@ public:
     [[nodiscard]] std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor obs);
 
     /**
+     * @brief Performs a forward pass through only the shared and actor networks. 
+     * 
+     * @param obs The batched obs tensor.
+     * @return The unnormalized action logits.
+     */
+    [[nodiscard]] torch::Tensor forward_actor(torch::Tensor obs);
+
+    /**
      * @brief Samples actions from the policy dist and estimates state values during rollout.
      * 
      * @param obs The batched obs tensor.
