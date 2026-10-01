@@ -94,6 +94,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     std::fill(reward_buffer_.begin(), reward_buffer_.end(), 0.0f);
     int ticks_elapsed = ticks_per_step_;
     bool episode_terminated = false;
+    bool episode_truncated = false;
 
     for (int i = 0; i < ticks_per_step_; i++) {
         ffi::step_arena(arena_);
@@ -108,22 +109,35 @@ StepResult RocketSimEnv::step(const int* actions) {
             reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_);
         }
 
-        // Terminal States.
+        // Reset touch counter if any car hit the ball or increment it.
         if (std::any_of(arena_state_.events.car_hit_ball, arena_state_.events.car_hit_ball + 8, [](bool v) { return v; })) {
             ticks_since_last_touch_ = 0;
         } else {
             ++ticks_since_last_touch_;
         }
+        // Increment match ticks.
+        ++match_ticks_;
 
-        const bool should_terminate = arena_state_.events.is_ball_scored || ticks_since_last_touch_ >= ticks_until_terminal_state_;
-        if (should_terminate) {
+        // Terminal state: Goal.
+        if (arena_state_.events.is_ball_scored) {
             ticks_since_last_touch_ = 0;
+            match_ticks_ = 0;
             ticks_elapsed = i + 1;
             episode_terminated = true;
             break;
         }
+
+        // Tick count related truncation states.
+        if (ticks_since_last_touch_ >= no_touch_ticks_limit_ || match_ticks_ >= match_ticks_limit_) {
+            ticks_since_last_touch_ = 0;
+            match_ticks_ = 0;
+            ticks_elapsed = i + 1;
+            episode_truncated = true;
+            break;
+        }
     }
 
+    // Build the final observations.
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
         agent_x_inverted_[i] = obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);
@@ -133,7 +147,7 @@ StepResult RocketSimEnv::step(const int* actions) {
         action_parser_.get_action_mask(car_state, agent_action_mask_ptr);
     }
 
-    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, ticks_elapsed };
+    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, episode_truncated, ticks_elapsed };
 }
 
 ffi::CarControls RocketSimEnv::decode_action(size_t action_idx) {

@@ -69,7 +69,9 @@ VecEnv::VecEnv(
     batched_obs_ = torch::zeros({(int64_t)total_agents_, (int64_t)single_obs_size_}, pinned_opts);
     batched_action_masks_ = torch::zeros({(int64_t)total_agents_, (int64_t)action_space_size_}, pinned_opts);
     batched_rewards_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
-    batched_dones_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
+    batched_terminated_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
+    batched_truncated_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
+    batched_terminal_obs_ = torch::zeros({(int64_t)total_agents_, (int64_t)single_obs_size_}, pinned_opts);
 
     // Create thread pool.
     size_t current_start = 0;
@@ -137,7 +139,16 @@ void VecEnv::worker_loop(size_t /*worker_id*/, size_t start_idx, size_t end_idx)
                 const std::vector<float>* obs_src = &result.observations;
                 const std::vector<float>* mask_src = &result.action_masks;
 
-                if (result.is_done) {
+                if (result.is_terminated || result.is_truncated) {
+
+                    // Route the final obs buffer to terminal obs.
+                    if (result.is_truncated) {
+                        const size_t obs_offset = agent_offset * single_obs_size_;
+                        std::memcpy(batched_terminal_obs_.data_ptr<float>() + obs_offset,
+                                    result.observations.data(),
+                                    result.observations.size() * sizeof(float));
+                    }
+
                     auto reset_res = envs_[i]->reset();
                     obs_src = &reset_res.observations;
                     mask_src = &reset_res.action_masks;
@@ -152,9 +163,11 @@ void VecEnv::worker_loop(size_t /*worker_id*/, size_t start_idx, size_t end_idx)
                 const size_t reward_offset = agent_offset;
                 std::memcpy(batched_rewards_.data_ptr<float>() + reward_offset, result.rewards.data(), result.rewards.size() * sizeof(float));
 
-                const float done_val = result.is_done ? 1.0f : 0.0f;
+                const float term_val = result.is_terminated ? 1.0f : 0.0f;
+                const float trunc_val = result.is_truncated ? 1.0f : 0.0f;
                 for (size_t a = 0; a < num_agents; ++a) {
-                    batched_dones_.data_ptr<float>()[agent_offset + a] = done_val;
+                    batched_terminated_.data_ptr<float>()[agent_offset + a] = term_val;
+                    batched_truncated_.data_ptr<float>()[agent_offset + a] = trunc_val;
                 }
             }
             break;
@@ -203,7 +216,7 @@ BatchedStepResult VecEnv::step(const int* batched_actions) {
     current_worker_state_ = WorkerState::IDLE;
     current_actions_ptr_ = nullptr;
 
-    return { batched_obs_, batched_action_masks_, batched_rewards_, batched_dones_ };
+    return { batched_obs_, batched_action_masks_, batched_rewards_, batched_terminated_, batched_truncated_, batched_terminal_obs_ };
 }
 
 void VecEnv::update_reward_breakdown() {

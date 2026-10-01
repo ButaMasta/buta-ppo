@@ -164,6 +164,9 @@ private:
     torch::Tensor step_obs_gpu_;
     torch::Tensor step_masks_gpu_;
     torch::Tensor step_rewards_gpu_;
+    torch::Tensor step_term_gpu_;
+    torch::Tensor step_trunc_gpu_;
+    torch::Tensor step_terminal_obs_gpu_;
     torch::Tensor step_dones_gpu_;
 
     int64_t global_step_{0};

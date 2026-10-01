@@ -30,6 +30,8 @@ struct PPOConfig {
     int epochs = 3;
     int mini_batch_size = 1024; // Highly hardware-dependant. This is set by runner config initialization.
 
+    float gae_gamma = 0.99f;
+    float gae_lambda = 0.95f;
     float policy_lr = 3e-4f;
     float critic_lr = 3e-4f;
 };

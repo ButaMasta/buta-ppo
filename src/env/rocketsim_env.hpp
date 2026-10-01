@@ -35,9 +35,11 @@ struct StepResult {
     const std::vector<float>& action_masks;
     // Every agent's accumulated rewards.
     const std::vector<float>& rewards;
-    // If the step is complete, a terminal state was triggered.
-    bool is_done;
-    // Ticks elapsed this step. Can be lower if a terminal state was triggered.
+    // If a terminal state was triggered.
+    bool is_terminated;
+    // If a truncation state was triggered.
+    bool is_truncated;
+    // Ticks elapsed this step. Can be lower if a terminal/truncation state was triggered.
     int ticks_elapsed;
 };
 
@@ -71,8 +73,10 @@ private:
     int ticks_per_step_;
     size_t single_obs_size_;
     size_t action_space_size_;
-    static constexpr int ticks_until_terminal_state_ = 1200;
+    static constexpr int no_touch_ticks_limit_ = 1200;  // 10 seconds.
+    static constexpr int match_ticks_limit_ = 18'000;   // 2.5 minutes.
     int ticks_since_last_touch_ = 0;
+    int match_ticks_ = 0;
 
     obs::AdvancedObs obs_builder_;
     reward::RewardManager reward_manager_;

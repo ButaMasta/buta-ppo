@@ -133,6 +133,9 @@ void PPORunner::setup_dimensions_and_buffers() {
     step_obs_gpu_ = torch::empty({t_agents, static_cast<int64_t>(obs_size)}, float_opts);
     step_masks_gpu_ = torch::empty({t_agents, static_cast<int64_t>(action_space_size)}, float_opts);
     step_rewards_gpu_ = torch::empty({t_agents}, float_opts);
+    step_term_gpu_ = torch::empty({t_agents}, float_opts);
+    step_trunc_gpu_ = torch::empty({t_agents}, float_opts);
+    step_terminal_obs_gpu_ = torch::empty({t_agents, static_cast<int64_t>(obs_size)}, float_opts);
     step_dones_gpu_ = torch::empty({t_agents}, float_opts);
 }
 
@@ -177,7 +180,25 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>());
 
             step_rewards_gpu_.copy_(step_res.rewards, true);
-            step_dones_gpu_.copy_(step_res.dones, true);
+
+            step_term_gpu_.copy_(step_res.terminated, true);
+            step_trunc_gpu_.copy_(step_res.truncated, true);
+
+            // Bootstrap any truncated states.
+            if (step_trunc_gpu_.any().item<bool>()) {
+                step_terminal_obs_gpu_.copy_(step_res.terminal_observations, true);
+
+                torch::Tensor bootstrap_values;
+                {
+                    torch::NoGradGuard no_grad;
+                    auto [logits, values] = actor_critic_->forward(step_terminal_obs_gpu_);
+                    bootstrap_values = values.squeeze(-1);
+                }
+
+                step_rewards_gpu_.add_(bootstrap_values * step_trunc_gpu_, config_.ppo_cfg.gae_gamma);
+            }
+
+            torch::max_out(step_dones_gpu_, step_term_gpu_, step_trunc_gpu_);
 
             buffer_->insert(
                 step_obs_gpu_, actions_gpu, step_masks_gpu_, 
@@ -213,7 +234,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         }
 
         const auto gae_start = std::chrono::high_resolution_clock::now();
-        buffer_->compute_returns_and_advantages(next_values, step_dones_gpu_);
+        buffer_->compute_returns_and_advantages(next_values, step_dones_gpu_, config_.ppo_cfg.gae_gamma, config_.ppo_cfg.gae_lambda);
         const auto gae_end = std::chrono::high_resolution_clock::now();
         const auto metrics = trainer_->train_step(*buffer_);
 

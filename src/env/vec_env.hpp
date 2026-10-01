@@ -37,7 +37,9 @@ struct BatchedStepResult {
     torch::Tensor observations;
     torch::Tensor action_masks;
     torch::Tensor rewards;
-    torch::Tensor dones;
+    torch::Tensor terminated;
+    torch::Tensor truncated;
+    torch::Tensor terminal_observations;
 };
 
 /**
@@ -58,7 +60,10 @@ private:
     torch::Tensor batched_obs_;
     torch::Tensor batched_action_masks_;
     torch::Tensor batched_rewards_;
-    torch::Tensor batched_dones_;
+    torch::Tensor batched_terminated_;
+    torch::Tensor batched_truncated_;
+    torch::Tensor batched_terminal_obs_;
+
 
     std::vector<std::thread> workers_;
     std::atomic<bool> terminate_pool_{false};
