@@ -164,6 +164,10 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                     }
                 }
 
+                // Backup optimizer state.
+                std::stringstream optimizer_backup;
+                torch::save(*optimizer_, optimizer_backup);
+
                 // Warmup for graph capture.
                 // Extra optim passes can/will hurt the model.
                 for (int i = 0; i < 3; i++) {
@@ -178,6 +182,10 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                         param.copy_(weight_backups[idx++]);
                     }
                 }
+
+                // Restore optimizer state.
+                optimizer_backup.seekg(0);
+                torch::load(*optimizer_, optimizer_backup);
 
                 capture_stream.synchronize();
 
