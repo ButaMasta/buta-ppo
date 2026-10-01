@@ -26,5 +26,5 @@ fn main() {
     println!("cargo:rerun-if-changed=../src/rl/actor_critic.cpp");
 
     // Instruct the dynamic linker to check the executable's directory for .so files.
-    println!("cargo:rustc-link-arg=-Wl,-rpath=$ORIGIN");
+    println!("cargo:rustc-link-arg=-Wl,-rpath=$ORIGIN/libs");
 }

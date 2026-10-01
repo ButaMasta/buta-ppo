@@ -11,6 +11,7 @@ def deploy():
     )
 
     bot_dir = Path("bot")
+    bot_lib_dir = Path("bot/libs")
     bot_dir.mkdir(exist_ok=True)
 
     print(f"Copying executable to {bot_dir.absolute()}...")
@@ -18,19 +19,18 @@ def deploy():
 
     print("Locating custom C++ shared library...")
     for path in Path("rust_bridge/target/release/build").rglob("libbuta_ppo_bot.so"):
-        shutil.copy(path, bot_dir)
+        shutil.copy(path, bot_lib_dir)
         print(f"  -> Copied {path.name}")
         break
 
     print("Copying LibTorch dependencies...")
     torch_lib_dir = Path("/home/buta/Dev/libtorch/lib")
     
-    # Add libtorch_cuda.so and libc10_cuda.so to this list if executing on the GPU.
     torch_libs = ["libc10.so", "libc10_cuda.so", "libtorch.so", "libtorch_cpu.so"]
     for lib in torch_libs:
         lib_path = torch_lib_dir / lib
         if lib_path.exists():
-            shutil.copy(lib_path, bot_dir)
+            shutil.copy(lib_path, bot_lib_dir)
             print(f"  -> Copied {lib}")
         else:
             print(f"  -> Warning: {lib} not found in {torch_lib_dir}")
