@@ -195,8 +195,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                     bootstrap_values = values.squeeze(-1);
                 }
 
-                // This is step_rewards_gpu_ += bootstrap_values * bootstrap_values * config_.ppo_cfg.gae_gamma.
-                step_rewards_gpu_.add_(bootstrap_values * bootstrap_values, config_.ppo_cfg.gae_gamma);
+                // This is step_rewards_gpu_ += bootstrap_values * step_trunc_gpu_ * config_.ppo_cfg.gae_gamma.
+                step_rewards_gpu_.add_(bootstrap_values * step_trunc_gpu_, config_.ppo_cfg.gae_gamma);
             }
 
             torch::max_out(step_dones_gpu_, step_term_gpu_, step_trunc_gpu_);
