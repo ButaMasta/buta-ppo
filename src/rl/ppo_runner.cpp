@@ -185,7 +185,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             step_trunc_gpu_.copy_(step_res.truncated, true);
 
             // Bootstrap any truncated states.
-            if (step_trunc_gpu_.any().item<bool>()) {
+            if (step_res.truncated.any().item<bool>()) {
                 step_terminal_obs_gpu_.copy_(step_res.terminal_observations, true);
 
                 torch::Tensor bootstrap_values;
@@ -235,7 +235,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         }
 
         const auto gae_start = std::chrono::high_resolution_clock::now();
-        buffer_->compute_returns_and_advantages(next_values, step_dones_gpu_, config_.ppo_cfg.gae_gamma, config_.ppo_cfg.gae_lambda);
+        buffer_->compute_returns_and_advantages(next_values, config_.ppo_cfg.gae_gamma, config_.ppo_cfg.gae_lambda);
         const auto gae_end = std::chrono::high_resolution_clock::now();
         const auto metrics = trainer_->train_step(*buffer_);
 

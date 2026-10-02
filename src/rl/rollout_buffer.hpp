@@ -36,7 +36,6 @@ public:
     torch::Tensor cpu_dones_;
     torch::Tensor cpu_advantages_;
     torch::Tensor cpu_last_val_;
-    torch::Tensor cpu_last_dones_;
     std::vector<float> last_gae_;
 
     // Computed tensors.
@@ -74,14 +73,12 @@ public:
     /**
      * @brief Calculates the GAE and Returns after the rollout phase on the CPU.
      * 
-     * @param last_values The previous critic values.
-     * @param last_dones The previous done values.
+     * @param last_values The critic values of the observations following the final buffer step.
      * @param gamma The discount factor for future rewards.
      * @param gae_lambda The bias-variance tradeoff parameter for advantage estimation.
      */
     void compute_returns_and_advantages(
         const torch::Tensor& last_values,
-        const torch::Tensor& last_dones,
         float gamma = 0.99f,
         float gae_lambda = 0.95f
     );

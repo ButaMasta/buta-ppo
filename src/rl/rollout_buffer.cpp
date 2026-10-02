@@ -37,7 +37,6 @@ RolloutBuffer::RolloutBuffer(size_t buffer_size, size_t num_agents, size_t obs_s
     cpu_dones_      = torch::zeros({b_size, n_agents}, pinned_opts);
     cpu_advantages_ = torch::zeros({b_size, n_agents}, pinned_opts);
     cpu_last_val_   = torch::zeros({n_agents}, pinned_opts);
-    cpu_last_dones_ = torch::zeros({n_agents}, pinned_opts);
 
     last_gae_.resize(num_agents_, 0.0f);
 }
@@ -72,7 +71,6 @@ void RolloutBuffer::insert(
 
 void RolloutBuffer::compute_returns_and_advantages(
     const torch::Tensor& last_values,
-    const torch::Tensor& last_dones,
     float gamma,
     float gae_lambda
 ) {
@@ -81,7 +79,6 @@ void RolloutBuffer::compute_returns_and_advantages(
     cpu_values_.copy_(values_, true);
     cpu_dones_.copy_(dones_, true);
     cpu_last_val_.copy_(last_values, true);
-    cpu_last_dones_.copy_(last_dones, true);
 
     // Ensure all copies are done before accessing pointers.
     torch::cuda::synchronize();
@@ -91,7 +88,6 @@ void RolloutBuffer::compute_returns_and_advantages(
     const float* d_ptr = cpu_dones_.data_ptr<float>();
     float* adv_ptr = cpu_advantages_.data_ptr<float>();
     const float* lv_ptr = cpu_last_val_.data_ptr<float>();
-    const float* ld_ptr = cpu_last_dones_.data_ptr<float>();
     
     const int64_t n_steps = buffer_size_;
     const int64_t n_agents = num_agents_;
@@ -104,7 +100,8 @@ void RolloutBuffer::compute_returns_and_advantages(
             const int64_t idx = step * n_agents + agent;
             
             const float next_val = (step == n_steps - 1) ? lv_ptr[agent] : v_ptr[idx + n_agents];
-            const float next_non_term = (step == n_steps - 1) ? (1.0f - ld_ptr[agent]) : (1.0f - d_ptr[idx + n_agents]);
+            // dones_[step] marks whether the action at `step` ended the episode, so it masks this step's own bootstrap.
+            const float next_non_term = 1.0f - d_ptr[idx];
             
             const float delta = r_ptr[idx] + gamma * next_val * next_non_term - v_ptr[idx];
             last_gae_[agent] = delta + gamma * gae_lambda * next_non_term * last_gae_[agent];
