@@ -1,4 +1,4 @@
-// buta-ppo/src/rl/ppo_runner.hpp
+// buta-ppo/src/rl/ppo_runner.cpp
 #include "ppo_runner.hpp"
 #include "rollout_buffer.hpp"
 #include "tensorboard_logger.h"

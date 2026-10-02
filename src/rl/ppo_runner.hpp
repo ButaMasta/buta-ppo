@@ -26,7 +26,7 @@ namespace buta_ppo::rl {
 /**
  * @brief Formatter for match distributions.
  * 
- * Allows the user to neatly define match disctibutions along 
+ * Allows the user to neatly define match distibutions along 
  * with their associated weight to be represented within the envs.
  */
 struct MatchDistribution {
@@ -64,7 +64,7 @@ struct MatchDistribution {
  * allowing the user to have a baseline before customizing it to their needs.
  * 
  * NOTE: `setter_distributions` MUST be set by the user.
- * NOTE: `num_minibatches` is HIGHLY hardware and network layer setup dependent. Experiement 
+ * NOTE: `num_minibatches` is HIGHLY hardware and network layer setup dependent. Experiment 
  * on your own. Start small on steps per iteration and high on num minibatches. For me with 
  * 12gb VRAM I was able to comfortably get away with 50'000 steps per iter and 1
  * minibatch. I honestly dont know what happens if you exceed available VRAM but it should
@@ -201,7 +201,7 @@ private:
     /**
      * @brief Handles running a single environment as a render of the bot in RocketSim.
      * 
-     * @param stop_flag The atomic flad to indicate that the render loop should stop.
+     * @param stop_flag The atomic flag to indicate that the render loop should stop.
      */
     void run_render(const std::atomic<bool>& stop_flag);
 
