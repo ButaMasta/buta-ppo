@@ -182,10 +182,13 @@ private:
     void setup_dimensions_and_buffers();
 
     /**
-     * @brief Attempts to find a load a checkpoint for a given bot.
-     * 
-     * @param dir The directory to search for checkpoints with the format: <bot name>_<total steps trained>.pt
-     * @return If a checkpoint was found then the total steps trained, otherwise -1.
+     * @brief Attempts to find and load the latest checkpoint (model and optimizer) for a given bot.
+     *
+     * Checkpoints are directories with the format: <bot name>_<total steps trained>/ containing
+     * `model.pt` and `optimizer.pt`. A missing or mismatched optimizer state falls back to a fresh optimizer.
+     *
+     * @param dir The directory to search for checkpoints.
+     * @return If a checkpoint was found then the total steps trained, otherwise 0.
      */
     int64_t load_latest_checkpoint(const std::string& dir);
     
@@ -210,8 +213,10 @@ public:
     ~PPORunner();
 
     /**
-     * @brief Saves a checkpoint of the bot.
-     * 
+     * @brief Saves a checkpoint of the bot's model and optimizer state.
+     *
+     * Writes `model.pt` and `optimizer.pt` into <dir>/<bot name>_<total steps trained>/.
+     *
      * @param dir The directory to save the checkpoint to.
      */
     void save_checkpoint(const std::string& dir) const;

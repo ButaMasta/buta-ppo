@@ -7,12 +7,17 @@
 #include <ATen/cuda/CUDAEvent.h>
 
 #include <algorithm>
+#include <iostream>
+#include <utility>
 
 namespace buta_ppo::rl {
 
 PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device)
     : config_(config), actor_critic_(actor_critic), device_(device) {
-    params_ = actor_critic_->parameters();
+    for (const auto& item : actor_critic_->named_parameters()) {
+        param_names_.push_back(item.key());
+        params_.push_back(item.value());
+    }
     for (const auto& p : params_) {
         exp_avgs_.push_back(torch::zeros_like(p));
         exp_avg_sqs_.push_back(torch::zeros_like(p));
@@ -28,6 +33,56 @@ void PPOTrainer::graph_safe_adam_step() {
     torch::_foreach_add_(state_steps_, 1);
     at::_fused_adam_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_,
                      config_.policy_lr, 0.9, 0.999, 0.0, 1e-8, /*amsgrad=*/false, /*maximize=*/false);
+}
+
+void PPOTrainer::save_optimizer(const std::string& path) const {
+    torch::serialize::OutputArchive archive;
+    for (size_t i = 0; i < params_.size(); ++i) {
+        archive.write("exp_avg." + param_names_[i], exp_avgs_[i], /*is_buffer=*/true);
+        archive.write("exp_avg_sq." + param_names_[i], exp_avg_sqs_[i], /*is_buffer=*/true);
+        archive.write("step." + param_names_[i], state_steps_[i], /*is_buffer=*/true);
+    }
+    archive.save_to(path);
+}
+
+bool PPOTrainer::load_optimizer(const std::string& path) {
+    torch::serialize::InputArchive archive;
+    try {
+        archive.load_from(path, device_);
+    } catch (const std::exception& e) {
+        std::cerr << "[WARN] Could not read optimizer state from " << path << ": " << e.what() << "\n";
+        return false;
+    }
+
+    // Read and validate every entry before touching the live state so a mismatch leaves it untouched.
+    std::vector<torch::Tensor> loaded;
+    loaded.reserve(params_.size() * 3);
+    for (size_t i = 0; i < params_.size(); ++i) {
+        const std::pair<std::string, const torch::Tensor*> entries[] = {
+            {"exp_avg.", &exp_avgs_[i]},
+            {"exp_avg_sq.", &exp_avg_sqs_[i]},
+            {"step.", &state_steps_[i]}
+        };
+        for (const auto& [prefix, target] : entries) {
+            torch::Tensor t;
+            if (!archive.try_read(prefix + param_names_[i], t, /*is_buffer=*/true) || !t.sizes().equals(target->sizes())) {
+                std::cerr << "[WARN] Optimizer state in " << path << " does not match the network at '"
+                          << prefix << param_names_[i] << "'.\n";
+                return false;
+            }
+            loaded.push_back(t);
+        }
+    }
+
+    // Copy into the existing tensors so their device addresses (used by the CUDA graph) stay fixed.
+    torch::NoGradGuard no_grad;
+    size_t k = 0;
+    for (size_t i = 0; i < params_.size(); ++i) {
+        exp_avgs_[i].copy_(loaded[k++]);
+        exp_avg_sqs_[i].copy_(loaded[k++]);
+        state_steps_[i].copy_(loaded[k++]);
+    }
+    return true;
 }
 
 void PPOTrainer::graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& grads, float max_norm) {

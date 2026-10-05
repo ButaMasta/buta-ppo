@@ -68,6 +68,7 @@ private:
     torch::Device device_;
 
     // Adam state. Kept as device tensors so the step count and bias correction advance on graph replay.
+    std::vector<std::string> param_names_; // Keys for optimizer state serialization, aligned with params_.
     std::vector<torch::Tensor> params_;
     std::vector<torch::Tensor> exp_avgs_;
     std::vector<torch::Tensor> exp_avg_sqs_;
@@ -113,6 +114,23 @@ public:
      * @return Metrics (loss and entropy).
      */
     [[nodiscard]] std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
+
+    /**
+     * @brief Saves the Adam optimizer state, keyed by parameter name.
+     *
+     * @param path The file to write the optimizer state to.
+     */
+    void save_optimizer(const std::string& path) const;
+
+    /**
+     * @brief Loads optimizer state written by `save_optimizer` into the existing state tensors.
+     *
+     * If the file can't be read or doesn't match the network, the current state is left untouched.
+     *
+     * @param path The file to read the optimizer state from.
+     * @return Whether the optimizer state was restored.
+     */
+    bool load_optimizer(const std::string& path);
 
     /**
      * @brief The core compute during consumption designed for CUDA graph capture and replay.

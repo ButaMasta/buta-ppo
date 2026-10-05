@@ -4,6 +4,7 @@
 #include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
 
+#include <charconv>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
@@ -13,6 +14,12 @@
 namespace fs = std::filesystem;
 
 namespace buta_ppo::rl {
+
+namespace {
+// File names inside each `<bot name>_<steps>/` checkpoint directory.
+constexpr const char* MODEL_FILE = "model.pt";
+constexpr const char* OPTIMIZER_FILE = "optimizer.pt";
+} // namespace
 
 PPORunner::PPORunner(const RunnerConfig& config)
     : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU) {
@@ -41,41 +48,45 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
         return 0;
     }
 
-    std::string latest_file;
+    fs::path latest_dir;
     int64_t max_steps = -1;
 
-    // Scan directory for .pt files
+    // Scan for checkpoint directories named <bot name>_<steps> that contain a model.
     for (const auto& entry : fs::directory_iterator(dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".pt") {
-            const std::string filename = entry.path().stem().string();
-            const size_t delim_pos = filename.find_last_of('_');
+        if (!entry.is_directory() || !fs::exists(entry.path() / MODEL_FILE)) continue;
 
-            if (delim_pos != std::string::npos) {
-                try {
-                    // Extract the string after the last '_' and convert to int64
-                    const int64_t steps = std::stoll(filename.substr(delim_pos + 1));
-                    
-                    // Only load if the name prefix matches the config
-                    const std::string prefix = filename.substr(0, delim_pos);
-                    if (prefix == config_.bot_name && steps > max_steps) {
-                        max_steps = steps;
-                        latest_file = entry.path().string();
-                    }
-                } catch (const std::exception&) {
-                    // Ignore any other files.
-                }
-            }
+        const std::string name = entry.path().filename().string();
+        const size_t delim_pos = name.find_last_of('_');
+        if (delim_pos == std::string::npos || name.substr(0, delim_pos) != config_.bot_name) continue;
+
+        // The whole suffix must be the step count, so in-progress `<bot name>_<steps>.tmp` saves are skipped.
+        int64_t steps = 0;
+        const char* first = name.data() + delim_pos + 1;
+        const char* last = name.data() + name.size();
+        const auto [ptr, ec] = std::from_chars(first, last, steps);
+        if (ec != std::errc{} || ptr != last || first == last) continue;
+
+        if (steps > max_steps) {
+            max_steps = steps;
+            latest_dir = entry.path();
         }
     }
 
-    if (max_steps >= 0 && !latest_file.empty()) {
-        torch::load(actor_critic_, latest_file);
-        std::cout << "Latest Model Found: " << latest_file << " (Lifetime Steps: " << max_steps << ")\n";
-        return max_steps;
+    if (max_steps < 0) {
+        std::cout << "No valid checkpoints found for bot '" << config_.bot_name << "'. Starting fresh training.\n";
+        return 0;
     }
-    
-    std::cout << "No valid checkpoints found for bot '" << config_.bot_name << "'. Starting fresh training.\n";
-    return 0;
+
+    torch::load(actor_critic_, (latest_dir / MODEL_FILE).string());
+    std::cout << "Latest Model Found: " << latest_dir.string() << " (Lifetime Steps: " << max_steps << ")\n";
+
+    const fs::path optimizer_path = latest_dir / OPTIMIZER_FILE;
+    if (fs::exists(optimizer_path) && trainer_->load_optimizer(optimizer_path.string())) {
+        std::cout << "Optimizer state restored.\n";
+    } else {
+        std::cout << "No usable optimizer state found. Starting with a fresh optimizer.\n";
+    }
+    return max_steps;
 }
 
 void PPORunner::setup_dimensions_and_buffers() {
@@ -140,13 +151,18 @@ void PPORunner::setup_dimensions_and_buffers() {
 }
 
 void PPORunner::save_checkpoint(const std::string& dir) const {
-    if (!fs::exists(dir)) {
-        fs::create_directories(dir);
-    }
-    
-    const std::string path = dir + "/" + config_.bot_name + "_" + std::to_string(global_step_) + ".pt";
-    torch::save(actor_critic_, path);
-    std::cout << "Model checkpoint saved to: " << path << "\n";
+    const fs::path final_dir = fs::path(dir) / (config_.bot_name + "_" + std::to_string(global_step_));
+    const fs::path tmp_dir = final_dir.string() + ".tmp";
+
+    // Write into a temp dir and rename once complete so an interrupted save never looks like a valid checkpoint.
+    fs::remove_all(tmp_dir);
+    fs::create_directories(tmp_dir);
+    torch::save(actor_critic_, (tmp_dir / MODEL_FILE).string());
+    trainer_->save_optimizer((tmp_dir / OPTIMIZER_FILE).string());
+
+    fs::remove_all(final_dir);
+    fs::rename(tmp_dir, final_dir);
+    std::cout << "Checkpoint saved to: " << final_dir.string() << "\n";
 }
 
 void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
