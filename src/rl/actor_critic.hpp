@@ -64,6 +64,14 @@ public:
     [[nodiscard]] torch::Tensor forward_actor(torch::Tensor obs);
 
     /**
+     * @brief Performs a forward pass through only the shared and critic networks. 
+     * 
+     * @param obs The batched obs tensor.
+     * @return The unnormalized action logits.
+     */
+    [[nodiscard]] torch::Tensor forward_critic(torch::Tensor obs);
+
+    /**
      * @brief Samples actions from the policy dist and estimates state values during rollout.
      * 
      * @param obs The batched obs tensor.

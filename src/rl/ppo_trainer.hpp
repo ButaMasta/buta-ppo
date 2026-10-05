@@ -7,7 +7,6 @@
 #include <ATen/autocast_mode.h>
 #include <ATen/cuda/CUDAGraph.h>
 
-#include <memory>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -66,8 +65,16 @@ class PPOTrainer {
 private:
     PPOConfig config_;
     ActorCritic actor_critic_;
-    std::unique_ptr<torch::optim::Adam> optimizer_;
     torch::Device device_;
+
+    // Adam state. Kept as device tensors so the step count and bias correction advance on graph replay.
+    std::vector<torch::Tensor> params_;
+    std::vector<torch::Tensor> exp_avgs_;
+    std::vector<torch::Tensor> exp_avg_sqs_;
+    std::vector<torch::Tensor> state_steps_;
+
+    // Reused grad handle list for clipping and the fused Adam call. Grads are re-created by each backward (set_to_none).
+    std::vector<torch::Tensor> grads_;
 
     // Mini-batch shuffling.
     torch::Tensor batch_indices_;
@@ -91,7 +98,10 @@ private:
     torch::Tensor static_entropy_;
 
     // An implementations of torch utils' clip grad norm that works with CUDA graphs.
-    void graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& parameters, float max_norm);
+    void graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& grads, float max_norm);
+
+    // Graph-safe Adam update using the fused kernel.
+    void graph_safe_adam_step();
 
 public:
     PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device);

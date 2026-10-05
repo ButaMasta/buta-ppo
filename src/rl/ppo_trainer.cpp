@@ -4,6 +4,7 @@
 
 #include <c10/cuda/CUDAGuard.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAEvent.h>
 
 #include <algorithm>
 
@@ -11,33 +12,35 @@ namespace buta_ppo::rl {
 
 PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device)
     : config_(config), actor_critic_(actor_critic), device_(device) {
-    const auto opt_opts = torch::optim::AdamOptions(config_.policy_lr);
-    optimizer_ = std::make_unique<torch::optim::Adam>(actor_critic_->parameters(), opt_opts);
+    params_ = actor_critic_->parameters();
+    for (const auto& p : params_) {
+        exp_avgs_.push_back(torch::zeros_like(p));
+        exp_avg_sqs_.push_back(torch::zeros_like(p));
+        state_steps_.push_back(torch::zeros({}, p.options().dtype(torch::kFloat32)));
+    }
+    grads_.reserve(params_.size());
 }
 
-void PPOTrainer::graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& parameters, float max_norm) {
-    if (parameters.empty()) return;
+void PPOTrainer::graph_safe_adam_step() {
+    torch::NoGradGuard no_grad;
 
-    const auto options = parameters[0].options();
-    torch::Tensor total_norm_sq = torch::zeros({1}, options);
-    std::vector<torch::Tensor> grads;
+    // Step is incremented on device so replays advance the bias correction.
+    torch::_foreach_add_(state_steps_, 1);
+    at::_fused_adam_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_,
+                     config_.policy_lr, 0.9, 0.999, 0.0, 1e-8, /*amsgrad=*/false, /*maximize=*/false);
+}
 
-    for (const auto& p : parameters) {
-        if (p.grad().defined()) {
-            grads.push_back(p.grad());
-            total_norm_sq += p.grad().pow(2).sum();
-        }
-    }
-
+void PPOTrainer::graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& grads, float max_norm) {
     if (grads.empty()) return;
 
-    torch::Tensor total_norm = total_norm_sq.sqrt();
-    torch::Tensor clip_coef = max_norm / (total_norm + 1e-6f);
-    torch::Tensor clamp_coef = torch::clamp_max(clip_coef, 1.0f);
+    torch::NoGradGuard no_grad;
 
-    for (auto& g : grads) {
-        g.mul_(clamp_coef);
-    }
+    // Multi-tensor kernels: per-grad norms in one launch, then the global norm from the stacked norms.
+    const std::vector<torch::Tensor> norms = torch::_foreach_norm(grads, 2);
+    torch::Tensor total_norm = torch::linalg_vector_norm(torch::stack(norms), 2);
+    torch::Tensor clip_coef = torch::clamp_max(max_norm / (total_norm + 1e-6f), 1.0f);
+
+    torch::_foreach_mul_(grads, clip_coef);
 }
 
 void PPOTrainer::execute_minibatch_graph_logic() {
@@ -76,10 +79,20 @@ void PPOTrainer::execute_minibatch_graph_logic() {
     }
 
     // Optim.
-    optimizer_->zero_grad();
+    for (auto& p : params_) {
+        p.mutable_grad().reset(); // zero_grad(set_to_none)
+    }
     loss.backward();
-    graph_safe_clip_grad_norm(actor_critic_->parameters(), config_.max_grad_norm);
-    optimizer_->step();
+
+    // Gather grad handles once for clipping and the optimizer. Refills reserved capacity, no heap allocation.
+    grads_.clear();
+    for (const auto& p : params_) {
+        TORCH_CHECK(p.grad().defined(), "Every parameter must receive a gradient for the fused optimizer.");
+        grads_.push_back(p.grad());
+    }
+
+    graph_safe_clip_grad_norm(grads_, config_.max_grad_norm);
+    graph_safe_adam_step();
 }
 
 std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffer& buffer) {
@@ -153,20 +166,27 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
 
                 // Graph capture has to happen on a private stream.
                 at::cuda::CUDAStream capture_stream = at::cuda::getStreamFromPool();
+
+                // The capture stream must wait for the minibatch gathers queued on the current stream.
+                {
+                    at::cuda::CUDAEvent inputs_ready;
+                    inputs_ready.record(at::cuda::getCurrentCUDAStream());
+                    inputs_ready.block(capture_stream);
+                }
                 at::cuda::CUDAStreamGuard stream_guard(capture_stream);
 
-                // Before graph warmup and creation store current model weights.
-                std::vector<torch::Tensor> weight_backups;
+                // Back up all training state (weights + Adam) so warmup passes leave no trace.
+                std::vector<torch::Tensor> train_state;
+                for (const auto* list : {&params_, &exp_avgs_, &exp_avg_sqs_, &state_steps_}) {
+                    train_state.insert(train_state.end(), list->begin(), list->end());
+                }
+                std::vector<torch::Tensor> backups;
                 {
                     torch::NoGradGuard no_grad;
-                    for (const auto& param : actor_critic_->parameters()) {
-                        weight_backups.push_back(param.clone());
+                    for (const auto& t : train_state) {
+                        backups.push_back(t.clone());
                     }
                 }
-
-                // Backup optimizer state.
-                std::stringstream optimizer_backup;
-                torch::save(*optimizer_, optimizer_backup);
 
                 // Warmup for graph capture.
                 // Extra optim passes can/will hurt the model.
@@ -177,15 +197,10 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 // Restore backup.
                 {
                     torch::NoGradGuard no_grad;
-                    size_t idx = 0;
-                    for (auto& param : actor_critic_->parameters()) {
-                        param.copy_(weight_backups[idx++]);
+                    for (size_t i = 0; i < train_state.size(); ++i) {
+                        train_state[i].copy_(backups[i]);
                     }
                 }
-
-                // Restore optimizer state.
-                optimizer_backup.seekg(0);
-                torch::load(*optimizer_, optimizer_backup);
 
                 capture_stream.synchronize();
 

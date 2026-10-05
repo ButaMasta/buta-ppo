@@ -84,6 +84,12 @@ torch::Tensor ActorCriticImpl::forward_actor(torch::Tensor obs) {
     return actor_head_->forward(x);
 }
 
+torch::Tensor ActorCriticImpl::forward_critic(torch::Tensor obs) {
+    torch::Tensor x = shared_mlp_->forward(obs);
+    x = critic_mlp_->forward(x);
+    return critic_head_->forward(x);
+}
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::get_action_and_value(
     torch::Tensor obs,
     torch::Tensor action_masks

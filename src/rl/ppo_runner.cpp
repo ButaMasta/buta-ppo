@@ -230,7 +230,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         torch::Tensor next_values;
         {
             torch::NoGradGuard no_grad;
-            auto [logits, values] = actor_critic_->forward(step_obs_gpu_);
+            auto values = actor_critic_->forward_critic(step_obs_gpu_);
             next_values = values.squeeze(-1);
         }
 
