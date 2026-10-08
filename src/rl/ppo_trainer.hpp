@@ -25,7 +25,7 @@ struct PPOConfig {
     float clip_ratio = 0.2f;
     float value_coef = 0.5f;
     float entropy_coef = 0.035f;
-    float target_kl = 0.015f;
+    float target_kl = 0.015f; // Does nothing, may add functionality later.
     float max_grad_norm = 0.5f;
 
     int epochs = 3;

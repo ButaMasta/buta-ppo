@@ -73,7 +73,6 @@ int main() {
     config.ppo_cfg.optimizer = OptimizerConfig::muon(3e-4, 3e-4, 0.01);
     config.ppo_cfg.entropy_coef = 0.035f;
     config.ppo_cfg.epochs = 1;
-    config.ppo_cfg.target_kl = 0.015f;
 
     PPORunner runner(config);
     runner.run(75'000, g_stop_training, "checkpoints");
