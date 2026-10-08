@@ -261,7 +261,16 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 for (int i = 0; i < 3; i++) {
                     execute_minibatch_graph_logic();
                 }
+                
+                capture_stream.synchronize();
+                
+                // Capture the graph.
+                graph_.capture_begin();
+                execute_minibatch_graph_logic();
+                graph_.capture_end();
 
+                graph_captured_ = true;
+                
                 // Restore backup.
                 {
                     torch::NoGradGuard no_grad;
@@ -269,18 +278,9 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                         train_state[i].copy_(backups[i]);
                     }
                 }
-
-                capture_stream.synchronize();
-
-                // Capture the graph.
-                graph_.capture_begin();
-                execute_minibatch_graph_logic();
-                graph_.capture_end();
-
-                graph_captured_ = true;
-            } else {
-                graph_.replay();
             }
+            
+            graph_.replay();
 
             total_policy_loss_tsr += static_policy_loss_;
             total_value_loss_tsr += static_value_loss_;
