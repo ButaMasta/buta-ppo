@@ -36,7 +36,7 @@ int main() {
 
     RunnerConfig config;
 
-    config.bot_name = "default";
+    config.bot_name = "porkchop";
     config.render = false;
 
     config.match_distributions = {
@@ -56,16 +56,16 @@ int main() {
         {"Goal", create_goal_reward(), 10.0f}
     };
 
-    config.num_envs_per_thread = 21;
-    config.num_threads = 12;
+    config.num_envs_per_thread = 23;
+    config.num_threads = 11;
     config.ticks_per_step = 8;
 
     config.target_steps_per_update = 50'000;
-    config.num_minibatches = 2;
+    config.num_minibatches = 1;
 
-    config.ac_cfg.shared_layers = { 512, 512 };
-    config.ac_cfg.actor_layers  = { 256, 256 };
-    config.ac_cfg.critic_layers = { 512, 512 };
+    config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
+    config.ac_cfg.actor_layers  = { 768, 512 };
+    config.ac_cfg.critic_layers = { 1024, 768 };
     config.ac_cfg.use_layer_norm = true;
 
     // Presets: OptimizerConfig::adam(lr), ::adamw(lr, wd), ::muon(muon_lr, adamw_lr, wd).
