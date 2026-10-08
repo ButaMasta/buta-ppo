@@ -207,7 +207,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                 torch::Tensor bootstrap_values;
                 {
                     torch::NoGradGuard no_grad;
-                    auto [logits, values] = actor_critic_->forward(step_terminal_obs_gpu_);
+                    auto values = actor_critic_->forward_critic(step_terminal_obs_gpu_);
                     bootstrap_values = values.squeeze(-1);
                 }
 
