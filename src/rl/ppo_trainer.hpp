@@ -2,11 +2,13 @@
 #pragma once
 
 #include "actor_critic.hpp"
+#include "optimizers.hpp"
 
 #include <torch/torch.h>
 #include <ATen/autocast_mode.h>
 #include <ATen/cuda/CUDAGraph.h>
 
+#include <memory>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -31,8 +33,9 @@ struct PPOConfig {
 
     float gae_gamma = 0.99f;
     float gae_lambda = 0.95f;
-    float policy_lr = 3e-4f;
-    float critic_lr = 3e-4f;
+
+    // Optimizer per network section and parameter role. See `OptimizerConfig` presets.
+    OptimizerConfig optimizer = OptimizerConfig::adam(3e-4f);
 };
 
 /**
@@ -67,14 +70,13 @@ private:
     ActorCritic actor_critic_;
     torch::Device device_;
 
-    // Adam state. Kept as device tensors so the step count and bias correction advance on graph replay.
-    std::vector<std::string> param_names_; // Keys for optimizer state serialization, aligned with params_.
+    std::vector<std::string> param_names_;
     std::vector<torch::Tensor> params_;
-    std::vector<torch::Tensor> exp_avgs_;
-    std::vector<torch::Tensor> exp_avg_sqs_;
-    std::vector<torch::Tensor> state_steps_;
 
-    // Reused grad handle list for clipping and the fused Adam call. Grads are re-created by each backward (set_to_none).
+    // One graph-safe optimizer per distinct spec. Together they cover every parameter exactly once.
+    std::vector<std::unique_ptr<GraphSafeOptimizer>> optimizers_;
+
+    // Reused grad handle list for clipping. Grads are re-created by each backward (set_to_none).
     std::vector<torch::Tensor> grads_;
 
     // Mini-batch shuffling.
@@ -94,15 +96,16 @@ private:
 
     // Graph outputs.
     torch::Tensor static_policy_loss_;
-    // torch::Tensor static_approx_kl_; // Omitted temporarily. May add back.
+    torch::Tensor static_approx_kl_;
+    torch::Tensor static_clip_fraction_;
     torch::Tensor static_value_loss_;
     torch::Tensor static_entropy_;
 
     // An implementations of torch utils' clip grad norm that works with CUDA graphs.
     void graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& grads, float max_norm);
 
-    // Graph-safe Adam update using the fused kernel.
-    void graph_safe_adam_step();
+    // Every optimizer's state tensors, keyed `<state>.<parameter name>`.
+    [[nodiscard]] std::vector<std::pair<std::string, torch::Tensor>> optimizer_state() const;
 
 public:
     PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device);
@@ -111,12 +114,12 @@ public:
      * @brief Executes PPO optimization loop over collected rollouts.
      * 
      * @param buffer The Rollout buffer containing all the data for training.
-     * @return Metrics (loss and entropy).
+     * @return Metrics averaged over minibatches: losses, entropy, approx KL, and clip fraction.
      */
     [[nodiscard]] std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
 
     /**
-     * @brief Saves the Adam optimizer state, keyed by parameter name.
+     * @brief Saves the state of every optimizer, keyed by state and parameter name.
      *
      * @param path The file to write the optimizer state to.
      */

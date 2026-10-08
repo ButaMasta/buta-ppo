@@ -14,33 +14,46 @@ namespace buta_ppo::rl {
 
 PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device)
     : config_(config), actor_critic_(actor_critic), device_(device) {
-    for (const auto& item : actor_critic_->named_parameters()) {
-        param_names_.push_back(item.key());
-        params_.push_back(item.value());
-    }
-    for (const auto& p : params_) {
-        exp_avgs_.push_back(torch::zeros_like(p));
-        exp_avg_sqs_.push_back(torch::zeros_like(p));
-        state_steps_.push_back(torch::zeros({}, p.options().dtype(torch::kFloat32)));
+    const std::vector<ParamInfo> layout = actor_critic_->parameter_layout();
+    for (const auto& info : layout) {
+        param_names_.push_back(info.name);
+        params_.push_back(info.tensor);
     }
     grads_.reserve(params_.size());
+
+    int64_t shared_count = 0, actor_count = 0, critic_count = 0;
+    for (const auto& info : layout) {
+        switch (info.section) {
+            case ParamSection::Shared: shared_count += info.tensor.numel(); break;
+            case ParamSection::Actor:  actor_count += info.tensor.numel(); break;
+            case ParamSection::Critic: critic_count += info.tensor.numel(); break;
+        }
+    }
+    std::cout << "Model Parameters: " << shared_count + actor_count + critic_count
+              << "\n | Shared: " << shared_count
+              << "\n | Actor:  " << actor_count
+              << "\n | Critic: " << critic_count << "\n";
+
+    optimizers_ = build_optimizers(layout, config_.optimizer);
+    // std::cout << "Optimizers:\n";
+    // for (const auto& opt : optimizers_) {
+    //     std::cout << " | " << opt->describe() << "\n";
+    // }
 }
 
-void PPOTrainer::graph_safe_adam_step() {
-    torch::NoGradGuard no_grad;
-
-    // Step is incremented on device so replays advance the bias correction.
-    torch::_foreach_add_(state_steps_, 1);
-    at::_fused_adam_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_,
-                     config_.policy_lr, 0.9, 0.999, 0.0, 1e-8, /*amsgrad=*/false, /*maximize=*/false);
+std::vector<std::pair<std::string, torch::Tensor>> PPOTrainer::optimizer_state() const {
+    std::vector<std::pair<std::string, torch::Tensor>> state;
+    for (const auto& opt : optimizers_) {
+        auto opt_state = opt->named_state();
+        state.insert(state.end(), std::make_move_iterator(opt_state.begin()), std::make_move_iterator(opt_state.end()));
+    }
+    return state;
 }
 
 void PPOTrainer::save_optimizer(const std::string& path) const {
     torch::serialize::OutputArchive archive;
-    for (size_t i = 0; i < params_.size(); ++i) {
-        archive.write("exp_avg." + param_names_[i], exp_avgs_[i], /*is_buffer=*/true);
-        archive.write("exp_avg_sq." + param_names_[i], exp_avg_sqs_[i], /*is_buffer=*/true);
-        archive.write("step." + param_names_[i], state_steps_[i], /*is_buffer=*/true);
+    for (const auto& [key, tensor] : optimizer_state()) {
+        archive.write(key, tensor, /*is_buffer=*/true);
     }
     archive.save_to(path);
 }
@@ -55,32 +68,24 @@ bool PPOTrainer::load_optimizer(const std::string& path) {
     }
 
     // Read and validate every entry before touching the live state so a mismatch leaves it untouched.
+    // A changed network or optimizer type shows up here as a missing key or a shape mismatch.
+    const auto state = optimizer_state();
     std::vector<torch::Tensor> loaded;
-    loaded.reserve(params_.size() * 3);
-    for (size_t i = 0; i < params_.size(); ++i) {
-        const std::pair<std::string, const torch::Tensor*> entries[] = {
-            {"exp_avg.", &exp_avgs_[i]},
-            {"exp_avg_sq.", &exp_avg_sqs_[i]},
-            {"step.", &state_steps_[i]}
-        };
-        for (const auto& [prefix, target] : entries) {
-            torch::Tensor t;
-            if (!archive.try_read(prefix + param_names_[i], t, /*is_buffer=*/true) || !t.sizes().equals(target->sizes())) {
-                std::cerr << "[WARN] Optimizer state in " << path << " does not match the network at '"
-                          << prefix << param_names_[i] << "'.\n";
-                return false;
-            }
-            loaded.push_back(t);
+    loaded.reserve(state.size());
+    for (const auto& [key, target] : state) {
+        torch::Tensor t;
+        if (!archive.try_read(key, t, /*is_buffer=*/true) || !t.sizes().equals(target.sizes())) {
+            std::cerr << "[WARN] Optimizer state in " << path << " does not match the current network and optimizers at '"
+                      << key << "'.\n";
+            return false;
         }
+        loaded.push_back(t);
     }
 
     // Copy into the existing tensors so their device addresses (used by the CUDA graph) stay fixed.
     torch::NoGradGuard no_grad;
-    size_t k = 0;
-    for (size_t i = 0; i < params_.size(); ++i) {
-        exp_avgs_[i].copy_(loaded[k++]);
-        exp_avg_sqs_[i].copy_(loaded[k++]);
-        state_steps_[i].copy_(loaded[k++]);
+    for (size_t i = 0; i < state.size(); ++i) {
+        state[i].second.copy_(loaded[i]);
     }
     return true;
 }
@@ -110,8 +115,10 @@ void PPOTrainer::execute_minibatch_graph_logic() {
         torch::Tensor log_ratio = new_log_probs - static_mb_old_log_probs_;
         torch::Tensor ratio = log_ratio.exp();
 
-        // Approx KL Divergence.
-        // torch::Tensor approx_kl_tsr = ((ratio - 1.0f) - log_ratio).mean();
+        // Policy-change diagnostics: how far the current policy has moved from the rollout policy on this minibatch.
+        // Approx KL uses the low-variance (ratio - 1) - log(ratio) estimator, which is always >= 0.
+        torch::Tensor approx_kl = ((ratio - 1.0f) - log_ratio).mean();
+        torch::Tensor clip_fraction = ((ratio - 1.0f).abs() > config_.clip_ratio).to(torch::kFloat32).mean();
 
         torch::Tensor pg_loss1 = static_mb_advantages_ * ratio;
         torch::Tensor pg_loss2 = static_mb_advantages_ * torch::clamp(ratio, 1.0f - config_.clip_ratio, 1.0f + config_.clip_ratio);
@@ -128,7 +135,8 @@ void PPOTrainer::execute_minibatch_graph_logic() {
 
         // Accumulate metrics.
         static_policy_loss_.copy_(policy_loss.detach());
-        // static_approx_kl_.copy_(approx_kl_tsr.detach());
+        static_approx_kl_.copy_(approx_kl.detach());
+        static_clip_fraction_.copy_(clip_fraction.detach());
         static_value_loss_.copy_(value_loss.detach());
         static_entropy_.copy_(entropy.mean().detach());
     }
@@ -142,12 +150,14 @@ void PPOTrainer::execute_minibatch_graph_logic() {
     // Gather grad handles once for clipping and the optimizer. Refills reserved capacity, no heap allocation.
     grads_.clear();
     for (const auto& p : params_) {
-        TORCH_CHECK(p.grad().defined(), "Every parameter must receive a gradient for the fused optimizer.");
+        TORCH_CHECK(p.grad().defined(), "Every parameter must receive a gradient for the graph-safe optimizers.");
         grads_.push_back(p.grad());
     }
 
     graph_safe_clip_grad_norm(grads_, config_.max_grad_norm);
-    graph_safe_adam_step();
+    for (const auto& opt : optimizers_) {
+        opt->step();
+    }
 }
 
 std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffer& buffer) {
@@ -175,6 +185,8 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     torch::Tensor total_policy_loss_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_value_loss_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_entropy_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
+    torch::Tensor total_approx_kl_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
+    torch::Tensor total_clip_fraction_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     
     int updates = 0;
     // bool early_stop = false; // Ommited, was only used when KL divergence was monitored.
@@ -205,7 +217,8 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 static_mb_returns_ = torch::empty({mb_size}, float_opts);
 
                 static_policy_loss_ = torch::zeros({1}, float_opts);
-                // static_approx_kl_ = torch::zeros({1}, float_opts);
+                static_approx_kl_ = torch::zeros({1}, float_opts);
+                static_clip_fraction_ = torch::zeros({1}, float_opts);
                 static_value_loss_ = torch::zeros({1}, float_opts);
                 static_entropy_ = torch::zeros({1}, float_opts);
             }
@@ -230,10 +243,10 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 }
                 at::cuda::CUDAStreamGuard stream_guard(capture_stream);
 
-                // Back up all training state (weights + Adam) so warmup passes leave no trace.
-                std::vector<torch::Tensor> train_state;
-                for (const auto* list : {&params_, &exp_avgs_, &exp_avg_sqs_, &state_steps_}) {
-                    train_state.insert(train_state.end(), list->begin(), list->end());
+                // Back up all training state (weights + optimizer state) so warmup passes leave no trace.
+                std::vector<torch::Tensor> train_state = params_;
+                for (const auto& [key, tensor] : optimizer_state()) {
+                    train_state.push_back(tensor);
                 }
                 std::vector<torch::Tensor> backups;
                 {
@@ -272,6 +285,8 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
             total_policy_loss_tsr += static_policy_loss_;
             total_value_loss_tsr += static_value_loss_;
             total_entropy_tsr += static_entropy_;
+            total_approx_kl_tsr += static_approx_kl_;
+            total_clip_fraction_tsr += static_clip_fraction_;
 
             updates++;
         }
@@ -280,7 +295,9 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     return {
         {"policy_loss", total_policy_loss_tsr.item<float>() / std::max(1, updates)},
         {"value_loss", total_value_loss_tsr.item<float>() / std::max(1, updates)},
-        {"entropy", total_entropy_tsr.item<float>() / std::max(1, updates)}
+        {"entropy", total_entropy_tsr.item<float>() / std::max(1, updates)},
+        {"approx_kl", total_approx_kl_tsr.item<float>() / std::max(1, updates)},
+        {"clip_fraction", total_clip_fraction_tsr.item<float>() / std::max(1, updates)}
     };
 }
 

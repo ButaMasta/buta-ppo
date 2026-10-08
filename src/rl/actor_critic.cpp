@@ -1,6 +1,9 @@
 // buta-ppo/src/rl/actor_critic.cpp
 #include "actor_critic.hpp"
 
+#include <algorithm>
+#include <stdexcept>
+
 namespace buta_ppo::rl {
 
 torch::nn::Sequential ActorCriticImpl::build_block(int64_t in_size, const std::vector<int64_t>& sizes, bool use_ln) {
@@ -54,6 +57,45 @@ ActorCriticImpl::ActorCriticImpl(const ActorCriticConfig& config) {
     critic_head_ = register_module("critic_head", torch::nn::Linear(critic_out_size, 1));
     torch::nn::init::orthogonal_(critic_head_->weight, 1.0);
     torch::nn::init::constant_(critic_head_->bias, 0.0);
+
+    // Record the Linear weights fed by raw obs. Each block's first Linear sits at index 0.
+    // With no hidden layers on a path, its head reads the obs directly and is already an IO weight.
+    if (shared_mlp_) {
+        input_weight_names_.push_back("shared_mlp.0.weight");
+    } else {
+        if (actor_mlp_) input_weight_names_.push_back("actor_mlp.0.weight");
+        if (critic_mlp_) input_weight_names_.push_back("critic_mlp.0.weight");
+    }
+}
+
+std::vector<ParamInfo> ActorCriticImpl::parameter_layout() const {
+    std::vector<ParamInfo> layout;
+    for (const auto& item : named_parameters()) {
+        const std::string& name = item.key();
+        const std::string module = name.substr(0, name.find('.'));
+        const bool is_head = module == "actor_head" || module == "critic_head";
+
+        ParamSection section;
+        if (module == "shared_mlp") {
+            section = ParamSection::Shared;
+        } else if (module == "actor_mlp" || module == "actor_head") {
+            section = ParamSection::Actor;
+        } else if (module == "critic_mlp" || module == "critic_head") {
+            section = ParamSection::Critic;
+        } else {
+            throw std::logic_error("Unclassified ActorCritic parameter: " + name);
+        }
+
+        ParamKind kind = ParamKind::HiddenWeight;
+        if (item.value().dim() == 1) {
+            kind = ParamKind::Vector;
+        } else if (is_head || std::find(input_weight_names_.begin(), input_weight_names_.end(), name) != input_weight_names_.end()) {
+            kind = ParamKind::IOWeight;
+        }
+
+        layout.push_back({name, item.value(), section, kind});
+    }
+    return layout;
 }
 
 std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor obs) {

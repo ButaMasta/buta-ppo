@@ -4,6 +4,7 @@
 #include <torch/torch.h>
 #include <vector>
 #include <cstdint>
+#include <string>
 #include <tuple>
 
 namespace buta_ppo::rl {
@@ -26,6 +27,30 @@ struct ActorCriticConfig {
 };
 
 /**
+ * @brief The network section a parameter belongs to.
+ */
+enum class ParamSection { Shared, Actor, Critic };
+
+/**
+ * @brief The role of a parameter, used to choose its optimizer.
+ */
+enum class ParamKind {
+    HiddenWeight, // Hidden-to-hidden Linear weight.
+    IOWeight,     // Input-layer or output-head Linear weight.
+    Vector        // Bias or LayerNorm parameter.
+};
+
+/**
+ * @brief A parameter along with its section and role.
+ */
+struct ParamInfo {
+    std::string name;
+    torch::Tensor tensor;
+    ParamSection section;
+    ParamKind kind;
+};
+
+/**
  * @brief LibTorch module implementation for the network.
  */
 class ActorCriticImpl : public torch::nn::Module {
@@ -41,11 +66,21 @@ private:
     torch::nn::Linear actor_head_{nullptr};
     torch::nn::Linear critic_head_{nullptr};
 
+    // Names of the Linear weights fed directly by the raw obs.
+    std::vector<std::string> input_weight_names_;
+
     // Helper method to build the libtorch neural network layers and connect them.
     torch::nn::Sequential build_block(int64_t in_size, const std::vector<int64_t>& sizes, bool use_ln);
 
 public:
     explicit ActorCriticImpl(const ActorCriticConfig& config);
+
+    /**
+     * @brief Classifies every parameter by network section and role.
+     *
+     * @return Each parameter's name, tensor, section, and kind in `named_parameters()` order.
+     */
+    [[nodiscard]] std::vector<ParamInfo> parameter_layout() const;
 
     /**
      * @brief Performs a forward pass through the shared, actor, and critic networks. 

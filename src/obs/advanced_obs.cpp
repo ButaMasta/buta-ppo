@@ -31,7 +31,7 @@ AdvancedObs::AdvancedObs(size_t max_players_per_team, uint8_t tick_skip, uint32_
 }
 
 size_t AdvancedObs::get_obs_size() const {
-    return BALL_OBS + (BALL_OBS * BALL_PRED_TIMES_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * max_players_per_team_ * 2 - 1);
+    return BALL_OBS + (BALL_OBS * BALL_PRED_TIMES_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * (max_players_per_team_ * 2 - 1));
 }
 
 void AdvancedObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {

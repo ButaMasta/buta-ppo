@@ -52,6 +52,7 @@ if(BUILD_RUST_BRIDGE)
         src/reward/velocity_to_ball.cpp
         src/rl/rollout_buffer.cpp
         src/rl/actor_critic.cpp
+        src/rl/optimizers.cpp
         src/rl/ppo_trainer.cpp
         src/rl/ppo_runner.cpp
         src/state/default_kickoff.cpp
