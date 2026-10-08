@@ -8,12 +8,14 @@
 #include "reward/reward_manager.hpp"
 
 #include <torch/torch.h>
+#include <ATen/cuda/CUDAGraph.h>
 
 #include <cstddef>
 #include <stdexcept>
 #include <memory>
 #include <atomic>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // Forward declarations.
@@ -169,6 +171,15 @@ private:
     torch::Tensor step_terminal_obs_gpu_;
     torch::Tensor step_dones_gpu_;
 
+    // Rollout inference CUDA graph. Its outputs live in the graph's memory pool and are rewritten by every replay.
+    at::cuda::CUDAGraph inference_graph_;
+    bool inference_graph_captured_ = false;
+    torch::Tensor graph_obs_src_;       // VecEnv's pinned obs buffer that the graph uploads from.
+    torch::Tensor graph_masks_src_;     // VecEnv's pinned action mask buffer that the graph uploads from.
+    torch::Tensor graph_actions_gpu_;
+    torch::Tensor graph_log_probs_gpu_;
+    torch::Tensor graph_values_gpu_;
+
     int64_t global_step_{0};
 
     std::unique_ptr<TensorBoardLogger> logger_;
@@ -180,6 +191,26 @@ private:
      * to any values set in its config.
      */
     void setup_dimensions_and_buffers();
+
+    /**
+     * @brief The rollout inference work captured in the CUDA graph.
+     *
+     * Uploads the obs and masks, samples actions, and queues the actions' copy into `actions_cpu_`.
+     *
+     * @return The sampled actions, their log probs, and the state values.
+     */
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> inference_graph_logic();
+
+    /**
+     * @brief Samples actions for the current obs by replaying the inference graph, capturing it on first use.
+     *
+     * Blocks until the actions are in `actions_cpu_`. Outputs are in `graph_actions_gpu_`, `graph_log_probs_gpu_`,
+     * and `graph_values_gpu_` until the next call.
+     *
+     * @param obs VecEnv's batched obs buffer. Must be the same buffer on every call.
+     * @param masks VecEnv's batched action mask buffer. Must be the same buffer on every call.
+     */
+    void infer_rollout_actions(const torch::Tensor& obs, const torch::Tensor& masks);
 
     /**
      * @brief Attempts to find and load the latest checkpoint (model and optimizer) for a given bot.

@@ -4,12 +4,17 @@
 #include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
 
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAEvent.h>
+#include <c10/cuda/CUDAGuard.h>
+
 #include <charconv>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <sstream> // [PERF-INSTRUMENTATION]
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -29,6 +34,10 @@ PPORunner::PPORunner(const RunnerConfig& config)
         std::cout << "CUDA detected. Running on GPU.\n";
         at::globalContext().setUserEnabledCuDNN(true);
         at::globalContext().setBenchmarkCuDNN(true);
+
+        // TF32 matmuls for the fp32 rollout inference (training matmuls run in bf16 under autocast).
+        // TF32 keeps fp32 range and accumulation with a 10-bit mantissa, still above bf16's 7.
+        at::globalContext().setAllowTF32CuBLAS(true);
     } else {
         throw std::runtime_error("CUDA not found. CPU is currently not supported.");
     }
@@ -151,6 +160,54 @@ void PPORunner::setup_dimensions_and_buffers() {
     step_dones_gpu_ = torch::empty({t_agents}, float_opts);
 }
 
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PPORunner::inference_graph_logic() {
+    step_obs_gpu_.copy_(graph_obs_src_, true);
+    step_masks_gpu_.copy_(graph_masks_src_, true);
+
+    auto [actions, log_probs, values] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
+
+    // Non-blocking, since synchronizing isn't allowed during capture. `infer_rollout_actions` syncs after replay.
+    actions_cpu_.copy_(actions.to(torch::kInt32), true);
+
+    return { actions, log_probs, values.squeeze(-1) };
+}
+
+void PPORunner::infer_rollout_actions(const torch::Tensor& obs, const torch::Tensor& masks) {
+    if (!inference_graph_captured_) {
+        graph_obs_src_ = obs;
+        graph_masks_src_ = masks;
+
+        // Graph capture has to happen on a private stream, after any work already queued on the current stream.
+        at::cuda::CUDAStream capture_stream = at::cuda::getStreamFromPool();
+        {
+            at::cuda::CUDAEvent ready;
+            ready.record(at::cuda::getCurrentCUDAStream());
+            ready.block(capture_stream);
+        }
+        {
+            at::cuda::CUDAStreamGuard stream_guard(capture_stream);
+
+            // Warmup runs lazy initialization (e.g. cuBLAS workspaces) outside of capture. It only consumes RNG.
+            for (int i = 0; i < 3; i++) {
+                (void)inference_graph_logic();
+            }
+            capture_stream.synchronize();
+
+            inference_graph_.capture_begin();
+            std::tie(graph_actions_gpu_, graph_log_probs_gpu_, graph_values_gpu_) = inference_graph_logic();
+            inference_graph_.capture_end();
+        }
+        inference_graph_captured_ = true;
+    }
+
+    // The graph baked in the source buffers' addresses.
+    TORCH_CHECK(obs.data_ptr() == graph_obs_src_.data_ptr() && masks.data_ptr() == graph_masks_src_.data_ptr(),
+                "Rollout inference graph inputs must be VecEnv's persistent obs and mask buffers.");
+
+    inference_graph_.replay();
+    at::cuda::getCurrentCUDAStream().synchronize();
+}
+
 void PPORunner::save_checkpoint(const std::string& dir) const {
     const fs::path final_dir = fs::path(dir) / (config_.bot_name + "_" + std::to_string(global_step_));
     const fs::path tmp_dir = final_dir.string() + ".tmp";
@@ -184,17 +241,23 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         torch::Tensor current_masks = reset_res.action_masks;
 
         const auto rollout_start = std::chrono::high_resolution_clock::now();
+
+        // [PERF-INSTRUMENTATION] Temporary per-step timing split. Remove after profiling.
+        double perf_gpu_s = 0.0;
+        double perf_env_s = 0.0;
+        int64_t perf_steps = 0;
         
         while (!buffer_->is_full()) {
-            step_obs_gpu_.copy_(current_obs, true);
-            step_masks_gpu_.copy_(current_masks, true);
-
-            auto [actions_gpu, log_probs_gpu, values_gpu] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
-
-            // Blocking sync required for physics.
-            actions_cpu_.copy_(actions_gpu, false);
+            const auto perf_s0 = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
+            // Blocks until the actions are on the host, as required for physics.
+            infer_rollout_actions(current_obs, current_masks);
             
+            const auto perf_s1 = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
             auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>());
+            const auto perf_s2 = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
+            perf_gpu_s += std::chrono::duration<double>(perf_s1 - perf_s0).count();
+            perf_env_s += std::chrono::duration<double>(perf_s2 - perf_s1).count();
+            perf_steps++;
 
             step_rewards_gpu_.copy_(step_res.rewards, true);
 
@@ -219,8 +282,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             torch::max_out(step_dones_gpu_, step_term_gpu_, step_trunc_gpu_);
 
             buffer_->insert(
-                step_obs_gpu_, actions_gpu, step_masks_gpu_, 
-                step_rewards_gpu_, step_dones_gpu_, log_probs_gpu, values_gpu.squeeze(-1)
+                step_obs_gpu_, graph_actions_gpu_, step_masks_gpu_, 
+                step_rewards_gpu_, step_dones_gpu_, graph_log_probs_gpu_, graph_values_gpu_
             );
 
             current_obs = step_res.observations;
@@ -276,6 +339,19 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         logger_->add_scalar("Policy/Approx_KL", global_step_, metrics.at("approx_kl"));
         logger_->add_scalar("Policy/Clip_Fraction", global_step_, metrics.at("clip_fraction"));
 
+        // [PERF-INSTRUMENTATION] Per-step averages in ms.
+        const auto [perf_busy_max_s, perf_busy_mean_s] = vec_env_->take_perf_busy();
+        const double perf_div = 1e3 / static_cast<double>(std::max<int64_t>(1, perf_steps));
+        std::ostringstream perf_report;
+        perf_report << std::fixed << std::setprecision(3)
+                    << "\n | [PERF] ms/step over " << perf_steps << " steps"
+                    << "\n |  | GPU round trip:   " << perf_gpu_s * perf_div
+                    << "\n |  | Env wall:         " << perf_env_s * perf_div
+                    << "\n |  |  | Busy max:      " << perf_busy_max_s * perf_div
+                    << "\n |  |  | Busy mean:     " << perf_busy_mean_s * perf_div
+                    << "\n |  |  | Wake overhead: " << (perf_env_s - perf_busy_max_s) * perf_div
+                    << "\n |  |  | Imbalance:     " << (perf_busy_max_s - perf_busy_mean_s) * perf_div;
+
         std::cout << "Update: " << update 
                   << "\nLifetime Steps: " << global_step_
                   << "\n | Total SPS:   " << static_cast<int64_t>(total_sps)
@@ -284,6 +360,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n |  | Rollout:  " << rollout_time.count() << "s"
                   << "\n |  | GAE:      " << gae_time.count() << "s"
                   << "\n |  | Train:    " << train_time << "s"
+                  << perf_report.str()
                   << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics.at("policy_loss")
                   << "\n | Value Loss:  " << metrics.at("value_loss")
                   << "\n | Entropy:     " << metrics.at("entropy")

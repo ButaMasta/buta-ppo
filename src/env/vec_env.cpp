@@ -5,6 +5,8 @@
 #include "vec_env.hpp"
 #include "rl/ppo_runner.hpp"
 
+#include <algorithm> // [PERF-INSTRUMENTATION]
+#include <chrono>    // [PERF-INSTRUMENTATION]
 #include <cstddef>
 #include <cstring>
 #include <memory>
@@ -73,14 +75,11 @@ VecEnv::VecEnv(
     batched_truncated_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
     batched_terminal_obs_ = torch::zeros({(int64_t)total_agents_, (int64_t)single_obs_size_}, pinned_opts);
 
-    // Create thread pool.
-    size_t current_start = 0;
-    for (size_t i = 0; i < num_threads; i++) {
-        size_t chunk_size = num_envs_per_thread;
-        size_t current_end = current_start + chunk_size;
+    perf_worker_busy_.assign(num_threads, 0.0); // [PERF-INSTRUMENTATION]
 
-        workers_.emplace_back(&VecEnv::worker_loop, this, i, current_start, current_end);
-        current_start = current_end;
+    // Create thread pool.
+    for (size_t i = 0; i < num_threads; i++) {
+        workers_.emplace_back(&VecEnv::worker_loop, this, i);
     }
 }
 
@@ -98,7 +97,7 @@ VecEnv::~VecEnv() {
     }
 }
 
-void VecEnv::worker_loop(size_t /*worker_id*/, size_t start_idx, size_t end_idx) {
+void VecEnv::worker_loop(size_t worker_id) {
     int local_batch_count = 0; // Track this worker's batch count.
 
     while (!terminate_pool_) {
@@ -114,9 +113,14 @@ void VecEnv::worker_loop(size_t /*worker_id*/, size_t start_idx, size_t end_idx)
 
         local_batch_count = batch_count_;
 
+        const auto perf_start = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
+
         switch (current_worker_state_) {
         case WorkerState::RESET: {
-            for (size_t i = start_idx; i < end_idx; i++) {
+            // Claim envs until all are taken. Relaxed is enough: the batch_count_/pending_tasks_ handshake
+            // orders an env's writes by one worker before its next use by another.
+            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < num_envs_;
+                 i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
                 const size_t agent_offset = env_agent_offsets_[i];
                 const auto& result = envs_[i]->reset();
 
@@ -129,7 +133,9 @@ void VecEnv::worker_loop(size_t /*worker_id*/, size_t start_idx, size_t end_idx)
             break;
         }
         case WorkerState::STEP: {
-            for (size_t i = start_idx; i < end_idx; ++i) {
+            // Claim envs until all are taken (see RESET).
+            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < num_envs_;
+                 i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
                 const size_t agent_offset = env_agent_offsets_[i];
                 const size_t num_agents = env_agent_counts_[i];
                 
@@ -177,6 +183,9 @@ void VecEnv::worker_loop(size_t /*worker_id*/, size_t start_idx, size_t end_idx)
         }
 
         // If this was the last thread then thread operations are complete.
+        // [PERF-INSTRUMENTATION] Published to the main thread by the pending_tasks_ decrement below.
+        perf_worker_busy_[worker_id] = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_start).count();
+
         if (--pending_tasks_ == 0) {
             std::lock_guard<std::mutex> lock(done_mutex_);
             cv_done_.notify_one();
@@ -188,6 +197,7 @@ BatchedResetResult VecEnv::reset() {
     {
         std::lock_guard<std::mutex> lock(start_mutex_);
         current_worker_state_ = WorkerState::RESET;
+        next_env_ = 0;
         pending_tasks_ = workers_.size();
         batch_count_++; // New batch work is ready.
     }
@@ -205,6 +215,7 @@ BatchedStepResult VecEnv::step(const int* batched_actions) {
         std::lock_guard<std::mutex> lock(start_mutex_);
         current_actions_ptr_ = batched_actions;
         current_worker_state_ = WorkerState::STEP;
+        next_env_ = 0;
         pending_tasks_ = workers_.size();
         batch_count_++; // New batch work is ready.
     }
@@ -212,6 +223,14 @@ BatchedStepResult VecEnv::step(const int* batched_actions) {
 
     std::unique_lock<std::mutex> lock(done_mutex_);
     cv_done_.wait(lock, [this] { return pending_tasks_ == 0; });
+
+    // [PERF-INSTRUMENTATION] Slowest and average worker busy time for this step.
+    double perf_busy_sum = 0.0;
+    for (const double busy : perf_worker_busy_) {
+        perf_busy_sum += busy;
+    }
+    perf_busy_max_sum_ += *std::max_element(perf_worker_busy_.begin(), perf_worker_busy_.end());
+    perf_busy_mean_sum_ += perf_busy_sum / static_cast<double>(perf_worker_busy_.size());
 
     current_worker_state_ = WorkerState::IDLE;
     current_actions_ptr_ = nullptr;

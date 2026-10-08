@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <utility> // [PERF-INSTRUMENTATION]
 #include <memory>
 #include <thread>
 #include <mutex>
@@ -72,11 +73,19 @@ private:
     // Identifier for what batch number is expected of all workers.
     std::atomic<int> batch_count_{0};
 
+    // Index of the next env to be claimed by a worker in the current batch. Reset to 0 for every batch.
+    std::atomic<size_t> next_env_{0};
+
     std::mutex start_mutex_;
     std::condition_variable cv_start_;
 
     std::mutex done_mutex_;
     std::condition_variable cv_done_;
+
+    // [PERF-INSTRUMENTATION] Temporary worker timing. Remove after profiling.
+    std::vector<double> perf_worker_busy_;   // Last task's busy seconds, one slot per worker.
+    double perf_busy_max_sum_ = 0.0;         // Sum over steps of the slowest worker's busy time.
+    double perf_busy_mean_sum_ = 0.0;        // Sum over steps of the average worker's busy time.
 
     const int* current_actions_ptr_ = nullptr;
     enum class WorkerState { IDLE, RESET, STEP };
@@ -85,11 +94,13 @@ private:
     /**
      * @brief The multi-threaded method that all threads spawned run.
      * 
+     * Each batch, workers claim envs one at a time from a shared counter until all are taken,
+     * so faster or earlier-woken threads take on more of the work.
+     *
      * @param worker_id The ID of this thread.
-     * @param start_idx The start idx of this worker's working area. (Which envs it is responsible for)
-     * @param end_idx The end idx of this worker's working area.
      */
-    void worker_loop(size_t worker_id, size_t start_idx, size_t end_idx);
+    void worker_loop(size_t worker_id);
+
     
 public:
     VecEnv(
@@ -126,6 +137,16 @@ public:
      * @brief Update the aggregated rewards for telemetry logging.
      */
     void update_reward_breakdown();
+
+    /**
+     * @brief [PERF-INSTRUMENTATION] Returns {sum of slowest-worker busy, sum of mean-worker busy} seconds over steps and resets them.
+     */
+    [[nodiscard]] std::pair<double, double> take_perf_busy() {
+        const std::pair<double, double> sums{perf_busy_max_sum_, perf_busy_mean_sum_};
+        perf_busy_max_sum_ = 0.0;
+        perf_busy_mean_sum_ = 0.0;
+        return sums;
+    }
 
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
     [[nodiscard]] size_t get_total_agents() const { return total_agents_; };

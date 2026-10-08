@@ -2,6 +2,7 @@
 #include "actor_critic.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 namespace buta_ppo::rl {
@@ -159,7 +160,12 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::get_act
     );
 
     torch::Tensor probs = torch::softmax(masked_logits, -1);
-    torch::Tensor actions = torch::multinomial(probs, 1).squeeze(-1);
+
+    // Sample with the exponential race: argmax(p / E) with E ~ Exp(1) picks index i with probability p_i.
+    // Unlike multinomial it never synchronizes with the host, so it can be captured in a CUDA graph.
+    // Masked actions have p = 0 and never win. E is clamped above 0 so they can't become 0 / 0 = NaN.
+    torch::Tensor noise = torch::empty_like(probs).exponential_().clamp_min_(std::numeric_limits<float>::min());
+    torch::Tensor actions = (probs / noise).argmax(-1);
 
     torch::Tensor log_probs = torch::log_softmax(masked_logits, -1).gather(-1, actions.unsqueeze(-1)).squeeze(-1);
 
