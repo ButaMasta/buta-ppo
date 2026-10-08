@@ -10,6 +10,7 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 
@@ -29,7 +30,7 @@ PPORunner::PPORunner(const RunnerConfig& config)
         at::globalContext().setUserEnabledCuDNN(true);
         at::globalContext().setBenchmarkCuDNN(true);
     } else {
-        std::cout << "CUDA not found. Defaulting to CPU.\n";
+        throw std::runtime_error("CUDA not found. CPU is currently not supported.\n");
     }
 
     const std::string log_file = "logs/" + config_.bot_name + ".tfevents";

@@ -64,7 +64,7 @@ VecEnv::VecEnv(
     action_space_size_ = envs_[0]->get_action_space_size();
 
     // Allocate Tensor Buffers
-    const auto pinned_opts = torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32);
+    const auto pinned_opts = torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32).pinned_memory(true);
 
     batched_obs_ = torch::zeros({(int64_t)total_agents_, (int64_t)single_obs_size_}, pinned_opts);
     batched_action_masks_ = torch::zeros({(int64_t)total_agents_, (int64_t)action_space_size_}, pinned_opts);
