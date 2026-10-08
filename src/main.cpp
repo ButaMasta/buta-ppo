@@ -36,7 +36,7 @@ int main() {
     RunnerConfig config;
 
     config.bot_name = "default";
-    config.render = true;
+    config.render = false;
 
     config.match_distributions = {
         {1, 1, 1.0f}

@@ -64,6 +64,7 @@ ResetResult RocketSimEnv::reset() {
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     reward_manager_.reset(arena_state_);
+    obs_builder_.pre_step_rand(agents_);
 
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
@@ -138,6 +139,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     }
 
     // Build the final observations.
+    obs_builder_.pre_step_rand(agents_);
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
         agent_x_inverted_[i] = obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);

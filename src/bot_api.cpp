@@ -70,6 +70,7 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
         }
 
         // Build obs.
+        ctx->obs_builder->pre_step_rand(agents);
         const size_t obs_size = ctx->obs_builder->get_obs_size();
         std::vector<float> obs_buffer(obs_size, 0.0f);
         ctx->obs_builder->build_obs(*state, agents, car_idx, obs_buffer.data());

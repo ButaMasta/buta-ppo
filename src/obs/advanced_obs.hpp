@@ -66,6 +66,13 @@ public:
     [[nodiscard]] size_t get_obs_size() const;
 
     /**
+     * @brief Randomizes car indices for each team.
+     * 
+     * @param agents The list of agents in the env.
+     */
+    void pre_step_rand(const std::vector<env::AgentMeta>& agents);
+
+    /**
      * @brief Writes observation in-place. Returns X-Mirror status of this state.
      * 
      * @param arena_state The state of the arena containing all values from the FFI needed for obs construction.
@@ -106,7 +113,6 @@ private:
     std::vector<uint32_t> team_A_indices_;
     std::vector<uint32_t> team_B_indices_;
 
-    void pre_step_rand(const std::vector<env::AgentMeta>& agents);
 
     // Ball Sim helpers.
     bool exceeds_moe(const float& a, const float& b, const float& moe) const;
