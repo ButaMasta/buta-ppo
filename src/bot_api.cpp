@@ -22,7 +22,7 @@ struct BotContext {
 void* bot_api_init(const char* checkpoint_path) {
     BotContext* ctx = new BotContext();
     
-    ctx->obs_builder = std::make_unique<buta_ppo::obs::AdvancedObs>(3, 8);
+    ctx->obs_builder = std::make_unique<buta_ppo::obs::AdvancedObs>(1, 8);
     ctx->action_parser = std::make_unique<buta_ppo::action::DefaultAction>();
 
     buta_ppo::rl::ActorCriticConfig config;
