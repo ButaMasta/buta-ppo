@@ -110,6 +110,9 @@ StepResult RocketSimEnv::step(const int* actions) {
             reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_);
         }
 
+        // Update previous state.
+        reward_manager_.update_previous_state(arena_state_);
+
         // Reset touch counter if any car hit the ball or increment it.
         if (std::any_of(arena_state_.events.car_hit_ball, arena_state_.events.car_hit_ball + 8, [](bool v) { return v; })) {
             ticks_since_last_touch_ = 0;
