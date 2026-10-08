@@ -278,6 +278,9 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                         train_state[i].copy_(backups[i]);
                     }
                 }
+
+                // Last sync to ensure the state is restored.
+                capture_stream.synchronize();
             }
             
             graph_.replay();
