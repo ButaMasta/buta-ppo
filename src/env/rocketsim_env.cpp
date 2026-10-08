@@ -64,6 +64,7 @@ ResetResult RocketSimEnv::reset() {
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     reward_manager_.reset(arena_state_);
+    obs_builder_.reset();
     obs_builder_.pre_step_rand(agents_);
 
     for (size_t i = 0; i < agents_.size(); i++) {

@@ -66,6 +66,11 @@ public:
     [[nodiscard]] size_t get_obs_size() const;
 
     /**
+     * @brief Reset's the obs builder to initial state.
+     */
+    void reset();
+
+    /**
      * @brief Randomizes car indices for each team.
      * 
      * @param agents The list of agents in the env.

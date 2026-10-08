@@ -34,6 +34,10 @@ size_t AdvancedObs::get_obs_size() const {
     return BALL_OBS + (BALL_OBS * BALL_PRED_TIMES_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * (max_players_per_team_ * 2 - 1));
 }
 
+void AdvancedObs::reset() {
+    tick_last_updated_ball_pred_ = UINT64_MAX;
+}
+
 void AdvancedObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
     team_A_indices_.clear();
     team_B_indices_.clear();
