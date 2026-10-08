@@ -229,16 +229,18 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         // Successful rollout, increment global steps.
         global_step_ += total_steps_per_update_;
-        const float mean_step_reward = buffer_->rewards_.mean().item<float>();
-        logger_->add_scalar("Reward/Mean_Step", global_step_, mean_step_reward);
 
         vec_env_->update_reward_breakdown();
         const auto& reward_breakdown = vec_env_->get_reward_breakdown();
 
+        double total_reward = 0.0;
+        
         for (const auto& [name, total_weighted_reward] : reward_breakdown) {
+            total_reward += total_weighted_reward;
             const double avg_per_step = total_weighted_reward / static_cast<double>(total_steps_per_update_);
             logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(avg_per_step));
         }
+        logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / static_cast<double>(total_steps_per_update_)));
         
         const auto rollout_end = std::chrono::high_resolution_clock::now();
 
