@@ -7,6 +7,7 @@
 #include <csignal>
 #include <atomic>
 #include <locale>
+#include <stdexcept>
 
 namespace ffi = buta_ppo::ffi;
 using namespace buta_ppo::rl;
@@ -75,7 +76,11 @@ int main() {
     config.ppo_cfg.epochs = 1;
 
     PPORunner runner(config);
-    runner.run(75'000, g_stop_training, "checkpoints");
+    try {
+        runner.run(75'000, g_stop_training, "checkpoints");
+    } catch (std::runtime_error e) {
+        std::cerr << e.what();
+    }
 
     return 0;
 }

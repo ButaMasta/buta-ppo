@@ -30,7 +30,7 @@ PPORunner::PPORunner(const RunnerConfig& config)
         at::globalContext().setUserEnabledCuDNN(true);
         at::globalContext().setBenchmarkCuDNN(true);
     } else {
-        throw std::runtime_error("CUDA not found. CPU is currently not supported.\n");
+        throw std::runtime_error("CUDA not found. CPU is currently not supported.");
     }
 
     const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
