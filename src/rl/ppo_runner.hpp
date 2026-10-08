@@ -20,7 +20,7 @@
 
 // Forward declarations.
 class TensorBoardLogger;
-namespace buta_ppo::env { class VecEnv; }
+namespace buta_ppo::env { class VecEnv; struct BatchedStepResult; }
 namespace buta_ppo::rl  { class RolloutBuffer; }
 
 namespace buta_ppo::rl {
@@ -171,14 +171,36 @@ private:
     torch::Tensor step_terminal_obs_gpu_;
     torch::Tensor step_dones_gpu_;
 
-    // Rollout inference CUDA graph. Its outputs live in the graph's memory pool and are rewritten by every replay.
-    at::cuda::CUDAGraph inference_graph_;
-    bool inference_graph_captured_ = false;
-    torch::Tensor graph_obs_src_;       // VecEnv's pinned obs buffer that the graph uploads from.
-    torch::Tensor graph_masks_src_;     // VecEnv's pinned action mask buffer that the graph uploads from.
-    torch::Tensor graph_actions_gpu_;
-    torch::Tensor graph_log_probs_gpu_;
-    torch::Tensor graph_values_gpu_;
+    /**
+     * @brief One env group's slice of the rollout: its agent rows and its inference CUDA graph.
+     *
+     * The tensors are row views of the runner's full-batch buffers, so every group writes disjoint rows.
+     * Graph outputs live in the graph's memory pool and are rewritten by every replay.
+     */
+    struct RolloutGroup {
+        int64_t agent_begin = 0;
+        int64_t agent_count = 0;
+
+        // Row views.
+        torch::Tensor obs_src;       // VecEnv's pinned obs rows that the graph uploads from.
+        torch::Tensor masks_src;     // VecEnv's pinned action mask rows that the graph uploads from.
+        torch::Tensor actions_cpu;
+        torch::Tensor obs_gpu;
+        torch::Tensor masks_gpu;
+        torch::Tensor rewards_gpu;
+        torch::Tensor term_gpu;
+        torch::Tensor trunc_gpu;
+        torch::Tensor terminal_obs_gpu;
+        torch::Tensor dones_gpu;
+
+        // Inference graph and its outputs.
+        at::cuda::CUDAGraph graph;
+        bool captured = false;
+        torch::Tensor actions_gpu;
+        torch::Tensor log_probs_gpu;
+        torch::Tensor values_gpu;
+    };
+    std::vector<std::unique_ptr<RolloutGroup>> rollout_groups_;
 
     int64_t global_step_{0};
 
@@ -193,24 +215,44 @@ private:
     void setup_dimensions_and_buffers();
 
     /**
-     * @brief The rollout inference work captured in the CUDA graph.
+     * @brief Creates the per-group row views for every VecEnv env group.
      *
-     * Uploads the obs and masks, samples actions, and queues the actions' copy into `actions_cpu_`.
+     * @param obs VecEnv's full batched obs buffer.
+     * @param masks VecEnv's full batched action mask buffer.
+     */
+    void setup_rollout_groups(const torch::Tensor& obs, const torch::Tensor& masks);
+
+    /**
+     * @brief The rollout inference work captured in a group's CUDA graph.
+     *
+     * Uploads the group's obs and masks, samples actions, and queues the actions' copy into its `actions_cpu` rows.
      *
      * @return The sampled actions, their log probs, and the state values.
      */
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> inference_graph_logic();
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> inference_graph_logic(RolloutGroup& group);
 
     /**
-     * @brief Samples actions for the current obs by replaying the inference graph, capturing it on first use.
+     * @brief Samples actions for a group's current obs by replaying its inference graph, capturing it on first use.
      *
-     * Blocks until the actions are in `actions_cpu_`. Outputs are in `graph_actions_gpu_`, `graph_log_probs_gpu_`,
-     * and `graph_values_gpu_` until the next call.
+     * Blocks until the actions are in the group's `actions_cpu` rows. The group's graph outputs hold the results
+     * until its next call.
      *
-     * @param obs VecEnv's batched obs buffer. Must be the same buffer on every call.
-     * @param masks VecEnv's batched action mask buffer. Must be the same buffer on every call.
+     * @param group The group to infer.
+     * @param obs The group's rows of VecEnv's obs buffer. Must be the same rows on every call.
+     * @param masks The group's rows of VecEnv's action mask buffer. Must be the same rows on every call.
      */
-    void infer_rollout_actions(const torch::Tensor& obs, const torch::Tensor& masks);
+    void infer_group(RolloutGroup& group, const torch::Tensor& obs, const torch::Tensor& masks);
+
+    /**
+     * @brief Uploads a group's step results, bootstraps its truncated agents, and inserts the step into the buffer.
+     *
+     * Must run before the group's next `infer_group`, which overwrites the obs rows and graph outputs it inserts.
+     *
+     * @param group The group whose step finished.
+     * @param step The buffer step to write.
+     * @param step_res The group's rows of the step result.
+     */
+    void finish_group_step(RolloutGroup& group, size_t step, const env::BatchedStepResult& step_res);
 
     /**
      * @brief Attempts to find and load the latest checkpoint (model and optimizer) for a given bot.

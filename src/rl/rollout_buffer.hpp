@@ -18,7 +18,6 @@ private:
     size_t action_space_size_;
     torch::Device device_;
 
-    size_t step_{0};
 
 public:
     // Primary tensor storage.
@@ -45,13 +44,12 @@ public:
     RolloutBuffer(size_t buffer_size, size_t num_agents, size_t obs_size, size_t action_space_size, torch::Device device);
 
     /**
-     * @brief Resets internal step counter for a new rollout.
-     */
-    void reset();
-
-    /**
-     * @brief Inserts a single step of data into the buffer at the current step index.
+     * @brief Writes one step of data for a contiguous range of agents into the buffer.
+     *
+     * Each env group writes its own agent rows, so a step is complete once every group has inserted it.
      * 
+     * @param step The buffer step to write.
+     * @param agent_offset The first agent (column) to write. The range's size is the batch size of the inputs.
      * @param obs The batched observations for this step.
      * @param actions The batched viable actions selected by the policy for this step.
      * @param action_masks The batched action masks for this step.
@@ -61,6 +59,8 @@ public:
      * @param values The batched critic values for this step.
      */
     void insert(
+        size_t step,
+        int64_t agent_offset,
         const torch::Tensor& obs,
         const torch::Tensor& actions,
         const torch::Tensor& action_masks,
@@ -83,7 +83,6 @@ public:
         float gae_lambda = 0.95f
     );
 
-    [[nodiscard]] bool is_full() const { return step_ >= buffer_size_; };
     [[nodiscard]] size_t get_buffer_size() const { return buffer_size_; };
 };
 

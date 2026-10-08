@@ -5,12 +5,11 @@
 #include "vec_env.hpp"
 #include "rl/ppo_runner.hpp"
 
-#include <algorithm> // [PERF-INSTRUMENTATION]
-#include <chrono>    // [PERF-INSTRUMENTATION]
 #include <cstddef>
 #include <cstring>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace buta_ppo::env {
@@ -75,7 +74,19 @@ VecEnv::VecEnv(
     batched_truncated_ = torch::zeros({(int64_t)total_agents_}, pinned_opts);
     batched_terminal_obs_ = torch::zeros({(int64_t)total_agents_, (int64_t)single_obs_size_}, pinned_opts);
 
-    perf_worker_busy_.assign(num_threads, 0.0); // [PERF-INSTRUMENTATION]
+    // Split the envs into two groups with about half the agents each, on an env boundary, so one group's physics
+    // can run while the other group's inference does. With a single env there is only one group.
+    if (num_envs_ >= 2) {
+        size_t split = 1;
+        while (split < num_envs_ - 1 && env_agent_offsets_[split] < total_agents_ / 2) {
+            split++;
+        }
+        const size_t split_agent = env_agent_offsets_[split];
+        groups_.push_back({0, split, 0, split_agent});
+        groups_.push_back({split, num_envs_, split_agent, total_agents_});
+    } else {
+        groups_.push_back({0, num_envs_, 0, total_agents_});
+    }
 
     // Create thread pool.
     for (size_t i = 0; i < num_threads; i++) {
@@ -97,7 +108,7 @@ VecEnv::~VecEnv() {
     }
 }
 
-void VecEnv::worker_loop(size_t worker_id) {
+void VecEnv::worker_loop(size_t /*worker_id*/) {
     int local_batch_count = 0; // Track this worker's batch count.
 
     while (!terminate_pool_) {
@@ -113,13 +124,11 @@ void VecEnv::worker_loop(size_t worker_id) {
 
         local_batch_count = batch_count_;
 
-        const auto perf_start = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
-
         switch (current_worker_state_) {
         case WorkerState::RESET: {
             // Claim envs until all are taken. Relaxed is enough: the batch_count_/pending_tasks_ handshake
             // orders an env's writes by one worker before its next use by another.
-            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < num_envs_;
+            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < batch_env_end_;
                  i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
                 const size_t agent_offset = env_agent_offsets_[i];
                 const auto& result = envs_[i]->reset();
@@ -134,7 +143,7 @@ void VecEnv::worker_loop(size_t worker_id) {
         }
         case WorkerState::STEP: {
             // Claim envs until all are taken (see RESET).
-            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < num_envs_;
+            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < batch_env_end_;
                  i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
                 const size_t agent_offset = env_agent_offsets_[i];
                 const size_t num_agents = env_agent_counts_[i];
@@ -183,9 +192,6 @@ void VecEnv::worker_loop(size_t worker_id) {
         }
 
         // If this was the last thread then thread operations are complete.
-        // [PERF-INSTRUMENTATION] Published to the main thread by the pending_tasks_ decrement below.
-        perf_worker_busy_[worker_id] = std::chrono::duration<double>(std::chrono::steady_clock::now() - perf_start).count();
-
         if (--pending_tasks_ == 0) {
             std::lock_guard<std::mutex> lock(done_mutex_);
             cv_done_.notify_one();
@@ -193,49 +199,79 @@ void VecEnv::worker_loop(size_t worker_id) {
     }
 }
 
-BatchedResetResult VecEnv::reset() {
+void VecEnv::dispatch(WorkerState state, const int* batched_actions, size_t env_begin, size_t env_end) {
     {
         std::lock_guard<std::mutex> lock(start_mutex_);
-        current_worker_state_ = WorkerState::RESET;
-        next_env_ = 0;
+        current_actions_ptr_ = batched_actions;
+        current_worker_state_ = state;
+        next_env_ = env_begin;
+        batch_env_end_ = env_end;
         pending_tasks_ = workers_.size();
         batch_count_++; // New batch work is ready.
     }
     cv_start_.notify_all();
+}
 
-    std::unique_lock<std::mutex> lock(done_mutex_);
-    cv_done_.wait(lock, [this] { return pending_tasks_ == 0; });
+void VecEnv::wait_for_workers() {
+    {
+        std::unique_lock<std::mutex> lock(done_mutex_);
+        cv_done_.wait(lock, [this] { return pending_tasks_ == 0; });
+    }
 
     current_worker_state_ = WorkerState::IDLE;
+    current_actions_ptr_ = nullptr;
+}
+
+BatchedStepResult VecEnv::step_result_rows(size_t agent_begin, size_t agent_count) const {
+    const auto begin = static_cast<int64_t>(agent_begin);
+    const auto count = static_cast<int64_t>(agent_count);
+    return {
+        batched_obs_.narrow(0, begin, count),
+        batched_action_masks_.narrow(0, begin, count),
+        batched_rewards_.narrow(0, begin, count),
+        batched_terminated_.narrow(0, begin, count),
+        batched_truncated_.narrow(0, begin, count),
+        batched_terminal_obs_.narrow(0, begin, count)
+    };
+}
+
+BatchedResetResult VecEnv::reset() {
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::reset called while an env group is still stepping.");
+    }
+    dispatch(WorkerState::RESET, nullptr, 0, num_envs_);
+    wait_for_workers();
     return { batched_obs_, batched_action_masks_ };
 }
 
 BatchedStepResult VecEnv::step(const int* batched_actions) {
-    {
-        std::lock_guard<std::mutex> lock(start_mutex_);
-        current_actions_ptr_ = batched_actions;
-        current_worker_state_ = WorkerState::STEP;
-        next_env_ = 0;
-        pending_tasks_ = workers_.size();
-        batch_count_++; // New batch work is ready.
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::step called while an env group is still stepping.");
     }
-    cv_start_.notify_all();
-
-    std::unique_lock<std::mutex> lock(done_mutex_);
-    cv_done_.wait(lock, [this] { return pending_tasks_ == 0; });
-
-    // [PERF-INSTRUMENTATION] Slowest and average worker busy time for this step.
-    double perf_busy_sum = 0.0;
-    for (const double busy : perf_worker_busy_) {
-        perf_busy_sum += busy;
-    }
-    perf_busy_max_sum_ += *std::max_element(perf_worker_busy_.begin(), perf_worker_busy_.end());
-    perf_busy_mean_sum_ += perf_busy_sum / static_cast<double>(perf_worker_busy_.size());
-
-    current_worker_state_ = WorkerState::IDLE;
-    current_actions_ptr_ = nullptr;
-
+    dispatch(WorkerState::STEP, batched_actions, 0, num_envs_);
+    wait_for_workers();
     return { batched_obs_, batched_action_masks_, batched_rewards_, batched_terminated_, batched_truncated_, batched_terminal_obs_ };
+}
+
+void VecEnv::step_async(size_t group, const int* batched_actions) {
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::step_async called while another env group is still stepping.");
+    }
+    const EnvGroup& g = groups_.at(group);
+    dispatch(WorkerState::STEP, batched_actions, g.env_begin, g.env_end);
+    group_in_flight_ = true;
+    in_flight_group_ = group;
+}
+
+BatchedStepResult VecEnv::wait() {
+    if (!group_in_flight_) {
+        throw std::logic_error("VecEnv::wait called with no env group stepping.");
+    }
+    wait_for_workers();
+    group_in_flight_ = false;
+
+    const EnvGroup& g = groups_[in_flight_group_];
+    return step_result_rows(g.agent_begin, g.agent_count());
 }
 
 void VecEnv::update_reward_breakdown() {

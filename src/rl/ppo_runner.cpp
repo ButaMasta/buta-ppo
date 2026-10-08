@@ -14,7 +14,6 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
-#include <sstream> // [PERF-INSTRUMENTATION]
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -160,23 +159,44 @@ void PPORunner::setup_dimensions_and_buffers() {
     step_dones_gpu_ = torch::empty({t_agents}, float_opts);
 }
 
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PPORunner::inference_graph_logic() {
-    step_obs_gpu_.copy_(graph_obs_src_, true);
-    step_masks_gpu_.copy_(graph_masks_src_, true);
+void PPORunner::setup_rollout_groups(const torch::Tensor& obs, const torch::Tensor& masks) {
+    rollout_groups_.clear();
+    for (const env::EnvGroup& env_group : vec_env_->get_groups()) {
+        auto group = std::make_unique<RolloutGroup>();
+        const auto begin = static_cast<int64_t>(env_group.agent_begin);
+        const auto count = static_cast<int64_t>(env_group.agent_count());
+        group->agent_begin = begin;
+        group->agent_count = count;
 
-    auto [actions, log_probs, values] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
+        group->obs_src = obs.narrow(0, begin, count);
+        group->masks_src = masks.narrow(0, begin, count);
+        group->actions_cpu = actions_cpu_.narrow(0, begin, count);
+        group->obs_gpu = step_obs_gpu_.narrow(0, begin, count);
+        group->masks_gpu = step_masks_gpu_.narrow(0, begin, count);
+        group->rewards_gpu = step_rewards_gpu_.narrow(0, begin, count);
+        group->term_gpu = step_term_gpu_.narrow(0, begin, count);
+        group->trunc_gpu = step_trunc_gpu_.narrow(0, begin, count);
+        group->terminal_obs_gpu = step_terminal_obs_gpu_.narrow(0, begin, count);
+        group->dones_gpu = step_dones_gpu_.narrow(0, begin, count);
 
-    // Non-blocking, since synchronizing isn't allowed during capture. `infer_rollout_actions` syncs after replay.
-    actions_cpu_.copy_(actions.to(torch::kInt32), true);
+        rollout_groups_.push_back(std::move(group));
+    }
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PPORunner::inference_graph_logic(RolloutGroup& group) {
+    group.obs_gpu.copy_(group.obs_src, true);
+    group.masks_gpu.copy_(group.masks_src, true);
+
+    auto [actions, log_probs, values] = actor_critic_->get_action_and_value(group.obs_gpu, group.masks_gpu);
+
+    // Non-blocking, since synchronizing isn't allowed during capture. `infer_group` syncs after replay.
+    group.actions_cpu.copy_(actions.to(torch::kInt32), true);
 
     return { actions, log_probs, values.squeeze(-1) };
 }
 
-void PPORunner::infer_rollout_actions(const torch::Tensor& obs, const torch::Tensor& masks) {
-    if (!inference_graph_captured_) {
-        graph_obs_src_ = obs;
-        graph_masks_src_ = masks;
-
+void PPORunner::infer_group(RolloutGroup& group, const torch::Tensor& obs, const torch::Tensor& masks) {
+    if (!group.captured) {
         // Graph capture has to happen on a private stream, after any work already queued on the current stream.
         at::cuda::CUDAStream capture_stream = at::cuda::getStreamFromPool();
         {
@@ -189,23 +209,52 @@ void PPORunner::infer_rollout_actions(const torch::Tensor& obs, const torch::Ten
 
             // Warmup runs lazy initialization (e.g. cuBLAS workspaces) outside of capture. It only consumes RNG.
             for (int i = 0; i < 3; i++) {
-                (void)inference_graph_logic();
+                (void)inference_graph_logic(group);
             }
             capture_stream.synchronize();
 
-            inference_graph_.capture_begin();
-            std::tie(graph_actions_gpu_, graph_log_probs_gpu_, graph_values_gpu_) = inference_graph_logic();
-            inference_graph_.capture_end();
+            group.graph.capture_begin();
+            std::tie(group.actions_gpu, group.log_probs_gpu, group.values_gpu) = inference_graph_logic(group);
+            group.graph.capture_end();
         }
-        inference_graph_captured_ = true;
+        group.captured = true;
     }
 
-    // The graph baked in the source buffers' addresses.
-    TORCH_CHECK(obs.data_ptr() == graph_obs_src_.data_ptr() && masks.data_ptr() == graph_masks_src_.data_ptr(),
-                "Rollout inference graph inputs must be VecEnv's persistent obs and mask buffers.");
+    // The graph baked in the source rows' addresses.
+    TORCH_CHECK(obs.data_ptr() == group.obs_src.data_ptr() && masks.data_ptr() == group.masks_src.data_ptr(),
+                "Rollout inference graph inputs must be the group's rows of VecEnv's persistent obs and mask buffers.");
 
-    inference_graph_.replay();
+    group.graph.replay();
     at::cuda::getCurrentCUDAStream().synchronize();
+}
+
+void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::BatchedStepResult& step_res) {
+    group.rewards_gpu.copy_(step_res.rewards, true);
+    group.term_gpu.copy_(step_res.terminated, true);
+    group.trunc_gpu.copy_(step_res.truncated, true);
+
+    // Bootstrap any truncated states.
+    if (step_res.truncated.any().item<bool>()) {
+        group.terminal_obs_gpu.copy_(step_res.terminal_observations, true);
+
+        torch::Tensor bootstrap_values;
+        {
+            torch::NoGradGuard no_grad;
+            auto values = actor_critic_->forward_critic(group.terminal_obs_gpu);
+            bootstrap_values = values.squeeze(-1);
+        }
+
+        // This is rewards += bootstrap_values * trunc * config_.ppo_cfg.gae_gamma.
+        group.rewards_gpu.add_(bootstrap_values * group.trunc_gpu, config_.ppo_cfg.gae_gamma);
+    }
+
+    torch::max_out(group.dones_gpu, group.term_gpu, group.trunc_gpu);
+
+    buffer_->insert(
+        step, group.agent_begin,
+        group.obs_gpu, group.actions_gpu, group.masks_gpu,
+        group.rewards_gpu, group.dones_gpu, group.log_probs_gpu, group.values_gpu
+    );
 }
 
 void PPORunner::save_checkpoint(const std::string& dir) const {
@@ -225,7 +274,13 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
 
 void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
     
-    auto reset_res = vec_env_->reset();
+    if (vec_env_->get_groups().size() < 2) {
+        throw std::invalid_argument("Training needs at least 2 envs, since the rollout is pipelined over two env groups.");
+    }
+
+    // Holds VecEnv's full batched buffers, which always contain every agent's latest obs and masks.
+    const auto reset_res = vec_env_->reset();
+    setup_rollout_groups(reset_res.observations, reset_res.action_masks);
 
     for (int update = 1; update <= num_updates; ++update) {
 
@@ -235,59 +290,32 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         }
 
         const auto t_start = std::chrono::high_resolution_clock::now();
-        buffer_->reset();
-
-        torch::Tensor current_obs = reset_res.observations;
-        torch::Tensor current_masks = reset_res.action_masks;
-
         const auto rollout_start = std::chrono::high_resolution_clock::now();
 
-        // [PERF-INSTRUMENTATION] Temporary per-step timing split. Remove after profiling.
-        double perf_gpu_s = 0.0;
-        double perf_env_s = 0.0;
-        int64_t perf_steps = 0;
-        
-        while (!buffer_->is_full()) {
-            const auto perf_s0 = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
-            // Blocks until the actions are on the host, as required for physics.
-            infer_rollout_actions(current_obs, current_masks);
-            
-            const auto perf_s1 = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
-            auto step_res = vec_env_->step(actions_cpu_.data_ptr<int>());
-            const auto perf_s2 = std::chrono::steady_clock::now(); // [PERF-INSTRUMENTATION]
-            perf_gpu_s += std::chrono::duration<double>(perf_s1 - perf_s0).count();
-            perf_env_s += std::chrono::duration<double>(perf_s2 - perf_s1).count();
-            perf_steps++;
+        // Pipelined rollout over two env groups: while one group's physics runs on the workers, the main thread
+        // uploads the other group's results and runs its inference. Each env still acts on its own latest obs
+        // before it advances, so there is no action delay; only the order of steps across groups changes.
+        RolloutGroup& group_a = *rollout_groups_[0];
+        RolloutGroup& group_b = *rollout_groups_[1];
+        int* const actions_ptr = actions_cpu_.data_ptr<int>();
+        const size_t num_steps = buffer_size_;
 
-            step_rewards_gpu_.copy_(step_res.rewards, true);
+        infer_group(group_a, group_a.obs_src, group_a.masks_src);
+        vec_env_->step_async(0, actions_ptr);
+        infer_group(group_b, group_b.obs_src, group_b.masks_src);
 
-            step_term_gpu_.copy_(step_res.terminated, true);
-            step_trunc_gpu_.copy_(step_res.truncated, true);
+        for (size_t t = 0; t < num_steps; ++t) {
+            const bool has_next = t + 1 < num_steps;
 
-            // Bootstrap any truncated states.
-            if (step_res.truncated.any().item<bool>()) {
-                step_terminal_obs_gpu_.copy_(step_res.terminal_observations, true);
+            const auto res_a = vec_env_->wait();
+            vec_env_->step_async(1, actions_ptr);
+            finish_group_step(group_a, t, res_a);
+            if (has_next) infer_group(group_a, res_a.observations, res_a.action_masks);
 
-                torch::Tensor bootstrap_values;
-                {
-                    torch::NoGradGuard no_grad;
-                    auto values = actor_critic_->forward_critic(step_terminal_obs_gpu_);
-                    bootstrap_values = values.squeeze(-1);
-                }
-
-                // This is step_rewards_gpu_ += bootstrap_values * step_trunc_gpu_ * config_.ppo_cfg.gae_gamma.
-                step_rewards_gpu_.add_(bootstrap_values * step_trunc_gpu_, config_.ppo_cfg.gae_gamma);
-            }
-
-            torch::max_out(step_dones_gpu_, step_term_gpu_, step_trunc_gpu_);
-
-            buffer_->insert(
-                step_obs_gpu_, graph_actions_gpu_, step_masks_gpu_, 
-                step_rewards_gpu_, step_dones_gpu_, graph_log_probs_gpu_, graph_values_gpu_
-            );
-
-            current_obs = step_res.observations;
-            current_masks = step_res.action_masks;
+            const auto res_b = vec_env_->wait();
+            if (has_next) vec_env_->step_async(0, actions_ptr);
+            finish_group_step(group_b, t, res_b);
+            if (has_next) infer_group(group_b, res_b.observations, res_b.action_masks);
         }
 
         // Successful rollout, increment global steps.
@@ -307,8 +335,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         
         const auto rollout_end = std::chrono::high_resolution_clock::now();
 
-        // GAE & Optimize.
-        step_obs_gpu_.copy_(current_obs, true);
+        // GAE & Optimize. The full obs buffer holds every group's latest obs.
+        step_obs_gpu_.copy_(reset_res.observations, true);
         torch::Tensor next_values;
         {
             torch::NoGradGuard no_grad;
@@ -339,19 +367,6 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         logger_->add_scalar("Policy/Approx_KL", global_step_, metrics.at("approx_kl"));
         logger_->add_scalar("Policy/Clip_Fraction", global_step_, metrics.at("clip_fraction"));
 
-        // [PERF-INSTRUMENTATION] Per-step averages in ms.
-        const auto [perf_busy_max_s, perf_busy_mean_s] = vec_env_->take_perf_busy();
-        const double perf_div = 1e3 / static_cast<double>(std::max<int64_t>(1, perf_steps));
-        std::ostringstream perf_report;
-        perf_report << std::fixed << std::setprecision(3)
-                    << "\n | [PERF] ms/step over " << perf_steps << " steps"
-                    << "\n |  | GPU round trip:   " << perf_gpu_s * perf_div
-                    << "\n |  | Env wall:         " << perf_env_s * perf_div
-                    << "\n |  |  | Busy max:      " << perf_busy_max_s * perf_div
-                    << "\n |  |  | Busy mean:     " << perf_busy_mean_s * perf_div
-                    << "\n |  |  | Wake overhead: " << (perf_env_s - perf_busy_max_s) * perf_div
-                    << "\n |  |  | Imbalance:     " << (perf_busy_max_s - perf_busy_mean_s) * perf_div;
-
         std::cout << "Update: " << update 
                   << "\nLifetime Steps: " << global_step_
                   << "\n | Total SPS:   " << static_cast<int64_t>(total_sps)
@@ -360,7 +375,6 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n |  | Rollout:  " << rollout_time.count() << "s"
                   << "\n |  | GAE:      " << gae_time.count() << "s"
                   << "\n |  | Train:    " << train_time << "s"
-                  << perf_report.str()
                   << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics.at("policy_loss")
                   << "\n | Value Loss:  " << metrics.at("value_loss")
                   << "\n | Entropy:     " << metrics.at("entropy")
