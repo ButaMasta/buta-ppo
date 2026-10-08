@@ -121,15 +121,25 @@ std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor 
 }
 
 torch::Tensor ActorCriticImpl::forward_actor(torch::Tensor obs) {
-    torch::Tensor x = shared_mlp_->forward(obs);
-    x = actor_mlp_->forward(x);
-    return actor_head_->forward(x);
+    torch::Tensor shared_features = obs;
+    if (shared_mlp_) {
+        shared_features = shared_mlp_->forward(shared_features);
+    }
+    if (actor_mlp_) {
+        shared_features = actor_mlp_->forward(shared_features);
+    }
+    return actor_head_->forward(shared_features);
 }
 
 torch::Tensor ActorCriticImpl::forward_critic(torch::Tensor obs) {
-    torch::Tensor x = shared_mlp_->forward(obs);
-    x = critic_mlp_->forward(x);
-    return critic_head_->forward(x);
+    torch::Tensor shared_features = obs;
+    if (shared_mlp_) {
+        shared_features = shared_mlp_->forward(shared_features);
+    }
+    if (critic_mlp_) {
+        shared_features = critic_mlp_->forward(shared_features);
+    }
+    return critic_head_->forward(shared_features);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::get_action_and_value(
