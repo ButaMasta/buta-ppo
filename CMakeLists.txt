@@ -45,7 +45,7 @@ if(BUILD_RUST_BRIDGE)
         src/action/default_action.cpp
         src/env/rocketsim_env.cpp
         src/env/vec_env.cpp
-        src/obs/advanced_obs.cpp
+        src/obs/default_obs.cpp
         src/reward/reward_manager.cpp
         src/reward/event_goal.cpp
         src/reward/touch_ball.cpp
@@ -94,7 +94,7 @@ endif()
 add_library(buta_ppo_bot SHARED
     src/bot_api.cpp
     src/action/default_action.cpp
-    src/obs/advanced_obs.cpp
+    src/obs/default_obs.cpp
     src/rl/actor_critic.cpp
 )
 

@@ -1,6 +1,6 @@
-// buta-ppo/src/env/advanced_obs.cpp
+// buta-ppo/src/env/default_obs.cpp
 
-#include "advanced_obs.hpp"
+#include "default_obs.hpp"
 #include "env/rocketsim_env.hpp" // For AgentMeta
 #include "util/math_utils.hpp"
 #include <algorithm>
@@ -11,7 +11,7 @@ namespace math = buta_ppo::util::math;
 
 namespace buta_ppo::obs {
 
-AdvancedObs::AdvancedObs(size_t max_players_per_team, uint8_t tick_skip, uint32_t seed)
+DefaultObs::DefaultObs(size_t max_players_per_team, uint8_t tick_skip, uint32_t seed)
     : max_players_per_team_(max_players_per_team), tick_skip_(tick_skip), rng_(seed), tick_last_updated_ball_pred_(9999) {
     ball_pred_arena_ = ffi::create_arena_ball_sim(0);
     team_A_indices_.reserve(max_players_per_team_);
@@ -30,15 +30,15 @@ AdvancedObs::AdvancedObs(size_t max_players_per_team, uint8_t tick_skip, uint32_
     ball_pred_.resize(ball_pred_buffer_size_);
 }
 
-size_t AdvancedObs::get_obs_size() const {
+size_t DefaultObs::get_obs_size() const {
     return BALL_OBS + (BALL_OBS * BALL_PRED_TIMES_COUNT) + BOOST_PAD_OBS + AGENT_CAR_OBS + (OTHER_CAR_OBS * (max_players_per_team_ * 2 - 1));
 }
 
-void AdvancedObs::reset() {
+void DefaultObs::reset() {
     tick_last_updated_ball_pred_ = UINT64_MAX;
 }
 
-void AdvancedObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
+void DefaultObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
     team_A_indices_.clear();
     team_B_indices_.clear();
 
@@ -54,11 +54,11 @@ void AdvancedObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
     std::shuffle(team_B_indices_.begin(), team_B_indices_.end(), rng_);
 }
 
-bool AdvancedObs::exceeds_moe(const float& a, const float& b, const float& moe) const {
+bool DefaultObs::exceeds_moe(const float& a, const float& b, const float& moe) const {
     return std::abs(a - b) > moe;
 }
 
-bool AdvancedObs::needs_repred(const ffi::BallSimBallState& curr_ball_sim_state) const {
+bool DefaultObs::needs_repred(const ffi::BallSimBallState& curr_ball_sim_state) const {
     const ffi::BallSimPhysState& curr_phys = curr_ball_sim_state.phys;
     const ffi::BallSimPhysState& valid_phys = state_to_verify_.phys;
 
@@ -73,7 +73,7 @@ bool AdvancedObs::needs_repred(const ffi::BallSimBallState& curr_ball_sim_state)
            exceeds_moe(curr_phys.ang_vel[2], valid_phys.ang_vel[2], ANG_VEL_MOE);
 }
 
-void AdvancedObs::pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_state, uint64_t ticks_at_update) {
+void DefaultObs::pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_state, uint64_t ticks_at_update) {
     if (ticks_at_update == tick_last_updated_ball_pred_) { return; }
 
     if (needs_repred(curr_arena_ball_state)) {
@@ -95,7 +95,7 @@ void AdvancedObs::pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_stat
     tick_last_updated_ball_pred_ = ticks_at_update;
 }
 
-void AdvancedObs::write_pos(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
+void DefaultObs::write_pos(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
     float x_mult = (invert_team ? -1.0f : 1.0f) * (invert_x ? -1.0f : 1.0f);
     float y_mult = invert_team ? -1.0f : 1.0f;
     *ptr++ = vec[0] * x_mult * POS_COEF_X;
@@ -103,7 +103,7 @@ void AdvancedObs::write_pos(float*& ptr, const float* vec, bool invert_team, boo
     *ptr++ = vec[2] * POS_COEF_Z;
 }
 
-void AdvancedObs::write_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
+void DefaultObs::write_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
     float x_mult = (invert_team ? -1.0f : 1.0f) * (invert_x ? -1.0f : 1.0f);
     float y_mult = invert_team ? -1.0f : 1.0f;
     *ptr++ = vec[0] * x_mult * VEL_COEF;
@@ -111,7 +111,7 @@ void AdvancedObs::write_vel(float*& ptr, const float* vec, bool invert_team, boo
     *ptr++ = vec[2] * VEL_COEF;
 }
 
-void AdvancedObs::write_ang_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
+void DefaultObs::write_ang_vel(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
     float x_mult = invert_team ? -1.0f : 1.0f;
     float y_mult = (invert_team ? -1.0f : 1.0f) * (invert_x ? -1.0f : 1.0f);
     float z_mult = invert_x ? -1.0f : 1.0f;
@@ -120,7 +120,7 @@ void AdvancedObs::write_ang_vel(float*& ptr, const float* vec, bool invert_team,
     *ptr++ = vec[2] * z_mult * ANG_VEL_COEF;
 }
 
-void AdvancedObs::write_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
+void DefaultObs::write_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
     float x_mult = (invert_team ? -1.0f : 1.0f) * (invert_x ? -1.0f : 1.0f);
     float y_mult = invert_team ? -1.0f : 1.0f;
     *ptr++ = vec[0] * x_mult;
@@ -128,7 +128,7 @@ void AdvancedObs::write_dir(float*& ptr, const float* vec, bool invert_team, boo
     *ptr++ = vec[2];
 }
 
-void AdvancedObs::write_right_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
+void DefaultObs::write_right_dir(float*& ptr, const float* vec, bool invert_team, bool invert_x) const {
     float x_mult = invert_team ? -1.0f : 1.0f;
     float y_mult = (invert_team ? -1.0f : 1.0f) * (invert_x ? -1.0f : 1.0f);
     float z_mult = invert_x ? -1.0f : 1.0f;
@@ -137,7 +137,7 @@ void AdvancedObs::write_right_dir(float*& ptr, const float* vec, bool invert_tea
     *ptr++ = vec[2] * z_mult;
 }
 
-void AdvancedObs::write_ball_pred(float*& ptr, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x) {
+void DefaultObs::write_ball_pred(float*& ptr, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x) {
     for (size_t i = 0; i < BALL_PRED_TIMES_COUNT; i++) {
         size_t step_offset = ball_pred_indices_[i];
         size_t ring_buff_idx = (ball_pred_head_ + step_offset - 1) % ball_pred_buffer_size_;
@@ -159,7 +159,7 @@ void AdvancedObs::write_ball_pred(float*& ptr, const float* agent_pos, const flo
     }
 }
 
-void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x, bool is_agent) const {
+void DefaultObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uint32_t target_car_id, const float* agent_pos, const float* agent_vel, bool invert_team, bool invert_x, bool is_agent) const {
     const auto& car = arena_state.cars[target_car_id];
     size_t obs_size = is_agent ? AGENT_CAR_OBS : OTHER_CAR_OBS;
 
@@ -203,13 +203,13 @@ void AdvancedObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uin
     *ptr++ = car.demo_respawn_timer * DEMO_COEF;
 }
 
-void AdvancedObs::write_empty_car(float*& ptr) const {
+void DefaultObs::write_empty_car(float*& ptr) const {
     for (size_t i = 0; i < OTHER_CAR_OBS; i++) {
         *ptr++ = 0.0f;
     }
 }
 
-bool AdvancedObs::build_obs(
+bool DefaultObs::build_obs(
     const ffi::ArenaState& arena_state,
     const std::vector<env::AgentMeta>& agents,
     uint32_t agent_idx,

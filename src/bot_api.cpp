@@ -1,5 +1,5 @@
 #include "buta_ppo/ffi.h"
-#include "obs/advanced_obs.hpp"
+#include "obs/default_obs.hpp"
 #include "action/default_action.hpp"
 #include "env/rocketsim_env.hpp"
 #include "rl/actor_critic.hpp"
@@ -13,7 +13,7 @@
 extern "C" {
 
 struct BotContext {
-    std::unique_ptr<buta_ppo::obs::AdvancedObs> obs_builder;
+    std::unique_ptr<buta_ppo::obs::DefaultObs> obs_builder;
     std::unique_ptr<buta_ppo::action::DefaultAction> action_parser;
     buta_ppo::rl::ActorCritic model{nullptr};
     torch::Device device{torch::kCPU};
@@ -22,7 +22,7 @@ struct BotContext {
 void* bot_api_init(const char* checkpoint_path) {
     BotContext* ctx = new BotContext();
     
-    ctx->obs_builder = std::make_unique<buta_ppo::obs::AdvancedObs>(1, 8);
+    ctx->obs_builder = std::make_unique<buta_ppo::obs::DefaultObs>(1, 8);
     ctx->action_parser = std::make_unique<buta_ppo::action::DefaultAction>();
 
     buta_ppo::rl::ActorCriticConfig config;

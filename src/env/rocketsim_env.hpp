@@ -2,7 +2,7 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
-#include "obs/advanced_obs.hpp"
+#include "obs/default_obs.hpp"
 #include "reward/reward_manager.hpp"
 #include "action/default_action.hpp"
 #include "state/state_setter.hpp"
@@ -78,7 +78,7 @@ private:
     int ticks_since_last_touch_ = 0;
     int match_ticks_ = 0;
 
-    obs::AdvancedObs obs_builder_;
+    obs::DefaultObs obs_builder_;
     reward::RewardManager reward_manager_;
     action::DefaultAction action_parser_;
 

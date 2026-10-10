@@ -21,7 +21,7 @@ fn main() {
 
     // Tell Cargo to re-run this script if any C++ source files change.
     println!("cargo:rerun-if-changed=../src/bot_api.cpp");
-    println!("cargo:rerun-if-changed=../src/obs/advanced_obs.cpp");
+    println!("cargo:rerun-if-changed=../src/obs/default_obs.cpp");
     println!("cargo:rerun-if-changed=../src/action/default_action.cpp");
     println!("cargo:rerun-if-changed=../src/rl/actor_critic.cpp");
 

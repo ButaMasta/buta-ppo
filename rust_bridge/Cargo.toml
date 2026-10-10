@@ -20,7 +20,6 @@ libc = "0.2"
 name = "buta_ppo_bot"
 path = "src/main.rs"
 
-# Whole-program optimization across RocketSim and the bridge. Slower release builds, faster physics.
 [profile.release]
 lto = "fat"
 codegen-units = 1

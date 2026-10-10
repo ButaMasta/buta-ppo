@@ -1,4 +1,4 @@
-// buta-ppo/src/env/advanced_obs.hpp
+// buta-ppo/src/env/default_obs.hpp
 #pragma once
 
 #include "buta_ppo/ffi.h"
@@ -14,7 +14,7 @@ namespace buta_ppo::env { struct AgentMeta; }
 
 namespace buta_ppo::obs {
 
-class AdvancedObs {
+class DefaultObs {
 public:
     static constexpr size_t AGENT_CAR_OBS = 25;
     static constexpr size_t OTHER_CAR_OBS = 31;
@@ -56,7 +56,7 @@ public:
     static constexpr float COOLDOWN_BIG_COEF = 1.0f / 10.0f;
     static constexpr float COOLDOWN_SMALL_COEF = 1.0f / 4.0f;
 
-    explicit AdvancedObs(size_t max_players_per_team = 4, uint8_t tick_skip = 8, uint32_t seed = std::random_device{}());
+    explicit DefaultObs(size_t max_players_per_team = 4, uint8_t tick_skip = 8, uint32_t seed = std::random_device{}());
 
     /**
      * @brief Get the size of the obs.
