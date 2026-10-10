@@ -16,6 +16,9 @@ unsafe extern "C" {
         car_idx: u32,
     ) -> CCarControls;
 
+    /// Returns the max players per team the obs builder was configured for.
+    pub unsafe fn bot_api_max_players_per_team() -> u32;
+
     /// Frees the C++ context memory.
     pub unsafe fn bot_api_free(ctx_ptr: *mut c_void);
 }

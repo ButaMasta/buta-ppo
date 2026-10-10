@@ -12,6 +12,9 @@
 
 extern "C" {
 
+// Must match the max_players_per_team the checkpoint was trained with.
+static constexpr size_t MAX_PLAYERS_PER_TEAM = 1;
+
 struct BotContext {
     std::unique_ptr<buta_ppo::obs::DefaultObs> obs_builder;
     std::unique_ptr<buta_ppo::action::DefaultAction> action_parser;
@@ -22,7 +25,7 @@ struct BotContext {
 void* bot_api_init(const char* checkpoint_path) {
     BotContext* ctx = new BotContext();
     
-    ctx->obs_builder = std::make_unique<buta_ppo::obs::DefaultObs>(1, 8);
+    ctx->obs_builder = std::make_unique<buta_ppo::obs::DefaultObs>(MAX_PLAYERS_PER_TEAM, 8);
     ctx->action_parser = std::make_unique<buta_ppo::action::DefaultAction>();
 
     buta_ppo::rl::ActorCriticConfig config;
@@ -118,6 +121,10 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
     }
 
     return buta_ppo::ffi::CarControls{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false, false, false};
+}
+
+uint32_t bot_api_max_players_per_team() {
+    return static_cast<uint32_t>(MAX_PLAYERS_PER_TEAM);
 }
 
 void bot_api_free(void* ctx_ptr) {

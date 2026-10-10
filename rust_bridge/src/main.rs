@@ -6,7 +6,7 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 use rust_bridge::{CArenaState, CBallState, CCarControls, CCarState, CPhysState};
-use crate::bot_ffi::{bot_api_free, bot_api_get_action, bot_api_init};
+use crate::bot_ffi::{bot_api_free, bot_api_get_action, bot_api_init, bot_api_max_players_per_team};
 
 use rlbot_rocketsim::rlbot::agents::{run_bot_agents, BotAgent};
 use rlbot_rocketsim::rlbot::flat::{
@@ -53,6 +53,20 @@ impl BotAgent for ButaPPOBot {
         field_info: Arc<FieldInfo>,
         _packet_queue: &mut PacketQueue,
     ) -> Self {
+        // The obs has a fixed number of car slots, so exit if a team won't fit.
+        let max_per_team = unsafe { bot_api_max_players_per_team() } as usize;
+        let players = &match_config.player_configurations;
+        let blue_count = players.iter().filter(|p| p.team == 0).count();
+        let orange_count = players.len() - blue_count;
+
+        if blue_count > max_per_team || orange_count > max_per_team {
+            eprintln!(
+                "[buta_ppo_bot] Invalid team layout: {}v{}, but the model supports at most {} players per team. Exiting.",
+                blue_count, orange_count, max_per_team
+            );
+            std::process::exit(1);
+        }
+
         let context = MatchContext::new(&match_config, &field_info)
             .expect("create RocketSim context from RLBot match");
 
