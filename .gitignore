@@ -81,3 +81,4 @@ assets/*
 bot/*
 !bot/bot.toml
 !bot/loadout.toml
+CLAUDE.md

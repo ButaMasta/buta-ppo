@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <stdexcept>
 
 using namespace buta_ppo::reward;
 
@@ -27,6 +28,11 @@ RocketSimEnv::RocketSimEnv(
     action_space_size_ = action_parser_.get_action_space_size();
 
     // Fill teams.
+    const size_t blue_count = static_cast<size_t>(std::count(match_layout.begin(), match_layout.end(), ffi::Team::Blue));
+    if (blue_count > max_players_per_team || match_layout.size() - blue_count > max_players_per_team) {
+        throw std::invalid_argument("RocketSimEnv: match layout has a team larger than max_players_per_team.");
+    }
+
     for (const ffi::Team team : match_layout) {
         add_agent(team);
     }

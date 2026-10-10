@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
+#include <stdexcept>
 
 namespace math = buta_ppo::util::math;
 
@@ -49,6 +50,15 @@ void DefaultObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
             team_B_indices_.push_back(agent.car_id);
         }
     }
+
+    // Resizing down would drop cars (possibly the agent itself) and overrun the obs buffer.
+    if (team_A_indices_.size() > max_players_per_team_ || team_B_indices_.size() > max_players_per_team_) {
+        throw std::invalid_argument("DefaultObs: a team has more cars than max_players_per_team.");
+    }
+
+    // Fill empty slots so they are also shuffled.
+    team_A_indices_.resize(max_players_per_team_, UINT32_MAX);
+    team_B_indices_.resize(max_players_per_team_, UINT32_MAX);
 
     std::shuffle(team_A_indices_.begin(), team_A_indices_.end(), rng_);
     std::shuffle(team_B_indices_.begin(), team_B_indices_.end(), rng_);
@@ -278,24 +288,24 @@ bool DefaultObs::build_obs(
     const auto& opponent_list = (agent.team == ffi::Team::Blue) ? team_B_indices_ : team_A_indices_;
 
     // Teammate Cars.
-    size_t teammate_count = 0;
     for (uint32_t other_car_id : teammate_list) {
         if (other_car_id == agent.car_id) continue;
+        if (other_car_id == UINT32_MAX) {
+            write_empty_car(ptr);
+            continue;
+        }
+        // Actual teammate car.
         write_car(ptr, arena_state, other_car_id, agent_pos, agent_vel, invert_team, invert_x, false);
-        teammate_count++;
-    }
-    for (size_t i = teammate_count; i < max_players_per_team_ - 1; i++) {
-        write_empty_car(ptr);
     }
 
     // Opponent Cars.
-    size_t opponent_count = 0;
     for (uint32_t other_car_id : opponent_list) {
+        if (other_car_id == UINT32_MAX) {
+            write_empty_car(ptr);
+            continue;
+        }
+        // Actual opponent car.
         write_car(ptr, arena_state, other_car_id, agent_pos, agent_vel, invert_team, invert_x, false);
-        opponent_count++;
-    }
-    for (size_t i = opponent_count; i < max_players_per_team_; i++) {
-        write_empty_car(ptr);
     }
 
     return invert_x;
