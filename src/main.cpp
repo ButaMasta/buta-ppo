@@ -81,7 +81,7 @@ int main() {
 
     PPORunner runner(config);
     try {
-        runner.run(1'010, g_stop_training, "checkpoints");
+        runner.run(1'000, g_stop_training, "checkpoints");
     } catch (std::runtime_error e) {
         std::cerr << e.what();
     }

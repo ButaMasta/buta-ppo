@@ -1,6 +1,7 @@
 // buta-ppo/src/rl/ppo_runner.cpp
 #include "ppo_runner.hpp"
 #include "rollout_buffer.hpp"
+#include "opponent_pool.hpp"
 #include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
 
@@ -24,6 +25,9 @@ namespace {
 // File names inside each `<bot name>_<steps>/` checkpoint directory.
 constexpr const char* MODEL_FILE = "model.pt";
 constexpr const char* OPTIMIZER_FILE = "optimizer.pt";
+// Suffix of the PFSP pool's directory, `<bot name>_pool/`, next to the checkpoints.
+// Checkpoint loading skips it, since "pool" isn't a step count.
+constexpr const char* POOL_DIR_SUFFIX = "_pool";
 } // namespace
 
 PPORunner::PPORunner(const RunnerConfig& config)
@@ -153,6 +157,9 @@ void PPORunner::setup_dimensions_and_buffers() {
         opponent_slots_.push_back(opponent);
         opponent_streams_.push_back(at::cuda::getStreamFromPool());
     }
+    if (!opponent_slots_.empty()) {
+        opponent_pool_ = std::make_unique<OpponentPool>(config_.pfsp_cfg, config_.ac_cfg);
+    }
     
     buffer_ = std::make_unique<RolloutBuffer>(
         buffer_size_, learner_agents_, obs_size, action_space_size, device_
@@ -222,6 +229,7 @@ void PPORunner::load_opponent_slot(size_t slot, const std::vector<torch::Tensor>
 
     torch::NoGradGuard no_grad;
     for (size_t i = 0; i < params.size(); i++) {
+        if (!params[i].defined()) continue;
         TORCH_CHECK(slot_params[i].sizes() == params[i].sizes(), "Opponent weights don't match the network config.");
         slot_params[i].copy_(params[i], true);
     }
@@ -340,6 +348,11 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
 
     fs::remove_all(final_dir);
     fs::rename(tmp_dir, final_dir);
+
+    // The pool saves its snapshots as they're added, so only the latest win records are left to write.
+    if (opponent_pool_) {
+        opponent_pool_->save_state();
+    }
     std::cout << "Checkpoint saved to: " << final_dir.string() << "\n";
 }
 
@@ -353,6 +366,15 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     const auto reset_res = vec_env_->reset();
     setup_rollout_groups(reset_res.observations, reset_res.action_masks);
 
+    // Seed an empty pool with the starting learner, so there is always a version to play.
+    const int64_t snapshot_interval = config_.pfsp_cfg.snapshot_interval;
+    if (opponent_pool_) {
+        if (opponent_pool_->empty()) {
+            opponent_pool_->add(global_step_, actor_critic_);
+        }
+        next_snapshot_step_ = (global_step_ / snapshot_interval + 1) * snapshot_interval;
+    }
+
     for (int update = 1; update <= num_updates; ++update) {
 
         if (stop_flag) {
@@ -363,10 +385,22 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         const auto t_start = std::chrono::high_resolution_clock::now();
         const auto rollout_start = std::chrono::high_resolution_clock::now();
 
-        // TODO(PFSP phase 3): load past versions from the opponent pool. For now every slot plays a copy of the
-        // current learner, so the win rate should sit near 0.5.
+        // This update's opponents: past versions sampled from the pool, or a copy of the current learner
+        // until the PFSP start steps.
+        std::vector<size_t> opponent_picks;
+        std::vector<int64_t> opponent_versions; // Kept for the log, since a snapshot added later invalidates the picks.
+        if (opponent_pool_ && global_step_ >= config_.pfsp_cfg.start_steps) {
+            opponent_picks = opponent_pool_->sample(opponent_slots_.size());
+            for (const size_t pick : opponent_picks) {
+                opponent_versions.push_back((*opponent_pool_)[pick].steps);
+            }
+        }
         for (size_t slot = 0; slot < opponent_slots_.size(); slot++) {
-            load_opponent_slot(slot, actor_critic_->parameters());
+            if (opponent_picks.empty()) {
+                load_opponent_slot(slot, actor_critic_->parameters());
+            } else {
+                load_opponent_slot(slot, (*opponent_pool_)[opponent_picks[slot]].params);
+            }
         }
 
         // Pipelined rollout over two env groups: while one group's physics runs on the workers, the main thread
@@ -410,6 +444,13 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         }
         logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / static_cast<double>(total_steps_per_update_)));
 
+        const env::EpisodeCounts episodes = vec_env_->collect_episode_counts();
+        logger_->add_scalar("Episode/Goals", global_step_, static_cast<float>(episodes.goals));
+        logger_->add_scalar("Episode/Truncations", global_step_,
+                            static_cast<float>(episodes.no_touch_truncations + episodes.time_limit_truncations));
+        logger_->add_scalar("Episode/Truncations_No_Touch", global_step_, static_cast<float>(episodes.no_touch_truncations));
+        logger_->add_scalar("Episode/Truncations_Time_Limit", global_step_, static_cast<float>(episodes.time_limit_truncations));
+
         // PFSP results against this update's opponent slots. Truncated episodes aren't counted.
         uint32_t pfsp_wins = 0;
         uint32_t pfsp_games = 0;
@@ -418,12 +459,18 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             const uint32_t games = pfsp_outcomes[slot].wins + pfsp_outcomes[slot].losses;
             pfsp_wins += pfsp_outcomes[slot].wins;
             pfsp_games += games;
+            if (!opponent_picks.empty()) {
+                opponent_pool_->record(opponent_picks[slot], pfsp_outcomes[slot].wins, pfsp_outcomes[slot].losses);
+                logger_->add_scalar("PFSP/Slot_" + std::to_string(slot) + "_Version", global_step_,
+                                    static_cast<float>(opponent_versions[slot]));
+            }
             if (games > 0) {
                 logger_->add_scalar("PFSP/Slot_" + std::to_string(slot) + "_Win_Rate", global_step_,
                                     static_cast<float>(pfsp_outcomes[slot].wins) / static_cast<float>(games));
             }
         }
         if (!pfsp_outcomes.empty()) {
+            logger_->add_scalar("PFSP/Pool_Size", global_step_, static_cast<float>(opponent_pool_->size()));
             logger_->add_scalar("PFSP/Games", global_step_, static_cast<float>(pfsp_games));
             if (pfsp_games > 0) {
                 logger_->add_scalar("PFSP/Win_Rate", global_step_, static_cast<float>(pfsp_wins) / static_cast<float>(pfsp_games));
@@ -446,6 +493,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         const auto gae_end = std::chrono::high_resolution_clock::now();
         const auto metrics = trainer_->train_step(*buffer_);
 
+        // Snapshot the freshly trained learner into the pool. Invalidates `opponent_picks`.
+        if (opponent_pool_ && global_step_ >= next_snapshot_step_) {
+            opponent_pool_->add(global_step_, actor_critic_);
+            next_snapshot_step_ = (global_step_ / snapshot_interval + 1) * snapshot_interval;
+        }
+
         const auto t_end = std::chrono::high_resolution_clock::now();
         
         const std::chrono::duration<double> update_time = t_end - t_start;
@@ -463,6 +516,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         logger_->add_scalar("Loss/Entropy", global_step_, metrics.at("entropy"));
         logger_->add_scalar("Policy/Approx_KL", global_step_, metrics.at("approx_kl"));
         logger_->add_scalar("Policy/Clip_Fraction", global_step_, metrics.at("clip_fraction"));
+        logger_->add_scalar("Value/Explained_Variance", global_step_, metrics.at("explained_variance"));
 
         std::cout << "Update: " << update 
                   << "\nLifetime Steps: " << global_step_
@@ -476,9 +530,21 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n | Value Loss:  " << metrics.at("value_loss")
                   << "\n | Entropy:     " << metrics.at("entropy")
                   << "\n | Approx KL:   " << metrics.at("approx_kl")
-                  << "\n | Clip Frac:   " << metrics.at("clip_fraction") << "\n";
+                  << "\n | Clip Frac:   " << metrics.at("clip_fraction")
+                  << "\n | Expl Var:    " << metrics.at("explained_variance")
+                  << "\n | Episodes:    " << episodes.goals << " goals, " << episodes.no_touch_truncations << " no touch, "
+                  << episodes.time_limit_truncations << " time limit\n";
         if (!pfsp_outcomes.empty()) {
-            std::cout << " | PFSP Wins:   " << pfsp_wins << " / " << pfsp_games << " games\n";
+            std::cout << " | PFSP Wins:   " << pfsp_wins << " / " << pfsp_games << " games";
+            if (opponent_versions.empty()) {
+                std::cout << " vs current learner";
+            } else {
+                std::cout << " vs";
+                for (size_t slot = 0; slot < opponent_versions.size(); slot++) {
+                    std::cout << (slot == 0 ? " " : ", ") << opponent_versions[slot];
+                }
+            }
+            std::cout << " (pool: " << opponent_pool_->size() << ")\n";
         }
     }
 
@@ -510,6 +576,10 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
 
 void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
     global_step_ = load_latest_checkpoint(checkpoint_dir);
+
+    if (opponent_pool_) {
+        opponent_pool_->open(fs::path(checkpoint_dir) / (config_.bot_name + POOL_DIR_SUFFIX), global_step_);
+    }
 
     if (config_.render) {
         run_render(stop_flag);

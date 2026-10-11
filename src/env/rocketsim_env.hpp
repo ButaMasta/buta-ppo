@@ -42,6 +42,9 @@ struct StepResult {
     bool blue_scored;
     // If a truncation state was triggered.
     bool is_truncated;
+    // If the truncation was from no car touching the ball for too long, rather than the match time limit.
+    // Only meaningful when `is_truncated`.
+    bool no_touch_truncated;
     // Ticks elapsed this step. Can be lower if a terminal/truncation state was triggered.
     int ticks_elapsed;
 };

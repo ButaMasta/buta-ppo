@@ -74,6 +74,15 @@ struct EnvGroup {
 };
 
 /**
+ * @brief How episodes ended across all envs.
+ */
+struct EpisodeCounts {
+    uint32_t goals = 0;
+    uint32_t no_touch_truncations = 0;   // No car touched the ball for too long.
+    uint32_t time_limit_truncations = 0; // The match time limit ran out.
+};
+
+/**
  * @brief Episode results of PFSP matches from the learner's side. Truncated episodes aren't counted.
  */
 struct PFSPOutcome {
@@ -109,6 +118,7 @@ private:
     std::vector<int> env_opponent_slot_;
     // Written only by the worker stepping the env.
     std::vector<PFSPOutcome> env_outcomes_;
+    std::vector<EpisodeCounts> env_episode_counts_;
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
     std::unordered_map<std::string, double> aggregate_reward_breakdown_;
@@ -242,6 +252,13 @@ public:
      * @return The results of each opponent slot. Empty when PFSP is disabled.
      */
     [[nodiscard]] std::vector<PFSPOutcome> collect_pfsp_outcomes();
+
+    /**
+     * @brief Sums how episodes ended across all envs since the last call, then clears the counts.
+     *
+     * Must not be called while an env group is stepping.
+     */
+    [[nodiscard]] EpisodeCounts collect_episode_counts();
 
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
     [[nodiscard]] const std::vector<EnvGroup>& get_groups() const { return groups_; };

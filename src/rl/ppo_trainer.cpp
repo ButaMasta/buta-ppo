@@ -173,6 +173,11 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     torch::Tensor b_advantages = buffer.advantages_.view({ total_batch_size });
     torch::Tensor b_returns = buffer.returns_.view({ total_batch_size });
 
+    // How much of the returns' variance the rollout's value predictions explained. Unlike the value loss, it doesn't
+    // grow with the reward scale. 1 is perfect, 0 is no better than predicting the mean.
+    const torch::Tensor explained_variance =
+        1.0f - (b_returns - buffer.values_.view({ total_batch_size })).var() / (b_returns.var() + 1e-8f);
+
     // Norm advantages.
     b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8f);
 
@@ -300,7 +305,8 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
         {"value_loss", total_value_loss_tsr.item<float>() / std::max(1, updates)},
         {"entropy", total_entropy_tsr.item<float>() / std::max(1, updates)},
         {"approx_kl", total_approx_kl_tsr.item<float>() / std::max(1, updates)},
-        {"clip_fraction", total_clip_fraction_tsr.item<float>() / std::max(1, updates)}
+        {"clip_fraction", total_clip_fraction_tsr.item<float>() / std::max(1, updates)},
+        {"explained_variance", explained_variance.item<float>()}
     };
 }
 

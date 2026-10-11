@@ -105,6 +105,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     int ticks_elapsed = ticks_per_step_;
     bool episode_terminated = false;
     bool episode_truncated = false;
+    bool no_touch_truncated = false;
     bool blue_scored = false;
 
     for (int i = 0; i < ticks_per_step_; i++) {
@@ -146,6 +147,7 @@ StepResult RocketSimEnv::step(const int* actions) {
 
         // Tick count related truncation states.
         if (ticks_since_last_touch_ >= no_touch_ticks_limit_ || match_ticks_ >= match_ticks_limit_) {
+            no_touch_truncated = ticks_since_last_touch_ >= no_touch_ticks_limit_;
             ticks_since_last_touch_ = 0;
             match_ticks_ = 0;
             ticks_elapsed = i + 1;
@@ -165,7 +167,7 @@ StepResult RocketSimEnv::step(const int* actions) {
         action_parser_.get_action_mask(car_state, agent_action_mask_ptr);
     }
 
-    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, blue_scored, episode_truncated, ticks_elapsed };
+    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, blue_scored, episode_truncated, no_touch_truncated, ticks_elapsed };
 }
 
 ffi::CarControls RocketSimEnv::decode_action(size_t action_idx) {

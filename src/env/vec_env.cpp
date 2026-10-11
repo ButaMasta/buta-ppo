@@ -43,6 +43,7 @@ VecEnv::VecEnv(
     env_opponent_team_.resize(num_envs_);
     env_opponent_slot_.assign(num_envs_, -1);
     env_outcomes_.resize(num_envs_);
+    env_episode_counts_.resize(num_envs_);
 
     // Whether each agent is controlled by a past policy, in env order like `agent_rows_`.
     std::vector<bool> agent_is_opponent;
@@ -252,6 +253,14 @@ void VecEnv::worker_loop(size_t /*worker_id*/) {
                     truncated[rows[a]] = trunc_val;
                 }
 
+                if (result.is_terminated) {
+                    env_episode_counts_[i].goals++;
+                } else if (result.is_truncated && result.no_touch_truncated) {
+                    env_episode_counts_[i].no_touch_truncations++;
+                } else if (result.is_truncated) {
+                    env_episode_counts_[i].time_limit_truncations++;
+                }
+
                 // A PFSP match's goal is a win when the learner's team, the one the past version doesn't control, scored.
                 if (result.is_terminated && env_opponent_team_[i]) {
                     const bool learner_is_blue = *env_opponent_team_[i] == ffi::Team::Orange;
@@ -396,6 +405,21 @@ std::vector<PFSPOutcome> VecEnv::collect_pfsp_outcomes() {
         env_outcomes_[i] = {};
     }
     return slot_outcomes;
+}
+
+EpisodeCounts VecEnv::collect_episode_counts() {
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::collect_episode_counts called while an env group is still stepping.");
+    }
+
+    EpisodeCounts total;
+    for (EpisodeCounts& counts : env_episode_counts_) {
+        total.goals += counts.goals;
+        total.no_touch_truncations += counts.no_touch_truncations;
+        total.time_limit_truncations += counts.time_limit_truncations;
+        counts = {};
+    }
+    return total;
 }
 
 void VecEnv::update_reward_breakdown() {

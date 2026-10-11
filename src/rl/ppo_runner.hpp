@@ -23,7 +23,7 @@
 // Forward declarations.
 class TensorBoardLogger;
 namespace buta_ppo::env { class VecEnv; struct BatchedStepResult; }
-namespace buta_ppo::rl  { class RolloutBuffer; }
+namespace buta_ppo::rl  { class RolloutBuffer; class OpponentPool; }
 
 namespace buta_ppo::rl {
 
@@ -181,6 +181,10 @@ private:
     std::vector<ActorCritic> opponent_slots_;
     // Each slot's inference runs on its own stream, so it overlaps with the learner's and the other slots'.
     std::vector<at::cuda::CUDAStream> opponent_streams_;
+
+    // Past learner versions the opponent slots are loaded from. Null when PFSP is disabled.
+    std::unique_ptr<OpponentPool> opponent_pool_;
+    int64_t next_snapshot_step_{0};
     torch::Tensor opp_obs_gpu_;
     torch::Tensor opp_masks_gpu_;
 
@@ -251,7 +255,8 @@ private:
      * Must not run while a rollout inference graph replay is in flight.
      *
      * @param slot The opponent slot to load.
-     * @param params The weights in `parameters()` order of an ActorCritic with the same config.
+     * @param params The weights in `parameters()` order of an ActorCritic with the same config. Undefined tensors
+     *               are skipped, leaving the slot's weight as is.
      */
     void load_opponent_slot(size_t slot, const std::vector<torch::Tensor>& params);
 
