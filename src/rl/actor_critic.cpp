@@ -7,6 +7,29 @@
 
 namespace buta_ppo::rl {
 
+namespace {
+
+// Applies negative penalty to invalid actions to make their softmax probs near zero.
+// NOTE: action_masks is of float type during rollout so the cast is necessary.
+torch::Tensor mask_logits(const torch::Tensor& logits, const torch::Tensor& action_masks) {
+    return torch::where(
+        action_masks.to(torch::kBool),
+        logits,
+        torch::tensor(-1e8f, logits.options())
+    );
+}
+
+// Sample with the exponential race: argmax(p / E) with E ~ Exp(1) picks index i with probability p_i.
+// Unlike multinomial it never synchronizes with the host, so it can be captured in a CUDA graph.
+// Masked actions have p = 0 and never win. E is clamped above 0 so they can't become 0 / 0 = NaN.
+torch::Tensor sample_masked(const torch::Tensor& masked_logits) {
+    torch::Tensor probs = torch::softmax(masked_logits, -1);
+    torch::Tensor noise = torch::empty_like(probs).exponential_().clamp_min_(std::numeric_limits<float>::min());
+    return (probs / noise).argmax(-1);
+}
+
+} // namespace
+
 torch::nn::Sequential ActorCriticImpl::build_block(int64_t in_size, const std::vector<int64_t>& sizes, bool use_ln) {
     if (sizes.empty()) return nullptr;
 
@@ -151,25 +174,17 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::get_act
 
     auto [logits, values] = forward(obs);
 
-    // Apply negative penalty to invalid action to make their softmax probs near zero.
-    // NOTE: action_masks is of float type here so the cast is necessary.
-    torch::Tensor masked_logits = torch::where(
-        action_masks.to(torch::kBool),
-        logits,
-        torch::tensor(-1e8f, logits.options())
-    );
-
-    torch::Tensor probs = torch::softmax(masked_logits, -1);
-
-    // Sample with the exponential race: argmax(p / E) with E ~ Exp(1) picks index i with probability p_i.
-    // Unlike multinomial it never synchronizes with the host, so it can be captured in a CUDA graph.
-    // Masked actions have p = 0 and never win. E is clamped above 0 so they can't become 0 / 0 = NaN.
-    torch::Tensor noise = torch::empty_like(probs).exponential_().clamp_min_(std::numeric_limits<float>::min());
-    torch::Tensor actions = (probs / noise).argmax(-1);
+    torch::Tensor masked_logits = mask_logits(logits, action_masks);
+    torch::Tensor actions = sample_masked(masked_logits);
 
     torch::Tensor log_probs = torch::log_softmax(masked_logits, -1).gather(-1, actions.unsqueeze(-1)).squeeze(-1);
 
     return { actions, log_probs, values };
+}
+
+torch::Tensor ActorCriticImpl::sample_action(torch::Tensor obs, torch::Tensor action_masks) {
+    torch::NoGradGuard no_grad;
+    return sample_masked(mask_logits(forward_actor(obs), action_masks));
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluate_actions(

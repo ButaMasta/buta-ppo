@@ -4,11 +4,13 @@
 #include "buta_ppo/ffi.h"
 #include "ppo_trainer.hpp"
 #include "actor_critic.hpp"
+#include "pfsp.hpp"
 #include "state/state_setter.hpp"
 #include "reward/reward_manager.hpp"
 
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraph.h>
+#include <c10/cuda/CUDAStream.h>
 
 #include <cstddef>
 #include <stdexcept>
@@ -93,6 +95,7 @@ struct RunnerConfig {
 
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
+    PFSPConfig pfsp_cfg;
 };
 
 /**
@@ -158,7 +161,8 @@ private:
     std::unique_ptr<PPOTrainer> trainer_;
     std::unique_ptr<RolloutBuffer> buffer_;
 
-    size_t total_agents_{0};
+    size_t total_agents_{0};   // Every agent's row of the batched env buffers and actions.
+    size_t learner_agents_{0}; // Agents acting with the learning policy, rows [0, learner agents). Only they are trained on.
     size_t buffer_size_{0};
     int64_t total_steps_per_update_{0};
 
@@ -171,6 +175,15 @@ private:
     torch::Tensor step_terminal_obs_gpu_;
     torch::Tensor step_dones_gpu_;
 
+    // PFSP opponent slots: fixed modules whose weights are overwritten in place every update, so the inference
+    // graphs that read them stay valid. Opponent obs and masks are staged on the GPU in their own buffers,
+    // indexed by opponent row minus the learner agent count.
+    std::vector<ActorCritic> opponent_slots_;
+    // Each slot's inference runs on its own stream, so it overlaps with the learner's and the other slots'.
+    std::vector<at::cuda::CUDAStream> opponent_streams_;
+    torch::Tensor opp_obs_gpu_;
+    torch::Tensor opp_masks_gpu_;
+
     /**
      * @brief One env group's slice of the rollout: its agent rows and its inference CUDA graph.
      *
@@ -178,8 +191,8 @@ private:
      * Graph outputs live in the graph's memory pool and are rewritten by every replay.
      */
     struct RolloutGroup {
-        int64_t agent_begin = 0;
-        int64_t agent_count = 0;
+        int64_t learner_begin = 0;
+        int64_t learner_count = 0;
 
         // Row views.
         torch::Tensor obs_src;       // VecEnv's pinned obs rows that the graph uploads from.
@@ -192,6 +205,16 @@ private:
         torch::Tensor trunc_gpu;
         torch::Tensor terminal_obs_gpu;
         torch::Tensor dones_gpu;
+
+        // The group's opponent rows for one opponent slot, as views like the learner rows above.
+        struct OpponentRows {
+            torch::Tensor obs_src;
+            torch::Tensor masks_src;
+            torch::Tensor obs_gpu;
+            torch::Tensor masks_gpu;
+            torch::Tensor actions_cpu;
+        };
+        std::vector<OpponentRows> opponents; // One per opponent slot.
 
         // Inference graph and its outputs.
         at::cuda::CUDAGraph graph;
@@ -223,9 +246,21 @@ private:
     void setup_rollout_groups(const torch::Tensor& obs, const torch::Tensor& masks);
 
     /**
+     * @brief Overwrites an opponent slot's weights in place, keeping the addresses its inference graphs read.
+     *
+     * Must not run while a rollout inference graph replay is in flight.
+     *
+     * @param slot The opponent slot to load.
+     * @param params The weights in `parameters()` order of an ActorCritic with the same config.
+     */
+    void load_opponent_slot(size_t slot, const std::vector<torch::Tensor>& params);
+
+    /**
      * @brief The rollout inference work captured in a group's CUDA graph.
      *
      * Uploads the group's obs and masks, samples actions, and queues the actions' copy into its `actions_cpu` rows.
+     * Does the same for each opponent slot's rows of the group, sampling from that slot's policy on the slot's stream.
+     * Inside a capture, each slot becomes a parallel branch of the graph.
      *
      * @return The sampled actions, their log probs, and the state values.
      */

@@ -103,9 +103,10 @@ public:
      * 
      * @param agent The agent to get the rewards for.
      * @param current_state The current arena state to utilize in reward calculation.
+     * @param track_telemetry Whether to add the rewards to the telemetry. False for agents that aren't trained on.
      * @return The total weighted reward output for this agent.
      */
-    [[nodiscard]] float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state);
+    [[nodiscard]] float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state, bool track_telemetry = true);
 
     /**
      * @brief Updates the previous state. Called after all rewards for a tick have been fetched.

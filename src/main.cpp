@@ -75,9 +75,13 @@ int main() {
     config.ppo_cfg.entropy_coef = 0.035f;
     config.ppo_cfg.epochs = 1;
 
+    // PFSP: fraction of even-team envs playing past versions, and how many versions are played each update.
+    config.pfsp_cfg.envs = 0.2f;
+    config.pfsp_cfg.versions = 2;
+
     PPORunner runner(config);
     try {
-        runner.run(75'000, g_stop_training, "checkpoints");
+        runner.run(1'010, g_stop_training, "checkpoints");
     } catch (std::runtime_error e) {
         std::cerr << e.what();
     }

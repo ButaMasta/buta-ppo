@@ -18,12 +18,14 @@ void RewardManager::reset(const ffi::ArenaState& initial_state) {
     }
 }
 
-float RewardManager::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state) {
+float RewardManager::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state, bool track_telemetry) {
     float total_reward = 0.0f;
 
     for (auto& entry : rewards_) {
         float weighted_val = entry.function->get_reward(agent, current_state, previous_state_) * entry.weight;
-        entry.accumulated_value += weighted_val;
+        if (track_telemetry) {
+            entry.accumulated_value += weighted_val;
+        }
         total_reward += weighted_val;
     }
     

@@ -7,6 +7,7 @@
 #include "action/default_action.hpp"
 #include "state/state_setter.hpp"
 
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
@@ -37,6 +38,8 @@ struct StepResult {
     const std::vector<float>& rewards;
     // If a terminal state was triggered.
     bool is_terminated;
+    // If blue scored the goal that terminated the episode. Only meaningful when `is_terminated`.
+    bool blue_scored;
     // If a truncation state was triggered.
     bool is_truncated;
     // Ticks elapsed this step. Can be lower if a terminal/truncation state was triggered.
@@ -60,6 +63,9 @@ private:
     ffi::ArenaState arena_state_;
 
     std::vector<AgentMeta> agents_;
+
+    // The team controlled by a past policy in a PFSP match, whose rewards are left out of the telemetry.
+    std::optional<ffi::Team> opponent_team_;
 
     std::vector<float> obs_buffer_;
     std::vector<float> action_mask_buffer_;
@@ -100,7 +106,8 @@ public:
         int ticks_per_step = 8, 
         size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}(),
-        bool render = false
+        bool render = false,
+        std::optional<ffi::Team> opponent_team = std::nullopt
     );
 
     /**

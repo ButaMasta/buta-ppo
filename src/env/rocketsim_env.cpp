@@ -17,8 +17,10 @@ RocketSimEnv::RocketSimEnv(
     const std::vector<reward::RewardEntry>& rewards,
     int ticks_per_step, size_t max_players_per_team, 
     uint32_t seed, 
-    bool render
-) : setters_(setters), 
+    bool render,
+    std::optional<ffi::Team> opponent_team
+) : opponent_team_(opponent_team),
+    setters_(setters), 
     ticks_per_step_(ticks_per_step), 
     obs_builder_(max_players_per_team, ticks_per_step, seed), 
     render_(render) {
@@ -103,6 +105,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     int ticks_elapsed = ticks_per_step_;
     bool episode_terminated = false;
     bool episode_truncated = false;
+    bool blue_scored = false;
 
     for (int i = 0; i < ticks_per_step_; i++) {
         ffi::step_arena(arena_);
@@ -114,7 +117,8 @@ StepResult RocketSimEnv::step(const int* actions) {
 
         // Calculate and accumulate rewards.
         for (size_t a = 0; a < agents_.size(); a++) {
-            reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_);
+            const bool track_telemetry = agents_[a].team != opponent_team_;
+            reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_, track_telemetry);
         }
 
         // Update previous state.
@@ -131,6 +135,8 @@ StepResult RocketSimEnv::step(const int* actions) {
 
         // Terminal state: Goal.
         if (arena_state_.events.is_ball_scored) {
+            // The ball is past orange's goal line (positive Y) when blue scores.
+            blue_scored = arena_state_.ball.phys.pos[1] > 0;
             ticks_since_last_touch_ = 0;
             match_ticks_ = 0;
             ticks_elapsed = i + 1;
@@ -159,7 +165,7 @@ StepResult RocketSimEnv::step(const int* actions) {
         action_parser_.get_action_mask(car_state, agent_action_mask_ptr);
     }
 
-    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, episode_truncated, ticks_elapsed };
+    return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, blue_scored, episode_truncated, ticks_elapsed };
 }
 
 ffi::CarControls RocketSimEnv::decode_action(size_t action_idx) {

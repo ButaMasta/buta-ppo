@@ -119,6 +119,15 @@ public:
     );
 
     /**
+     * @brief Samples actions from the policy dist without running the critic. Used for opponents that aren't trained.
+     * 
+     * @param obs The batched obs tensor.
+     * @param action_masks The float mask tensor indicating valid env actions.
+     * @return The sampled actions.
+     */
+    torch::Tensor sample_action(torch::Tensor obs, torch::Tensor action_masks);
+
+    /**
      * @brief Evaluates historical actions to compute log probs and policy entropy during back prop.
      * 
      * @param obs The batched obs tensor.

@@ -114,23 +114,25 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.num_threads, 
         config_.ticks_per_step, 
         config_.max_players_per_team,
-        config_.render
+        config_.render,
+        config_.pfsp_cfg
     );
 
     total_agents_ = vec_env_->get_total_agents();
+    learner_agents_ = vec_env_->get_learner_agents();
     const size_t obs_size = vec_env_->get_single_obs_size();
     const size_t action_space_size = vec_env_->get_action_space_size();
 
     if (config_.render) {
-        config_.target_steps_per_update = total_agents_;
+        config_.target_steps_per_update = learner_agents_;
     }
 
-    buffer_size_ = (config_.target_steps_per_update + total_agents_ - 1) / total_agents_;
-    while ((buffer_size_ * total_agents_) % config_.num_minibatches != 0) {
+    buffer_size_ = (config_.target_steps_per_update + learner_agents_ - 1) / learner_agents_;
+    while ((buffer_size_ * learner_agents_) % config_.num_minibatches != 0) {
         buffer_size_++;
     }
 
-    total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * total_agents_);
+    total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * learner_agents_);
     config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
 
     config_.ac_cfg.obs_size = static_cast<int64_t>(obs_size);
@@ -140,33 +142,51 @@ void PPORunner::setup_dimensions_and_buffers() {
     actor_critic_->to(device_);
 
     trainer_ = std::make_unique<PPOTrainer>(config_.ppo_cfg, actor_critic_, device_);
+
+    // Opponent slots only run inference, so their weights never need gradients.
+    for (size_t slot = 0; slot < vec_env_->get_num_opponent_slots(); slot++) {
+        ActorCritic opponent(config_.ac_cfg);
+        opponent->to(device_);
+        for (auto& param : opponent->parameters()) {
+            param.requires_grad_(false);
+        }
+        opponent_slots_.push_back(opponent);
+        opponent_streams_.push_back(at::cuda::getStreamFromPool());
+    }
     
     buffer_ = std::make_unique<RolloutBuffer>(
-        buffer_size_, total_agents_, obs_size, action_space_size, device_
+        buffer_size_, learner_agents_, obs_size, action_space_size, device_
     );
 
+    // Actions cover every row, since VecEnv reads each agent's action from its row.
+    // The step tensors only hold learner rows.
     const int64_t t_agents = static_cast<int64_t>(total_agents_);
+    const int64_t l_agents = static_cast<int64_t>(learner_agents_);
     const auto cpu_int_opts = torch::TensorOptions().dtype(torch::kInt32).device(torch::kCPU).pinned_memory(true);
     actions_cpu_ = torch::empty({t_agents}, cpu_int_opts);
 
     const auto float_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
-    step_obs_gpu_ = torch::empty({t_agents, static_cast<int64_t>(obs_size)}, float_opts);
-    step_masks_gpu_ = torch::empty({t_agents, static_cast<int64_t>(action_space_size)}, float_opts);
-    step_rewards_gpu_ = torch::empty({t_agents}, float_opts);
-    step_term_gpu_ = torch::empty({t_agents}, float_opts);
-    step_trunc_gpu_ = torch::empty({t_agents}, float_opts);
-    step_terminal_obs_gpu_ = torch::empty({t_agents, static_cast<int64_t>(obs_size)}, float_opts);
-    step_dones_gpu_ = torch::empty({t_agents}, float_opts);
+    step_obs_gpu_ = torch::empty({l_agents, static_cast<int64_t>(obs_size)}, float_opts);
+    step_masks_gpu_ = torch::empty({l_agents, static_cast<int64_t>(action_space_size)}, float_opts);
+    step_rewards_gpu_ = torch::empty({l_agents}, float_opts);
+    step_term_gpu_ = torch::empty({l_agents}, float_opts);
+    step_trunc_gpu_ = torch::empty({l_agents}, float_opts);
+    step_terminal_obs_gpu_ = torch::empty({l_agents, static_cast<int64_t>(obs_size)}, float_opts);
+    step_dones_gpu_ = torch::empty({l_agents}, float_opts);
+
+    const int64_t o_agents = t_agents - l_agents;
+    opp_obs_gpu_ = torch::empty({o_agents, static_cast<int64_t>(obs_size)}, float_opts);
+    opp_masks_gpu_ = torch::empty({o_agents, static_cast<int64_t>(action_space_size)}, float_opts);
 }
 
 void PPORunner::setup_rollout_groups(const torch::Tensor& obs, const torch::Tensor& masks) {
     rollout_groups_.clear();
     for (const env::EnvGroup& env_group : vec_env_->get_groups()) {
         auto group = std::make_unique<RolloutGroup>();
-        const auto begin = static_cast<int64_t>(env_group.agent_begin);
-        const auto count = static_cast<int64_t>(env_group.agent_count());
-        group->agent_begin = begin;
-        group->agent_count = count;
+        const auto begin = static_cast<int64_t>(env_group.learner_begin);
+        const auto count = static_cast<int64_t>(env_group.learner_count());
+        group->learner_begin = begin;
+        group->learner_count = count;
 
         group->obs_src = obs.narrow(0, begin, count);
         group->masks_src = masks.narrow(0, begin, count);
@@ -179,11 +199,41 @@ void PPORunner::setup_rollout_groups(const torch::Tensor& obs, const torch::Tens
         group->terminal_obs_gpu = step_terminal_obs_gpu_.narrow(0, begin, count);
         group->dones_gpu = step_dones_gpu_.narrow(0, begin, count);
 
+        for (const env::RowRange& rows : env_group.opponent_slots) {
+            const auto opp_begin = static_cast<int64_t>(rows.begin);
+            const auto opp_count = static_cast<int64_t>(rows.count);
+            const int64_t staging_begin = opp_begin - static_cast<int64_t>(learner_agents_);
+            group->opponents.push_back({
+                obs.narrow(0, opp_begin, opp_count),
+                masks.narrow(0, opp_begin, opp_count),
+                opp_obs_gpu_.narrow(0, staging_begin, opp_count),
+                opp_masks_gpu_.narrow(0, staging_begin, opp_count),
+                actions_cpu_.narrow(0, opp_begin, opp_count)
+            });
+        }
+
         rollout_groups_.push_back(std::move(group));
     }
 }
 
+void PPORunner::load_opponent_slot(size_t slot, const std::vector<torch::Tensor>& params) {
+    const std::vector<torch::Tensor> slot_params = opponent_slots_.at(slot)->parameters();
+    TORCH_CHECK(slot_params.size() == params.size(), "Opponent weights don't match the network config.");
+
+    torch::NoGradGuard no_grad;
+    for (size_t i = 0; i < params.size(); i++) {
+        TORCH_CHECK(slot_params[i].sizes() == params[i].sizes(), "Opponent weights don't match the network config.");
+        slot_params[i].copy_(params[i], true);
+    }
+}
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PPORunner::inference_graph_logic(RolloutGroup& group) {
+    // The opponent slots fork off here. An opponent forward is a chain of small kernels that leaves the GPU mostly
+    // idle, so running each slot on its own stream overlaps it with the learner's forward instead of queuing after it.
+    const at::cuda::CUDAStream main_stream = at::cuda::getCurrentCUDAStream();
+    at::cuda::CUDAEvent fork;
+    fork.record(main_stream);
+
     group.obs_gpu.copy_(group.obs_src, true);
     group.masks_gpu.copy_(group.masks_src, true);
 
@@ -191,6 +241,27 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PPORunner::inference_gra
 
     // Non-blocking, since synchronizing isn't allowed during capture. `infer_group` syncs after replay.
     group.actions_cpu.copy_(actions.to(torch::kInt32), true);
+
+    for (size_t slot = 0; slot < group.opponents.size(); slot++) {
+        RolloutGroup::OpponentRows& opp = group.opponents[slot];
+        if (opp.obs_src.size(0) == 0) continue;
+
+        const at::cuda::CUDAStream slot_stream = opponent_streams_[slot];
+        fork.block(slot_stream);
+        {
+            at::cuda::CUDAStreamGuard stream_guard(slot_stream);
+            opp.obs_gpu.copy_(opp.obs_src, true);
+            opp.masks_gpu.copy_(opp.masks_src, true);
+            const torch::Tensor opp_actions = opponent_slots_[slot]->sample_action(opp.obs_gpu, opp.masks_gpu);
+            opp.actions_cpu.copy_(opp_actions.to(torch::kInt32), true);
+        }
+
+        // Join back. The learner's work is already queued ahead of this wait, so it doesn't wait on the slot.
+        // A capture must rejoin every stream it forked before it ends.
+        at::cuda::CUDAEvent join;
+        join.record(slot_stream);
+        join.block(main_stream);
+    }
 
     return { actions, log_probs, values.squeeze(-1) };
 }
@@ -251,7 +322,7 @@ void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::B
     torch::max_out(group.dones_gpu, group.term_gpu, group.trunc_gpu);
 
     buffer_->insert(
-        step, group.agent_begin,
+        step, group.learner_begin,
         group.obs_gpu, group.actions_gpu, group.masks_gpu,
         group.rewards_gpu, group.dones_gpu, group.log_probs_gpu, group.values_gpu
     );
@@ -291,6 +362,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         const auto t_start = std::chrono::high_resolution_clock::now();
         const auto rollout_start = std::chrono::high_resolution_clock::now();
+
+        // TODO(PFSP phase 3): load past versions from the opponent pool. For now every slot plays a copy of the
+        // current learner, so the win rate should sit near 0.5.
+        for (size_t slot = 0; slot < opponent_slots_.size(); slot++) {
+            load_opponent_slot(slot, actor_critic_->parameters());
+        }
 
         // Pipelined rollout over two env groups: while one group's physics runs on the workers, the main thread
         // uploads the other group's results and runs its inference. Each env still acts on its own latest obs
@@ -332,11 +409,31 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(avg_per_step));
         }
         logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / static_cast<double>(total_steps_per_update_)));
+
+        // PFSP results against this update's opponent slots. Truncated episodes aren't counted.
+        uint32_t pfsp_wins = 0;
+        uint32_t pfsp_games = 0;
+        const auto pfsp_outcomes = vec_env_->collect_pfsp_outcomes();
+        for (size_t slot = 0; slot < pfsp_outcomes.size(); slot++) {
+            const uint32_t games = pfsp_outcomes[slot].wins + pfsp_outcomes[slot].losses;
+            pfsp_wins += pfsp_outcomes[slot].wins;
+            pfsp_games += games;
+            if (games > 0) {
+                logger_->add_scalar("PFSP/Slot_" + std::to_string(slot) + "_Win_Rate", global_step_,
+                                    static_cast<float>(pfsp_outcomes[slot].wins) / static_cast<float>(games));
+            }
+        }
+        if (!pfsp_outcomes.empty()) {
+            logger_->add_scalar("PFSP/Games", global_step_, static_cast<float>(pfsp_games));
+            if (pfsp_games > 0) {
+                logger_->add_scalar("PFSP/Win_Rate", global_step_, static_cast<float>(pfsp_wins) / static_cast<float>(pfsp_games));
+            }
+        }
         
         const auto rollout_end = std::chrono::high_resolution_clock::now();
 
-        // GAE & Optimize. The full obs buffer holds every group's latest obs.
-        step_obs_gpu_.copy_(reset_res.observations, true);
+        // GAE & Optimize. The full obs buffer holds every group's latest obs, and its first rows are the learners'.
+        step_obs_gpu_.copy_(reset_res.observations.narrow(0, 0, static_cast<int64_t>(learner_agents_)), true);
         torch::Tensor next_values;
         {
             torch::NoGradGuard no_grad;
@@ -380,6 +477,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n | Entropy:     " << metrics.at("entropy")
                   << "\n | Approx KL:   " << metrics.at("approx_kl")
                   << "\n | Clip Frac:   " << metrics.at("clip_fraction") << "\n";
+        if (!pfsp_outcomes.empty()) {
+            std::cout << " | PFSP Wins:   " << pfsp_wins << " / " << pfsp_games << " games\n";
+        }
     }
 
     save_checkpoint(checkpoint_dir);

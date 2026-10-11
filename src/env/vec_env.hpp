@@ -1,14 +1,18 @@
 // buta-ppo/src/env/vec_env.hpp
 #pragma once
 
+#include "buta_ppo/ffi.h"
 #include "state/state_setter.hpp"
 #include "reward/reward_manager.hpp"
+#include "rl/pfsp.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -43,28 +47,68 @@ struct BatchedStepResult {
 };
 
 /**
- * @brief A contiguous range of envs and their agents that can be stepped on its own.
+ * @brief A contiguous range of batched rows.
+ */
+struct RowRange {
+    size_t begin = 0;
+    size_t count = 0;
+};
+
+/**
+ * @brief A contiguous range of envs that can be stepped on its own, and the batched rows of its agents.
+ *
+ * Learner rows of all groups come first in the batched buffers, in group order, so each group's learner rows
+ * are contiguous and the learner rows of every group together are rows [0, learner agents). The opponent rows
+ * of PFSP envs follow, grouped by env group and then by opponent slot.
  */
 struct EnvGroup {
     size_t env_begin = 0;
     size_t env_end = 0;
-    size_t agent_begin = 0;
-    size_t agent_end = 0;
+    size_t learner_begin = 0;
+    size_t learner_end = 0;
 
-    [[nodiscard]] size_t agent_count() const { return agent_end - agent_begin; }
+    // This group's opponent rows for each opponent slot. Empty when PFSP is disabled.
+    std::vector<RowRange> opponent_slots{};
+
+    [[nodiscard]] size_t learner_count() const { return learner_end - learner_begin; }
+};
+
+/**
+ * @brief Episode results of PFSP matches from the learner's side. Truncated episodes aren't counted.
+ */
+struct PFSPOutcome {
+    uint32_t wins = 0;
+    uint32_t losses = 0;
 };
 
 /**
  * @brief Manages the thread pool for multiple RocketSim envs in parallel and construct batches.
+ *
+ * An env's agents don't occupy contiguous rows of the batched buffers. Each agent has its own row, given by
+ * `agent_rows_`, so the rows can be ordered by role (learner rows first) instead of by env.
  */
 class VecEnv {
 private:
     size_t num_envs_;
     std::vector<size_t> env_agent_counts_;
-    std::vector<size_t> env_agent_offsets_;
     size_t single_obs_size_;
     size_t action_space_size_;
     size_t total_agents_;
+    size_t learner_agents_;
+
+    // Batched row of each env's agents, in env order. Env i's agents start at `env_agent_offsets_[i]`.
+    std::vector<uint32_t> agent_rows_;
+    std::vector<size_t> env_agent_offsets_;
+
+    // Per-env scratch for gathering an env's actions from its rows. Indexed like `agent_rows_`.
+    std::vector<int> env_actions_;
+
+    // PFSP state per env. Envs that aren't PFSP have no opponent team and a slot of -1.
+    size_t num_opponent_slots_ = 0;
+    std::vector<std::optional<ffi::Team>> env_opponent_team_;
+    std::vector<int> env_opponent_slot_;
+    // Written only by the worker stepping the env.
+    std::vector<PFSPOutcome> env_outcomes_;
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
     std::unordered_map<std::string, double> aggregate_reward_breakdown_;
@@ -125,9 +169,14 @@ private:
     void wait_for_workers();
 
     /**
-     * @brief The rows of the batched step buffers belonging to a range of agents.
+     * @brief Scatters an env's per-agent obs and action masks into its agents' rows of the batched buffers.
      */
-    [[nodiscard]] BatchedStepResult step_result_rows(size_t agent_begin, size_t agent_count) const;
+    void write_obs_and_masks(size_t env_idx, const std::vector<float>& obs, const std::vector<float>& masks);
+
+    /**
+     * @brief The rows of the batched step buffers belonging to a range of rows.
+     */
+    [[nodiscard]] BatchedStepResult step_result_rows(size_t row_begin, size_t row_count) const;
 
     
 public:
@@ -139,7 +188,8 @@ public:
         size_t num_threads, 
         int ticks_per_step = 8, 
         size_t max_players_per_team = 4, 
-        bool render = false
+        bool render = false,
+        const rl::PFSPConfig& pfsp_cfg = {}
     );
 
     ~VecEnv();
@@ -168,14 +218,14 @@ public:
      * buffers until `wait` returns. Other groups' rows are safe to read and write in the meantime.
      *
      * @param group The group to step.
-     * @param batched_actions The actions for ALL agents. Only this group's entries are read.
+     * @param batched_actions The actions for ALL rows. Only the rows of this group's agents are read.
      */
     void step_async(size_t group, const int* batched_actions);
 
     /**
      * @brief Blocks until the group started by `step_async` has finished stepping.
      *
-     * @return That group's rows of the batched step buffers.
+     * @return That group's learner rows of the batched step buffers.
      */
     [[nodiscard]] BatchedStepResult wait();
 
@@ -184,9 +234,22 @@ public:
      */
     void update_reward_breakdown();
 
+    /**
+     * @brief Sums the PFSP episode results per opponent slot since the last call, then clears them.
+     *
+     * Must not be called while an env group is stepping.
+     *
+     * @return The results of each opponent slot. Empty when PFSP is disabled.
+     */
+    [[nodiscard]] std::vector<PFSPOutcome> collect_pfsp_outcomes();
+
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
     [[nodiscard]] const std::vector<EnvGroup>& get_groups() const { return groups_; };
+    // Every agent's row, which is the row count of the batched buffers and the batched actions.
     [[nodiscard]] size_t get_total_agents() const { return total_agents_; };
+    // Agents controlled by the learning policy. Their rows are [0, learner agents).
+    [[nodiscard]] size_t get_learner_agents() const { return learner_agents_; };
+    [[nodiscard]] size_t get_num_opponent_slots() const { return num_opponent_slots_; };
     [[nodiscard]] size_t get_single_obs_size() const { return single_obs_size_; };
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; };
 };
