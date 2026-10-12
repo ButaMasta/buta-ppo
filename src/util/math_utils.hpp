@@ -20,6 +20,32 @@ inline void sub_vec3(const float* vec_a, const float* vec_b, float* result) {
 }
 
 /**
+ * @brief Adds two vectors and stores the result in a provided buffer.
+ * 
+ * @param vec_a The first vector.
+ * @param vec_b The Second vector.
+ * @param result The result location to store the addition.
+ */
+inline void add_vec3(const float* vec_a, const float* vec_b, float* result) {
+    result[0] = vec_a[0] + vec_b[0];
+    result[1] = vec_a[1] + vec_b[1];
+    result[2] = vec_a[2] + vec_b[2];
+}
+
+/**
+ * @brief Multiplies a vector by a scalar and stores the result in a provided buffer.
+ * 
+ * @param scalar The scalar for the opteraion.
+ * @param vec_a The vector to scale.
+ * @param result The result location to store the multiplication.
+ */
+inline void scalar_mult_vec3(const float scalar, const float* vec_a, float* result) {
+    result[0] = scalar * vec_a[0];
+    result[1] = scalar * vec_a[1];
+    result[2] = scalar * vec_a[2];
+}
+
+/**
  * @brief Converts euler angles to a 3x3 rotation matrix.
  * 
  * @param pitch The pitch angle.
