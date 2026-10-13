@@ -117,6 +117,7 @@ StepResult RocketSimEnv::step(const int* actions) {
 
         // Calculate and accumulate rewards.
         for (size_t a = 0; a < agents_.size(); a++) {
+            // opponent_team_ is an optional only set by pfsp envs. If it is not set then this evaluates to true.
             const bool track_telemetry = agents_[a].team != opponent_team_;
             reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_, track_telemetry);
         }
