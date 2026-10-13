@@ -10,10 +10,12 @@ unsafe extern "C" {
     pub unsafe fn bot_api_init(checkpoint_path: *const c_char) -> *mut c_void;
 
     /// Infers the model for the given state and car then returns the controls.
+    /// `new_kickoff` reshuffles the obs car slots (once per kickoff).
     pub unsafe fn bot_api_get_action(
         ctx_ptr: *mut c_void,
         state: *const CArenaState,
         car_idx: u32,
+        new_kickoff: bool,
     ) -> CCarControls;
 
     /// Returns the max players per team the obs builder was configured for.

@@ -20,6 +20,8 @@ struct BotContext {
     std::unique_ptr<buta_ppo::action::DefaultAction> action_parser;
     buta_ppo::rl::ActorCritic model{nullptr};
     torch::Device device{torch::kCPU};
+    // Roster the current slot shuffle was built from.
+    std::vector<buta_ppo::env::AgentMeta> agents;
 };
 
 void* bot_api_init(const char* checkpoint_path) {
@@ -61,22 +63,31 @@ void* bot_api_init(const char* checkpoint_path) {
     return ctx;
 }
 
-buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi::ArenaState* state, uint32_t car_idx) {
+buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi::ArenaState* state, uint32_t car_idx, bool new_kickoff) {
     try {
         auto ctx = static_cast<BotContext*>(ctx_ptr);
-        
-        // Build AgentMeta list from current arena state
-        std::vector<buta_ppo::env::AgentMeta> agents;
-        agents.reserve(state->num_cars);
-        for (uint32_t i = 0; i < state->num_cars; ++i) {
-            agents.push_back({i, static_cast<buta_ppo::ffi::Team>(state->cars[i].team)});
+
+        // Rebuild the roster if a player joined/left or changed team.
+        bool roster_changed = ctx->agents.size() != state->num_cars;
+        for (uint32_t i = 0; !roster_changed && i < state->num_cars; ++i) {
+            roster_changed = ctx->agents[i].team != static_cast<buta_ppo::ffi::Team>(state->cars[i].team);
+        }
+        if (roster_changed) {
+            ctx->agents.clear();
+            for (uint32_t i = 0; i < state->num_cars; ++i) {
+                ctx->agents.push_back({i, static_cast<buta_ppo::ffi::Team>(state->cars[i].team)});
+            }
+        }
+
+        // Reshuffle slots once per kickoff (the in-game equivalent of reset), or when the roster changes.
+        if (new_kickoff || roster_changed) {
+            ctx->obs_builder->team_indices_rand(ctx->agents);
         }
 
         // Build obs.
-        ctx->obs_builder->pre_step_rand(agents);
         const size_t obs_size = ctx->obs_builder->get_obs_size();
         std::vector<float> obs_buffer(obs_size, 0.0f);
-        ctx->obs_builder->build_obs(*state, agents, car_idx, obs_buffer.data());
+        ctx->obs_builder->build_obs(*state, ctx->agents, car_idx, obs_buffer.data());
 
         // Get action mask.
         const size_t action_size = ctx->action_parser->get_action_space_size();

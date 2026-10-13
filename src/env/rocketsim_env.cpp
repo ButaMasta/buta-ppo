@@ -39,6 +39,9 @@ RocketSimEnv::RocketSimEnv(
         add_agent(team);
     }
 
+    // Initial shuffle of indices.
+    obs_builder_.team_indices_rand(agents_);
+
     // Construct state setter dist.
     std::vector<double> weights;
     weights.reserve(setters_.size());
@@ -49,10 +52,6 @@ RocketSimEnv::RocketSimEnv(
 
     // Setup Rewards.
     reward_manager_.set_rewards(rewards);
-
-    // reward_manager_.add_reward("VelocityToBall", reward::create_velocity_to_ball_reward(), 0.1f);
-    // reward_manager_.add_reward("TouchBall", reward::create_touch_ball_reward(), 1.0f);
-    // reward_manager_.add_reward("Goal", reward::create_goal_reward(), 200.0f);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {
@@ -73,7 +72,7 @@ ResetResult RocketSimEnv::reset() {
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     reward_manager_.reset(arena_state_);
     obs_builder_.reset();
-    obs_builder_.pre_step_rand(agents_);
+    obs_builder_.team_indices_rand(agents_);
 
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
@@ -157,7 +156,6 @@ StepResult RocketSimEnv::step(const int* actions) {
     }
 
     // Build the final observations.
-    obs_builder_.pre_step_rand(agents_);
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
         agent_x_inverted_[i] = obs_builder_.build_obs(arena_state_, agents_, static_cast<uint32_t>(i), agent_obs_ptr);

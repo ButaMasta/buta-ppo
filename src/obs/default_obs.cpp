@@ -39,7 +39,7 @@ void DefaultObs::reset() {
     tick_last_updated_ball_pred_ = UINT64_MAX;
 }
 
-void DefaultObs::pre_step_rand(const std::vector<env::AgentMeta>& agents) {
+void DefaultObs::team_indices_rand(const std::vector<env::AgentMeta>& agents) {
     team_A_indices_.clear();
     team_B_indices_.clear();
 

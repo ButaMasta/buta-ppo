@@ -75,7 +75,7 @@ public:
      * 
      * @param agents The list of agents in the env.
      */
-    void pre_step_rand(const std::vector<env::AgentMeta>& agents);
+    void team_indices_rand(const std::vector<env::AgentMeta>& agents);
 
     /**
      * @brief Writes observation in-place. Returns X-Mirror status of this state.

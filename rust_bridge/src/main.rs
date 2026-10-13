@@ -43,6 +43,8 @@ pub struct ButaPPOBot {
     tick_skip: u32,
     big_pad_indices: Vec<usize>,
     small_pad_indices: Vec<usize>,
+    last_phase: Option<MatchPhase>,
+    pending_reshuffle: bool,
 }
 
 impl BotAgent for ButaPPOBot {
@@ -107,12 +109,21 @@ impl BotAgent for ButaPPOBot {
             tick_skip: 8,
             big_pad_indices,
             small_pad_indices,
+            last_phase: None,
+            pending_reshuffle: false,
         }
     }
 
     fn tick(&mut self, packet: &GamePacket, packet_queue: &mut PacketQueue) {
         let frame = packet.match_info.frame_num;
-        
+        let phase = packet.match_info.match_phase;
+
+        // Flag a reshuffle on entering a kickoff; consumed by the next infer.
+        if matches!(phase, MatchPhase::Kickoff) && !matches!(self.last_phase, Some(MatchPhase::Kickoff)) {
+            self.pending_reshuffle = true;
+        }
+        self.last_phase = Some(phase);
+
         // Feed the RLBot packet into the RocketSim enricher.
         let enriched = self.enricher.update(packet).is_ok();
 
@@ -200,7 +211,8 @@ impl ButaPPOBot {
         }
 
         // Execute LibTorch Forward Pass.
-        self.held_controls = unsafe { bot_api_get_action(self.ctx_ptr, &c_arena, my_car_idx) };
+        self.held_controls = unsafe { bot_api_get_action(self.ctx_ptr, &c_arena, my_car_idx, self.pending_reshuffle) };
+        self.pending_reshuffle = false;
         self.next_decision_frame = Some(frame + self.tick_skip);
     }
 }
