@@ -87,7 +87,7 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
         // Build obs.
         const size_t obs_size = ctx->obs_builder->get_obs_size();
         std::vector<float> obs_buffer(obs_size, 0.0f);
-        ctx->obs_builder->build_obs(*state, ctx->agents, car_idx, obs_buffer.data());
+        const bool invert_x = ctx->obs_builder->build_obs(*state, ctx->agents, car_idx, obs_buffer.data());
 
         // Get action mask.
         const size_t action_size = ctx->action_parser->get_action_space_size();
@@ -121,7 +121,14 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
 
         // Select best valid action and decode controls.
         int64_t action_idx = masked_logits.argmax(1).item<int64_t>();
-        return ctx->action_parser->get_action(static_cast<size_t>(action_idx));
+        buta_ppo::ffi::CarControls controls = ctx->action_parser->get_action(static_cast<size_t>(action_idx));
+        // Invert necessary controls if the state was X-mirrored.
+        if (invert_x) {
+            controls.steer  *= -1.0f;
+            controls.yaw    *= -1.0f;
+            controls.roll   *= -1.0f;
+        }
+        return controls;
 
     } catch (const c10::Error& e) {
         std::cerr << "\n[LibTorch CUDA/Tensor Error] " << e.what() << "\n" << std::endl;
