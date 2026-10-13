@@ -1,10 +1,22 @@
+# Training executable.
 build/
+
+# Training directories for prior versions and logs.
 checkpoints/*
 logs/*
+
+# Pesky vscode files begone.
 .vscode/
+
+# Pesky rust files begone.
 rust_bridge/Cargo.lock
 rust_bridge/target
+
+# Collision meshes.
 assets/*
+
+# RLBotV5 directory contents.
+# Keeps the helper templates for the toml files for convenience.
 bot/*
 !bot/bot.toml
 !bot/loadout.toml
