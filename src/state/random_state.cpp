@@ -86,6 +86,7 @@ public:
                 car.phys.ang_vel[0] = 0.0f;
                 car.phys.ang_vel[1] = 0.0f;
                 car.phys.ang_vel[2] = 0.0f;
+                car.is_on_ground = true;
             } else {
                 math::euler_to_mat3(rand_pitch(rng), rand_yaw(rng), rand_roll(rng), car.phys.rot_mat);
                 if (rand_car_speed_) {
@@ -97,6 +98,7 @@ public:
                     car.phys.vel[1] = dir[1] * s;
                     car.phys.vel[2] = dir[2] * s;
                 }
+                car.is_on_ground = false;
             }
 
             std::uniform_real_distribution<float> rand_boost(0.0f, 100.0f);
