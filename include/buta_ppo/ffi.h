@@ -33,7 +33,7 @@ extern "C" {
         rs_phys_state phys;
         int32_t team;
         float boost;
-        float handbreak_val;
+        float handbrake_val;
         float air_time_since_jump;
         float demo_respawn_timer;
         bool is_on_ground;

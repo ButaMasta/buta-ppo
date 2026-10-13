@@ -209,7 +209,7 @@ void DefaultObs::write_car(float*& ptr, const ffi::ArenaState& arena_state, uint
     *ptr++ = car.has_flip_or_jump ? 1.0f : 0.0f;
     *ptr++ = car.is_auto_flipping ? 1.0f : 0.0f;
     *ptr++ = car.air_time_since_jump;
-    *ptr++ = car.handbreak_val;
+    *ptr++ = car.handbrake_val;
     *ptr++ = car.demo_respawn_timer * DEMO_COEF;
 }
 
