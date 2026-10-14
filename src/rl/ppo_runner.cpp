@@ -45,6 +45,7 @@ PPORunner::PPORunner(const RunnerConfig& config)
         throw std::runtime_error("CUDA not found. CPU is currently not supported.");
     }
 
+    fs::create_directories("logs");
     const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
     TensorBoardLoggerOptions logger_options_{};
     logger_options_.resume_ = true;

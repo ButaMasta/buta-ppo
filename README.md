@@ -72,9 +72,9 @@ CMake fetches the remaining C++ dependencies and builds the Rust FFI bridge as p
     * `CMakeLists.txt`: `set(Torch_DIR "/path/to/libtorch/share/cmake/Torch")`
     * `rust_bridge/build.rs`: the `Torch_DIR` define and `torch_dir`
     * `deploy.py`: `torch_lib_dir`
-2. **Add the Collision Meshes and Log Directory:** Place your `collision_meshes/` directory inside `assets/`, then create the log directory.
+2. **Add the Collision Meshes:** Place your `collision_meshes/` directory inside `assets/`. The `logs/` and `checkpoints/` directories are created on the first run.
 ```bash
-mkdir -p assets logs
+mkdir -p assets
 ```
 3. **Configure and Build:**
 ```bash

@@ -12,7 +12,7 @@ def deploy():
 
     bot_dir = Path("bot")
     bot_lib_dir = Path("bot/libs")
-    bot_dir.mkdir(exist_ok=True)
+    bot_lib_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Copying executable to {bot_dir.absolute()}...")
     shutil.copy("rust_bridge/target/release/buta_ppo_bot", bot_dir)
@@ -22,6 +22,8 @@ def deploy():
         shutil.copy(path, bot_lib_dir)
         print(f"  -> Copied {path.name}")
         break
+    else:
+        print("  -> Warning: libbuta_ppo_bot.so not found in rust_bridge/target/release/build")
 
     print("Copying LibTorch dependencies...")
     torch_lib_dir = Path("/home/buta/Dev/libtorch/lib")

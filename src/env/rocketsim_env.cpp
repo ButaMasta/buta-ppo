@@ -20,8 +20,9 @@ RocketSimEnv::RocketSimEnv(
     bool render,
     std::optional<ffi::Team> opponent_team
 ) : opponent_team_(opponent_team),
-    setters_(setters), 
-    ticks_per_step_(ticks_per_step), 
+    setters_(setters),
+    rng_(seed),
+    ticks_per_step_(ticks_per_step),
     obs_builder_(max_players_per_team, ticks_per_step, seed), 
     render_(render) {
 

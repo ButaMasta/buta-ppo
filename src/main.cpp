@@ -22,7 +22,9 @@ void handle_sigint(int) {
 }
 
 int main() {
-    std::cout.imbue(std::locale("en_US.utf8"));
+    try {
+        std::cout.imbue(std::locale("en_US.utf8"));
+    } catch (const std::runtime_error&) {}
     std::signal(SIGINT, handle_sigint);
 
     if (!ffi::init("assets/collision_meshes", true)) {
@@ -79,11 +81,12 @@ int main() {
     config.pfsp_cfg.envs = 0.2f;
     config.pfsp_cfg.versions = 2;
 
-    PPORunner runner(config);
     try {
+        PPORunner runner(config);
         runner.run(1'000, g_stop_training, "checkpoints");
-    } catch (std::runtime_error e) {
-        std::cerr << e.what();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] " << e.what() << "\n";
+        return 1;
     }
 
     return 0;
