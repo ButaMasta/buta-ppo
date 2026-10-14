@@ -80,6 +80,13 @@ Tested with:
 
 CMake fetches the remaining C++ dependencies and builds the Rust FFI bridge as part of the build.
 
+0. **Clone the Repository:** The `stable` branch always points to the latest release, while `main` has in-progress development.
+```bash
+git clone -b stable https://github.com/ButaMasta/buta-ppo.git
+cd buta-ppo
+```
+To use a specific release instead, clone its tag, e.g. `git clone -b v0.1.0 https://github.com/ButaMasta/buta-ppo.git`.
+
 1. **Set the LibTorch Path:** Set the `LIBTORCH` environment variable to your LibTorch directory, the one containing `lib/` and `share/`. Add it to your shell's config so it persists:
 ```bash
 export LIBTORCH=/path/to/libtorch         # bash / zsh, e.g. in ~/.bashrc
@@ -102,6 +109,16 @@ ninja -C build
 ```
 
 For a debug build, swap the commented `-g -O0` `target_compile_options` blocks in `CMakeLists.txt`.
+
+### Updating
+
+Read the release notes first, since a minor release may break existing checkpoints (see [Versioning](#versioning)). Your configuration lives in `src/main.cpp`, so commit your changes before pulling and Git will merge them with the update:
+```bash
+git commit -am "My config"    # skip if you haven't changed anything
+git pull
+ninja -C build
+```
+`git describe --tags` shows which release you're on.
 
 ## Running Training
 
