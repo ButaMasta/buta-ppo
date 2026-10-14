@@ -33,9 +33,9 @@ void* bot_api_init(const char* checkpoint_path) {
     buta_ppo::rl::ActorCriticConfig config;
     config.obs_size = static_cast<int64_t>(ctx->obs_builder->get_obs_size());
     config.action_size = static_cast<int64_t>(ctx->action_parser->get_action_space_size());
-    config.shared_layers = {512, 512};
-    config.actor_layers = {256, 256};
-    config.critic_layers = {512, 512};
+    config.shared_layers = {1280, 1280, 1024 };
+    config.actor_layers = {768, 512 };
+    config.critic_layers = {1024, 768 };
     config.use_layer_norm = true;
     
     ctx->model = buta_ppo::rl::ActorCritic(config);
