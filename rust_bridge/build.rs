@@ -1,10 +1,15 @@
 // buta-ppo/rust_bridge/build.rs
 fn main() {
+    // LibTorch location, from the same environment variable the CMake build uses.
+    let torch_dir = std::env::var("LIBTORCH")
+        .expect("Set the LIBTORCH environment variable to your LibTorch directory (the one containing lib/ and share/).");
+    println!("cargo:rerun-if-env-changed=LIBTORCH");
+
     // Compile the C++ bot library using CMake.
     let dst = cmake::Config::new("..")
         .define("BUILD_RUST_BRIDGE", "OFF")
         .define("CMAKE_CXX_STANDARD", "20")
-        .define("Torch_DIR", "/home/buta/Dev/libtorch/share/cmake/Torch")
+        .define("LIBTORCH_DIR", &torch_dir)
         .build_target("buta_ppo_bot")
         .build();
 
@@ -13,7 +18,6 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=buta_ppo_bot");
 
     // Link LibTorch dependencies so Rust can resolve the C++ symbols.
-    let torch_dir = "/home/buta/Dev/libtorch";
     println!("cargo:rustc-link-search=native={}/lib", torch_dir);
     println!("cargo:rustc-link-lib=dylib=torch");
     println!("cargo:rustc-link-lib=dylib=torch_cpu");

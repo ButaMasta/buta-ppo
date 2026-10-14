@@ -1,8 +1,16 @@
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 def deploy():
+    # LibTorch location, from the same environment variable the CMake build uses. Cargo's build script reads it too.
+    libtorch = os.environ.get("LIBTORCH")
+    if not libtorch or not (Path(libtorch) / "lib").is_dir():
+        sys.exit("Set the LIBTORCH environment variable to your LibTorch directory (the one containing lib/ and share/).")
+    torch_lib_dir = Path(libtorch) / "lib"
+
     print("Building buta_ppo_bot via Cargo...")
     subprocess.run(
         ["cargo", "build", "--release", "--bin", "buta_ppo_bot"], 
@@ -26,8 +34,6 @@ def deploy():
         print("  -> Warning: libbuta_ppo_bot.so not found in rust_bridge/target/release/build")
 
     print("Copying LibTorch dependencies...")
-    torch_lib_dir = Path("/home/buta/Dev/libtorch/lib")
-    
     torch_libs = ["libc10.so", "libc10_cuda.so", "libtorch.so", "libtorch_cpu.so"]
     for lib in torch_libs:
         lib_path = torch_lib_dir / lib

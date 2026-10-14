@@ -19,8 +19,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tensorboard_logger)
 
-# Find the Torch package using the provided path
-set(Torch_DIR "/home/buta/Dev/libtorch/share/cmake/Torch")
+# Find LibTorch from the LIBTORCH environment variable. The path is cached on configure, so later builds don't need it set.
+if(DEFINED ENV{LIBTORCH})
+    set(LIBTORCH_DIR "$ENV{LIBTORCH}" CACHE PATH "LibTorch directory, read from the LIBTORCH environment variable." FORCE)
+endif()
+if(NOT LIBTORCH_DIR)
+    message(FATAL_ERROR "LIBTORCH is not set. Set the LIBTORCH environment variable to your LibTorch directory "
+                        "(the one containing lib/ and share/), then configure again.")
+endif()
+if(NOT EXISTS "${LIBTORCH_DIR}/share/cmake/Torch/TorchConfig.cmake")
+    set(bad_dir "${LIBTORCH_DIR}")
+    unset(LIBTORCH_DIR CACHE)
+    message(FATAL_ERROR "LibTorch not found at '${bad_dir}'. Set the LIBTORCH environment variable to your LibTorch "
+                        "directory (the one containing lib/ and share/), then configure again.")
+endif()
+set(Torch_DIR "${LIBTORCH_DIR}/share/cmake/Torch")
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
@@ -32,8 +45,9 @@ if(BUILD_RUST_BRIDGE)
     set(RUST_LIB ${RUST_TARGET_DIR}/librust_bridge.so)
 
     # Create a custom target that always runs `cargo build --release`.
+    # The bridge's build script needs LibTorch too, so pass it the configured path.
     add_custom_target(cargo_build ALL
-        COMMAND cargo build --release
+        COMMAND ${CMAKE_COMMAND} -E env LIBTORCH=${LIBTORCH_DIR} cargo build --release
         WORKING_DIRECTORY ${RUST_BRIDGE_DIR}
         BYPRODUCTS ${RUST_LIB}
         COMMENT "Compiling Rust FFI cdylib via Cargo..."

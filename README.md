@@ -57,7 +57,7 @@ buta-ppo/
 
 * **OS & Compiler:** Linux with a C++20 compiler (GCC or Clang).
 * **GPU:** An NVIDIA GPU with CUDA. CPU training is not supported. Training runs in bf16, so an Ampere (RTX 30-series) or newer GPU is recommended. Older GPUs are untested.
-* **LibTorch:** The CUDA-enabled C++ distribution. The trainer relies on recent LibTorch internals (fused optimizer kernels, CUDA graphs), so older versions may not build.
+* **LibTorch:** The CUDA-enabled C++ distribution, located through the `LIBTORCH` environment variable (see [Build Instructions](#build-instructions)). The trainer relies on recent LibTorch internals (fused optimizer kernels, CUDA graphs), so older versions may not build.
 * **CUDA Toolkit:** A version compatible with your LibTorch build, needed when CMake configures LibTorch.
 * **CMake:** Version 3.20 or higher. Ninja is recommended.
 * **Rust Toolchain:** Cargo with Rust 2024 edition support (1.85 or newer).
@@ -80,10 +80,13 @@ Tested with:
 
 CMake fetches the remaining C++ dependencies and builds the Rust FFI bridge as part of the build.
 
-1. **Configure the LibTorch Path:** The LibTorch location is hardcoded in three places. Update all of them to point to your installation:
-    * `CMakeLists.txt`: `set(Torch_DIR "/path/to/libtorch/share/cmake/Torch")`
-    * `rust_bridge/build.rs`: the `Torch_DIR` define and `torch_dir`
-    * `deploy.py`: `torch_lib_dir`
+1. **Set the LibTorch Path:** Set the `LIBTORCH` environment variable to your LibTorch directory, the one containing `lib/` and `share/`. Add it to your shell's config so it persists:
+```bash
+export LIBTORCH=/path/to/libtorch         # bash / zsh, e.g. in ~/.bashrc
+set -Ux LIBTORCH /path/to/libtorch        # fish, saved automatically
+```
+CMake reads it when it configures and remembers the path, so later builds work without it. `deploy.py` needs it set whenever you run it. To switch to a different LibTorch, set `LIBTORCH` to the new path and run the configure command in step 3 again.
+
 2. **Add the Collision Meshes:** Place your `collision_meshes/` directory inside `assets/`. The `logs/` and `checkpoints/` directories are created on the first run.
 ```bash
 mkdir -p assets
@@ -286,7 +289,7 @@ The `buta_ppo_bot` binary runs a trained checkpoint as an RLBot v5 bot. It build
 ```bash
 python deploy.py
 ```
-This builds the bot binary and copies it, the C++ inference library, and the main LibTorch libraries into `bot/`.
+This builds the bot binary and copies it, the C++ inference library, and the main LibTorch libraries into `bot/`. It needs the `LIBTORCH` environment variable set (see [Build Instructions](#build-instructions)).
 
 3. **Add the Remaining Files:** Copy `checkpoints/<bot_name>_<steps>/model.pt` and `assets/collision_meshes/` into `bot/`. The values marked `TEMPLATE` in `bot/bot.toml` and `bot/loadout.toml` belong to the original bot, so change them for yours. In particular `agent_id`, `name`, and `logo_file`, since the logo isn't included in the repository.
 4. **Run:** Add the bot to a match through RLBot v5, using `bot/bot.toml`.
