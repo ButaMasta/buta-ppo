@@ -81,7 +81,7 @@ int main() {
     config.ppo_cfg.epochs = 1;
 
     // PFSP: fraction of even-team envs playing past versions, and how many versions are played each update.
-    config.pfsp_cfg.envs = 0.2f;
+    config.pfsp_cfg.envs = 0.0f;
     config.pfsp_cfg.versions = 2;
 
     try {
