@@ -298,6 +298,21 @@ This builds the bot binary and copies it, the C++ inference library, and the mai
 
 The packaged bot still loads some CUDA and LibTorch libraries from your local LibTorch installation, so it will only run on a machine with LibTorch installed at the same path.
 
+## Versioning
+
+buta-ppo follows [Semantic Versioning](https://semver.org) (`MAJOR.MINOR.PATCH`). The current version is **0.1.0**.
+
+While the version is 0.x the framework is still settling, so:
+* A **minor** release (0.1 → 0.2) may contain breaking changes.
+* A **patch** release (0.1.0 → 0.1.1) only contains fixes and never breaks anything listed below.
+
+A change counts as breaking if it:
+* Makes existing checkpoints, optimizer state, or PFSP pools unloadable, or changes the observation or action layout so a trained model no longer fits (this includes the bot built by `deploy.py`).
+* Renames, removes, or changes the meaning of a configuration field you set in `src/main.cpp`.
+* Changes the `RewardFunction` or `StateSetter` interfaces so custom rewards or state setters need updating.
+
+Breaking changes are called out in the release notes, so check them before updating mid-training.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
