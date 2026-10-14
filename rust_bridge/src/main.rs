@@ -204,10 +204,10 @@ impl ButaPPOBot {
 
         // Pack the Boost Pads.
         for (i, &idx) in self.big_pad_indices.iter().enumerate() {
-            c_arena.boost_pads.big[i] = packet.boost_pads[idx].timer;
+            c_arena.boost_pads.big[i] = packet.boost_pads[idx].timer.max(0.0);
         }
         for (i, &idx) in self.small_pad_indices.iter().enumerate() {
-            c_arena.boost_pads.small[i] = packet.boost_pads[idx].timer;
+            c_arena.boost_pads.small[i] = packet.boost_pads[idx].timer.max(0.0);
         }
 
         // Execute LibTorch Forward Pass.
