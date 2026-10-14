@@ -521,6 +521,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         logger_->add_scalar("Loss/Policy", global_step_, metrics.at("policy_loss"));
         logger_->add_scalar("Loss/Value", global_step_, metrics.at("value_loss"));
         logger_->add_scalar("Loss/Entropy", global_step_, metrics.at("entropy"));
+        logger_->add_scalar("Policy/Normalized_Entropy", global_step_, metrics.at("normalized_entropy"));
         logger_->add_scalar("Policy/Approx_KL", global_step_, metrics.at("approx_kl"));
         logger_->add_scalar("Policy/Clip_Fraction", global_step_, metrics.at("clip_fraction"));
         logger_->add_scalar("Value/Explained_Variance", global_step_, metrics.at("explained_variance"));
@@ -536,6 +537,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics.at("policy_loss")
                   << "\n | Value Loss:  " << metrics.at("value_loss")
                   << "\n | Entropy:     " << metrics.at("entropy")
+                  << "\n | Norm Ent:    " << metrics.at("normalized_entropy")
                   << "\n | Approx KL:   " << metrics.at("approx_kl")
                   << "\n | Clip Frac:   " << metrics.at("clip_fraction")
                   << "\n | Expl Var:    " << metrics.at("explained_variance")

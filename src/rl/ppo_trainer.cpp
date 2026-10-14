@@ -130,6 +130,12 @@ void PPOTrainer::execute_minibatch_graph_logic() {
         // Entropy Bonus.
         torch::Tensor entropy_loss = -entropy.mean() * config_.entropy_coef;
 
+        // Entropy as a fraction of its maximum, ln(valid actions), per sample. Unlike the raw entropy, it doesn't
+        // change with how many actions the masks allow. A sample with one valid action has zero entropy, so the
+        // clamp only avoids 0 / 0.
+        torch::Tensor num_valid = static_mb_action_masks_.sum(-1).to(torch::kFloat32).clamp_min(2.0f);
+        torch::Tensor normalized_entropy = (entropy.detach() / num_valid.log()).mean();
+
         // Total Loss.
         loss = policy_loss + config_.value_coef * value_loss + entropy_loss;
 
@@ -139,6 +145,7 @@ void PPOTrainer::execute_minibatch_graph_logic() {
         static_clip_fraction_.copy_(clip_fraction.detach());
         static_value_loss_.copy_(value_loss.detach());
         static_entropy_.copy_(entropy.mean().detach());
+        static_normalized_entropy_.copy_(normalized_entropy);
     }
 
     // Optim.
@@ -190,6 +197,7 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
     torch::Tensor total_policy_loss_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_value_loss_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_entropy_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
+    torch::Tensor total_normalized_entropy_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_approx_kl_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     torch::Tensor total_clip_fraction_tsr = torch::zeros({1}, torch::TensorOptions().device(device_));
     
@@ -226,6 +234,7 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 static_clip_fraction_ = torch::zeros({1}, float_opts);
                 static_value_loss_ = torch::zeros({1}, float_opts);
                 static_entropy_ = torch::zeros({1}, float_opts);
+                static_normalized_entropy_ = torch::zeros({1}, float_opts);
             }
 
             torch::index_select_out(static_mb_obs_, b_obs, 0, mb_inds);
@@ -293,6 +302,7 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
             total_policy_loss_tsr += static_policy_loss_;
             total_value_loss_tsr += static_value_loss_;
             total_entropy_tsr += static_entropy_;
+            total_normalized_entropy_tsr += static_normalized_entropy_;
             total_approx_kl_tsr += static_approx_kl_;
             total_clip_fraction_tsr += static_clip_fraction_;
 
@@ -304,6 +314,7 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
         {"policy_loss", total_policy_loss_tsr.item<float>() / std::max(1, updates)},
         {"value_loss", total_value_loss_tsr.item<float>() / std::max(1, updates)},
         {"entropy", total_entropy_tsr.item<float>() / std::max(1, updates)},
+        {"normalized_entropy", total_normalized_entropy_tsr.item<float>() / std::max(1, updates)},
         {"approx_kl", total_approx_kl_tsr.item<float>() / std::max(1, updates)},
         {"clip_fraction", total_clip_fraction_tsr.item<float>() / std::max(1, updates)},
         {"explained_variance", explained_variance.item<float>()}

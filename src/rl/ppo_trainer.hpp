@@ -100,6 +100,7 @@ private:
     torch::Tensor static_clip_fraction_;
     torch::Tensor static_value_loss_;
     torch::Tensor static_entropy_;
+    torch::Tensor static_normalized_entropy_;
 
     // An implementations of torch utils' clip grad norm that works with CUDA graphs.
     void graph_safe_clip_grad_norm(const std::vector<torch::Tensor>& grads, float max_norm);
@@ -114,7 +115,7 @@ public:
      * @brief Executes PPO optimization loop over collected rollouts.
      * 
      * @param buffer The Rollout buffer containing all the data for training.
-     * @return Metrics averaged over minibatches: losses, entropy, approx KL, and clip fraction.
+     * @return Metrics averaged over minibatches: losses, entropy, normalized entropy, approx KL, and clip fraction.
      */
     [[nodiscard]] std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
 

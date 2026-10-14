@@ -248,12 +248,14 @@ Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-
 | `Reward_Components/`, `Reward/` | Each reward's average per step, and the total |
 | `Episode/` | Goals, and truncations split into no-touch and time-limit |
 | `Loss/` | Policy, value, entropy |
-| `Policy/` | Approx KL, clip fraction |
+| `Policy/` | Approx KL, clip fraction, normalized entropy |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate overall and per slot, the versions played, pool size, games |
 | `Performance/` | Total and rollout steps per second |
 
 Approx KL and clip fraction are measured during each minibatch's forward pass, before its update. With `epochs = 1` and `num_minibatches = 1`, they only reflect small precision differences, not how far the update moved the policy.
+
+Normalized entropy is each sample's entropy divided by its maximum, `ln(valid actions)`, averaged over the rollout. It runs from 0 (always the same action) to 1 (uniformly random over the actions the mask allows). The raw entropy also moves when the mix of masks changes, for example with more time in the air (about twice as many valid actions as on the ground) or more time without boost. Normalized entropy only moves when the policy itself becomes more or less random.
 
 To view the logs with TensorBoard:
 
