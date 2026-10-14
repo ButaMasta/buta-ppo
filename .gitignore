@@ -9,7 +9,6 @@ logs/*
 .vscode/
 
 # Pesky rust files begone.
-rust_bridge/Cargo.lock
 rust_bridge/target
 
 # Collision meshes.

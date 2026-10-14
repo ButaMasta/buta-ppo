@@ -15,7 +15,7 @@ include(FetchContent)
 FetchContent_Declare(
     tensorboard_logger
     GIT_REPOSITORY      https://github.com/RustingSword/tensorboard_logger.git
-    GIT_TAG             master
+    GIT_TAG             69267c5782775a97bc9c01bec3fa537b739f79fd
 )
 FetchContent_MakeAvailable(tensorboard_logger)
 
