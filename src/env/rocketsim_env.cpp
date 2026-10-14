@@ -6,6 +6,8 @@
 #include <thread>
 #include <chrono>
 #include <stdexcept>
+#include <string>
+#include <type_traits>
 
 using namespace buta_ppo::reward;
 
@@ -25,6 +27,26 @@ RocketSimEnv::RocketSimEnv(
     ticks_per_step_(ticks_per_step),
     obs_builder_(max_players_per_team, ticks_per_step, seed), 
     render_(render) {
+
+    // The FFI arena state has a fixed number of car slots, shared by both teams.
+    constexpr size_t max_cars = std::extent_v<decltype(ffi::ArenaState::cars)>;
+    if (max_players_per_team > max_cars / 2) {
+        throw std::invalid_argument("RocketSimEnv: max_players_per_team can be at most " + std::to_string(max_cars / 2) + ".");
+    }
+
+    if (setters_.empty()) {
+        throw std::invalid_argument("RocketSimEnv: setter_distributions must contain at least one state setter.");
+    }
+    double setter_weight_sum = 0.0;
+    for (const auto& dist : setters_) {
+        if (dist.weight < 0.0f) {
+            throw std::invalid_argument("RocketSimEnv: state setter weights must be non-negative.");
+        }
+        setter_weight_sum += dist.weight;
+    }
+    if (setter_weight_sum <= 0.0) {
+        throw std::invalid_argument("RocketSimEnv: sum of state setter weights must be positive.");
+    }
 
     arena_ = render ? ffi::create_arena_vis(0) : ffi::create_arena(0);
     single_obs_size_ = obs_builder_.get_obs_size();
