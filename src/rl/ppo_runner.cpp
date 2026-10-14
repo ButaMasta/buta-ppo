@@ -376,6 +376,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         next_snapshot_step_ = (global_step_ / snapshot_interval + 1) * snapshot_interval;
     }
 
+    // Periodic checkpoints land on multiples of the interval, so they stay on schedule across resumes.
+    const int64_t checkpoint_interval = config_.steps_per_checkpoint;
+    if (checkpoint_interval > 0) {
+        next_checkpoint_step_ = (global_step_ / checkpoint_interval + 1) * checkpoint_interval;
+    }
+
     for (int update = 1; update <= num_updates; ++update) {
 
         if (stop_flag) {
@@ -547,9 +553,18 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             }
             std::cout << " (pool: " << opponent_pool_->size() << ")\n";
         }
+
+        if (checkpoint_interval > 0 && global_step_ >= next_checkpoint_step_) {
+            save_checkpoint(checkpoint_dir);
+            last_checkpoint_step_ = global_step_;
+            next_checkpoint_step_ = (global_step_ / checkpoint_interval + 1) * checkpoint_interval;
+        }
     }
 
-    save_checkpoint(checkpoint_dir);
+    // Skip the final save if the last update already wrote this checkpoint.
+    if (global_step_ != last_checkpoint_step_) {
+        save_checkpoint(checkpoint_dir);
+    }
 }
 
 void PPORunner::run_render(const std::atomic<bool>& stop_flag) {

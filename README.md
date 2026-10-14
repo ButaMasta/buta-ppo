@@ -56,13 +56,25 @@ buta-ppo/
 ## Prerequisites
 
 * **OS & Compiler:** Linux with a C++20 compiler (GCC or Clang).
-* **GPU:** An NVIDIA GPU with CUDA. CPU training is not supported.
-* **LibTorch:** The CUDA-enabled C++ distribution.
+* **GPU:** An NVIDIA GPU with CUDA. CPU training is not supported. Training runs in bf16, so an Ampere (RTX 30-series) or newer GPU is recommended. Older GPUs are untested.
+* **LibTorch:** The CUDA-enabled C++ distribution. The trainer relies on recent LibTorch internals (fused optimizer kernels, CUDA graphs), so older versions may not build.
+* **CUDA Toolkit:** A version compatible with your LibTorch build, needed when CMake configures LibTorch.
 * **CMake:** Version 3.20 or higher. Ninja is recommended.
 * **Rust Toolchain:** Cargo with Rust 2024 edition support (1.85 or newer).
 * **Protobuf & Abseil:** Development packages, needed by the TensorBoard logger.
 * **Collision Meshes:** Rocket League arena geometry placed in `assets/collision_meshes/`. See RocketSim's documentation for how to obtain them.
 * **Python 3:** For TensorBoard and `deploy.py`.
+
+Tested with:
+
+| Component | Version |
+|---|---|
+| GPU | RTX 5070 |
+| LibTorch | 2.14.0 (CUDA 13.2 build) |
+| CUDA Toolkit | 13.4 |
+| GCC | 16.2 |
+| CMake | 4.4 |
+| Rust | 1.99 |
 
 ## Build Instructions
 
@@ -97,7 +109,11 @@ Run the compiled binary from the project root, so the relative paths to `assets/
 
 On startup, the framework searches `checkpoints/` for the most recent checkpoint matching the configured `bot_name`. If one is found, training resumes from its step count. Otherwise, a fresh model is initialized.
 
-To stop training safely, press Ctrl+C. The current update finishes, a checkpoint is saved, and the program exits. Checkpoints are only written when a run ends or is interrupted, so a crash loses the progress made since the run started.
+A run trains for at most the number of updates passed to `runner.run` in `main.cpp` (`1'000` by default, about 50M steps with the demo config), then saves a checkpoint and exits. Run the binary again to continue from there.
+
+To stop training safely, press Ctrl+C. The current update finishes, a checkpoint is saved, and the program exits.
+
+Checkpoints are also saved every `config.steps_per_checkpoint` lifetime steps (`100'000'000` by default; `0` turns this off), so a crash only loses the progress since the last one. Every checkpoint is kept, and each one is roughly as large as the network and its optimizer state (about 50 MB for the demo network), so delete old ones you don't need.
 
 ## Configuration
 
@@ -272,7 +288,7 @@ python deploy.py
 ```
 This builds the bot binary and copies it, the C++ inference library, and the main LibTorch libraries into `bot/`.
 
-3. **Add the Remaining Files:** Copy `checkpoints/<bot_name>_<steps>/model.pt` and `assets/collision_meshes/` into `bot/`. Edit `bot/bot.toml` and `bot/loadout.toml` as you like.
+3. **Add the Remaining Files:** Copy `checkpoints/<bot_name>_<steps>/model.pt` and `assets/collision_meshes/` into `bot/`. The values marked `TEMPLATE` in `bot/bot.toml` and `bot/loadout.toml` belong to the original bot, so change them for yours. In particular `agent_id`, `name`, and `logo_file`, since the logo isn't included in the repository.
 4. **Run:** Add the bot to a match through RLBot v5, using `bot/bot.toml`.
 
 The packaged bot still loads some CUDA and LibTorch libraries from your local LibTorch installation, so it will only run on a machine with LibTorch installed at the same path.

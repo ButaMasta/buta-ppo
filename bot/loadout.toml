@@ -1,3 +1,5 @@
+# TEMPLATE: Every value here is the original bot's car loadout. Change them to customize your bot's look.
+
 [blue_loadout]
   team_color_id = 60
   custom_color_id = 0

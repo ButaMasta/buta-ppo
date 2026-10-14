@@ -37,7 +37,10 @@ def deploy():
         else:
             print(f"  -> Warning: {lib} not found in {torch_lib_dir}")
 
-    print("\nDeployment complete. You can now manually place `model.pt`, `bot.toml`, and `collision_meshes/` into the bot/ directory.")
+    print("\nDeployment complete. Remaining steps:")
+    print("  1. Copy checkpoints/<bot_name>_<steps>/model.pt into bot/.")
+    print("  2. Copy assets/collision_meshes/ into bot/.")
+    print("  3. Change the TEMPLATE values in bot/bot.toml and bot/loadout.toml for your bot.")
 
 if __name__ == "__main__":
     deploy()

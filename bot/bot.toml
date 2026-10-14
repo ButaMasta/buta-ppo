@@ -1,34 +1,33 @@
 #:schema https://rlbot.org/schemas/agent.json
+# Fields marked TEMPLATE are example values from the original bot. Change them for your own bot.
+
 [settings]
-# This must be a unqiue identifier for your bot
-# recommended format is "developer/botname"
+# TEMPLATE: A unique identifier for your bot. Recommended format is "developer/botname".
 agent_id = "PigMasta/Porkchop"
-# The name that will be displayed in game
+# TEMPLATE: The name displayed in game.
 name = "Porkchop"
-# Path to loadout config from runner
+# Path to the loadout config, relative to this file.
 loadout_file = "loadout.toml"
-# Start your bot with run.bat so it can set the path to libtorch
-# You may get errors trying to run the .exe directly
+# The command RLBot runs to start the bot. The bot binary finds its libraries in libs/ next to it.
 run_command = "./buta_ppo_bot"
-# The command RLBot will call to start your bot on linux
+# The command RLBot runs to start the bot on Linux.
 run_command_linux = "./buta_ppo_bot"
-# This is the path to your bot's logo image,
-# which will be displayed in the GUI
-# The example bot does not have a logo
+# TEMPLATE: Path to the bot's logo, displayed in the GUI. Not included in the repository, so add your own
+# image here or remove this line.
 logo_file = "icon.png"
 hivemind = false
 
-# These values are optional but useful metadata for helper programs
+# Optional metadata for helper programs.
 [details]
-# Short description of the bot
+# TEMPLATE: Short description of the bot.
 description = "A MLP PPO Rocket League Bot"
-# Fun fact about the bot
+# TEMPLATE: Fun fact about the bot.
 fun_fact = "Made with buta-ppo, the best framework"
-# Name of the bot's creator/developer
+# TEMPLATE: Name of the bot's creator.
 developer = "The RLBot community"
-# Programming language
+# Programming language.
 language = "C++ and a tiny bit of Rust"
 # ALL POSSIBLE TAGS: 1v1, teamplay, goalie, hoops, dropshot, snow-day, rumble, spike-rush, heatseeker, memebot
 # NOTE: Only add the goalie tag if your bot only plays as a goalie; this directly contrasts with the teamplay tag!
-# NOTE: Only add a tag for a special game mode if you bot properly supports it
+# NOTE: Only add a tag for a special game mode if your bot properly supports it.
 tags = []

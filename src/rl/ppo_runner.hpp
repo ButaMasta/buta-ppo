@@ -93,6 +93,9 @@ struct RunnerConfig {
     size_t target_steps_per_update = 50'000; // Good starting values to guage your hardware with your network size.
     size_t num_minibatches = 4;
 
+    // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.
+    int64_t steps_per_checkpoint = 100'000'000;
+
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
     PFSPConfig pfsp_cfg;
@@ -230,6 +233,10 @@ private:
     std::vector<std::unique_ptr<RolloutGroup>> rollout_groups_;
 
     int64_t global_step_{0};
+
+    // Periodic checkpoints. The last saved step lets the final save skip a checkpoint that was just written.
+    int64_t next_checkpoint_step_{0};
+    int64_t last_checkpoint_step_{-1};
 
     std::unique_ptr<TensorBoardLogger> logger_;
 

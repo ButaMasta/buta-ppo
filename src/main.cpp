@@ -65,6 +65,9 @@ int main() {
     config.target_steps_per_update = 50'000;
     config.num_minibatches = 1;
 
+    // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.
+    config.steps_per_checkpoint = 100'000'000;
+
     config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
     config.ac_cfg.actor_layers  = { 768, 512 };
     config.ac_cfg.critic_layers = { 1024, 768 };
@@ -83,7 +86,9 @@ int main() {
 
     try {
         PPORunner runner(config);
-        runner.run(1'000, g_stop_training, "checkpoints");
+        // Trains for at most this many updates (~50M steps with this config), then saves a checkpoint and exits.
+        // Rerunning resumes from that checkpoint.
+        runner.run(1'000,g_stop_training, "checkpoints");
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] " << e.what() << "\n";
         return 1;
