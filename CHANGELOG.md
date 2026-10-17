@@ -1,4 +1,8 @@
 ### Current Unreleased Changes
+
+
+### Releases
+#### 0.2.0
 1. Added metrics logging via a custom system. The user can implement an abstract class to create their own metrics.
     - Non-breaking. No resolutions need to be made.
 2. Added `steps_per_log` to `RunnerConfig` to set how many lifetime steps pass between TensorBoard logs. Each log aggregates every update since the previous one, and a partial window is logged when training stops. The default of `0` logs every update, as before. Console output is unchanged.

@@ -40,7 +40,7 @@ int main() {
 
     RunnerConfig config;
 
-    config.bot_name = "porkchop";
+    config.bot_name = "default";
     config.render = false;
 
     config.match_distributions = {
@@ -75,7 +75,7 @@ int main() {
     config.steps_per_checkpoint = 100'000'000;
 
     // Lifetime steps between TensorBoard logs, each aggregating the updates since the last. 0 logs every update.
-    config.steps_per_log = 150'000;
+    config.steps_per_log = 0;
 
     config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
     config.ac_cfg.actor_layers  = { 768, 512 };
@@ -90,7 +90,7 @@ int main() {
     config.ppo_cfg.epochs = 1;
 
     // PFSP: fraction of even-team envs playing past versions, and how many versions are played each update.
-    config.pfsp_cfg.envs = 0.2f;
+    config.pfsp_cfg.envs = 0.0f;
     config.pfsp_cfg.versions = 2;
 
     try {
