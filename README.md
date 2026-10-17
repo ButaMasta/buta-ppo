@@ -162,7 +162,7 @@ config.setter_distributions = {
 config.reward_entries = {
     {"VelocityToBall", create_velocity_to_ball_reward(), 0.1f},
     {"TouchBall", create_touch_ball_reward(), 1.0f},
-    {"Goal", create_goal_reward(), 10.0f}
+    {"Goal", create_goal_reward(), 10.0f, {.opp_scale = 1.0f}}  // Zero-sum, see Reward Options below.
 };
 
 // Optional metrics with their names (for logging). Metrics are computed every physics tick but don't affect training.
@@ -172,6 +172,25 @@ config.metric_entries = {
 ```
 
 Rewards are summed over the `ticks_per_step` ticks of each step, so per-tick rewards scale with `ticks_per_step`.
+
+**Reward Options:** Each entry can take an optional `RewardOptions` that mixes its values between agents. They are applied to each step's weighted values, after the reward is computed for every agent.
+
+```cpp
+{"TouchBall", create_touch_ball_reward(), 1.0f, {.self_share = 0.7f, .opp_scale = 1.0f}}
+```
+
+- `self_share` (default `1`, in `[0, 1]`): the fraction of an agent's own reward that it keeps. The rest is split evenly among its teammates. An agent on team *T* with *n* players receives `self_share · r + (1 − self_share) · (mean of its teammates' r)`. The team's total is unchanged, and the agent keeps the same fraction of its own reward in every match layout, but each teammate's share shrinks as teams get bigger. Agents without teammates keep their whole reward.
+- `opp_scale` (default `0`, `≥ 0`): subtracts the opponent team's total, split across the agent's team: `r − opp_scale · S_opp / n`. At `1`, the two teams' totals are exactly opposite (zero-sum), including with uneven teams. A team with no opponents (for example 1v0) is unaffected.
+
+| `self_share = 0.5` | Agent keeps | Each teammate gets |
+|---|---|---|
+| 1v1 | all of it | — |
+| 2v2 | half | half |
+| 3v3 | half | a quarter |
+
+The order of the two options doesn't matter. Don't set `opp_scale` on a reward that already punishes the other team (returning −1 to the team that conceded, for example), since that doubles it. `Reward_Magnitude/` in [Telemetry](#telemetry) shows when a reward is larger than expected.
+
+Invalid options, non-finite weights, and duplicate reward names stop training at startup. Settings that have no effect, such as `self_share` in 1v1-only layouts, a zero weight, or an `opp_scale` above 1, print a `[WARN]` instead.
 
 Metrics are averaged over every tick since the previous TensorBoard log, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. See [Extending the Framework](#extending-the-framework) to write your own and [Telemetry](#telemetry) for how they are logged.
 
@@ -240,6 +259,8 @@ Only goals count toward win rates. Truncated episodes are ignored.
 ## Extending the Framework
 
 **Rewards:** Subclass `reward::RewardFunction` and implement `get_reward(agent, current_state, previous_state)` and `clone()`. Optionally override `reset(initial_state)`, and `pre_tick(agents, current_state, previous_state)`, which runs once per tick before `get_reward` is called for any agent (useful for computing state shared across agents). Rewards are called once per agent per physics tick. Each env holds one instance shared by all of its agents, so store any per-agent state indexed by `agent.car_id`. Add a factory function to `src/reward/rewards.hpp`.
+
+**Team Rewards:** For rewards that only depend on the team (goals, possession, ball toward goal), subclass `reward::TeamRewardFunction` and implement `get_team_reward(team, current_state, previous_state)` instead of `get_reward`. It is called once per team per tick, and every agent on that team receives the value. Team rewards are detected automatically. `self_share` has no effect on them, since teammates already receive the same value. With `opp_scale`, the opponent team's value is subtracted (not its total over its players), so `GoalReward` returning 1 to the scoring team with `opp_scale = 1` gives +1 and −1 in every match layout.
 
 **Metrics:** Subclass `metric::MetricFunction` and implement `get_metric(agent, current_state, previous_state)` and `clone()`. Metrics are called once per agent per physics tick and return a `std::optional<double>`. Each value is added to a running sum and count, and the logged result is the sum divided by the count, so a metric returning 1 or 0 logs the fraction of ticks where its condition held. Returning `std::nullopt` leaves that tick out of both the sum and the count, which is how a metric can average only over the ticks it applies to (for example, ball speed only on ticks where the agent touched it). `get_metric` is `const`, so metrics can't keep state between ticks. Use `previous_state` for anything that compares against the last tick. Add a factory function to `src/metric/metrics.hpp`.
 
@@ -343,7 +364,10 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 
 | Group | Metrics |
 |---|---|
-| `Reward_Components/`, `Reward/` | Each reward's average per step, and the total |
+| `Reward_Components/` | Each reward's average weighted value per step, before the reward options. Shows how often the rewarded behavior happens |
+| `Reward_Magnitude/` | Each reward's average absolute value per step, after the reward options. Shows how much each reward drives training |
+| `Reward_Share/` | Each reward's fraction of the total magnitude, summing to 1. Shows which rewards dominate training. Not logged when no reward was received |
+| `Reward/` | `Mean_Step` and `Mean_Abs_Step`, the totals of `Reward_Components/` and `Reward_Magnitude/` |
 | `Episode/` | Goals, and truncations split into no-touch and time-limit, summed since the previous log |
 | `Metrics/` | Each configured metric's average over every measured tick since the previous log. A metric that skipped every tick in that time isn't logged for it |
 | `Loss/` | Policy, value, entropy |
@@ -351,6 +375,8 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
 | `Performance/` | Total and rollout steps per second |
+
+Rewards are averaged over learner agent steps, so PFSP opponents are left out. A reward that itself returns opposite values to the two teams (for example −1 to the team that conceded) averages to about 0 in `Reward_Components/` during self-play, since both teams are learners. Making it zero-sum with `opp_scale` instead keeps `Reward_Components/` meaningful, since it is logged before the options. `Reward_Magnitude/` doesn't cancel either way. The absolute value is taken per step, matching what PPO trains on, so a reward that flips sign within one step counts as their sum.
 
 Approx KL and clip fraction are measured during each minibatch's forward pass, before its update. With `epochs = 1` and `num_minibatches = 1`, they only reflect small precision differences, not how far the update moved the policy.
 

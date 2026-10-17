@@ -9,6 +9,7 @@
 #include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDAGuard.h>
 
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <iomanip>
@@ -44,6 +45,8 @@ PPORunner::PPORunner(const RunnerConfig& config)
     } else {
         throw std::runtime_error("CUDA not found. CPU is currently not supported.");
     }
+
+    validate_rewards();
 
     fs::create_directories("logs");
     const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
@@ -101,6 +104,21 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
         std::cout << "No usable optimizer state found. Starting with a fresh optimizer.\n";
     }
     return max_steps;
+}
+
+void PPORunner::validate_rewards() const {
+    // Only layouts that get envs matter.
+    size_t largest_team = 0;
+    bool has_empty_team = false;
+    for (const auto& dist : config_.match_distributions) {
+        if (dist.weight <= 0.0f) continue;
+        largest_team = std::max({largest_team, dist.blue_players, dist.orange_players});
+        has_empty_team |= dist.blue_players == 0 || dist.orange_players == 0;
+    }
+
+    for (const std::string& warning : reward::validate_reward_entries(config_.reward_entries, largest_team, has_empty_team)) {
+        std::cerr << "[WARN] " << warning << "\n";
+    }
 }
 
 void PPORunner::setup_dimensions_and_buffers() {
@@ -365,12 +383,24 @@ void PPORunner::write_log_window() {
 
     // Rewards and metrics accumulated inside the envs since the last log.
     vec_env_->update_telemetry_breakdowns();
-    double total_reward = 0.0;
-    for (const auto& [name, total_weighted_reward] : vec_env_->get_reward_breakdown()) {
-        total_reward += total_weighted_reward;
-        logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(total_weighted_reward / steps));
+    // Components are the raw values, before the reward options. Magnitudes are the absolute values the agents received.
+    double total_raw = 0.0;
+    double total_magnitude = 0.0;
+    for (const auto& [name, accumulation] : vec_env_->get_reward_breakdown()) {
+        total_raw += accumulation.raw;
+        total_magnitude += accumulation.magnitude;
+        logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(accumulation.raw / steps));
+        logger_->add_scalar("Reward_Magnitude/" + name, global_step_, static_cast<float>(accumulation.magnitude / steps));
     }
-    logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / steps));
+    logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_raw / steps));
+    logger_->add_scalar("Reward/Mean_Abs_Step", global_step_, static_cast<float>(total_magnitude / steps));
+
+    // Each reward's fraction of the total magnitude, which sums to 1. Skipped when no reward was received.
+    if (total_magnitude > 0.0) {
+        for (const auto& [name, accumulation] : vec_env_->get_reward_breakdown()) {
+            logger_->add_scalar("Reward_Share/" + name, global_step_, static_cast<float>(accumulation.magnitude / total_magnitude));
+        }
+    }
 
     // Custom Metrics.
     for (const auto& [name, accumulation] : vec_env_->get_metric_breakdown()) {

@@ -430,8 +430,8 @@ void VecEnv::update_telemetry_breakdowns() {
     }
 
     // Rewards reset.
-    for (auto& [name, val] : aggregate_reward_breakdown_) {
-        val = 0.0;
+    for (auto& [name, accumulation] : aggregate_reward_breakdown_) {
+        accumulation = reward::RewardAccumulation{};
     }
 
     // Metrics reset.
@@ -447,8 +447,10 @@ void VecEnv::update_telemetry_breakdowns() {
         const auto& env_reward_breakdown = env->get_reward_telemetry();
         const auto& env_metric_breakdown = env->get_metric_telemetry();
 
-        for (const auto& [name, val] : env_reward_breakdown) {
-            aggregate_reward_breakdown_[name] += val;
+        for (const auto& [name, accumulation] : env_reward_breakdown) {
+            auto& aggregate_ref = aggregate_reward_breakdown_[name];
+            aggregate_ref.raw += accumulation.raw;
+            aggregate_ref.magnitude += accumulation.magnitude;
         }
 
         for (const auto& [name, accumulation] : env_metric_breakdown) {

@@ -122,7 +122,7 @@ private:
     std::vector<EpisodeCounts> env_episode_counts_;
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
-    std::unordered_map<std::string, double> aggregate_reward_breakdown_;
+    std::unordered_map<std::string, reward::RewardAccumulation> aggregate_reward_breakdown_;
     std::unordered_map<std::string, metric::MetricAccumulation> aggregate_metric_breakdown_;
 
     torch::Tensor batched_obs_;
@@ -265,7 +265,7 @@ public:
      */
     [[nodiscard]] EpisodeCounts collect_episode_counts();
 
-    [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
+    [[nodiscard]] const std::unordered_map<std::string, reward::RewardAccumulation>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
     [[nodiscard]] const std::unordered_map<std::string, metric::MetricAccumulation>& get_metric_breakdown() const { return aggregate_metric_breakdown_; };
     [[nodiscard]] const std::vector<EnvGroup>& get_groups() const { return groups_; };
     // Every agent's row, which is the row count of the batched buffers and the batched actions.

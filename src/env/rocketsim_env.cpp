@@ -96,7 +96,7 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
 ResetResult RocketSimEnv::reset() {
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
-    reward_manager_.reset(arena_state_);
+    reward_manager_.reset(agents_, arena_state_);
     metric_manager_.reset(arena_state_);
     obs_builder_.reset();
     obs_builder_.team_indices_rand(agents_);
@@ -128,6 +128,7 @@ StepResult RocketSimEnv::step(const int* actions) {
     }
 
     std::fill(reward_buffer_.begin(), reward_buffer_.end(), 0.0f);
+    reward_manager_.begin_step();
     int ticks_elapsed = ticks_per_step_;
     bool episode_terminated = false;
     bool episode_truncated = false;
@@ -142,17 +143,13 @@ StepResult RocketSimEnv::step(const int* actions) {
             std::this_thread::sleep_for(std::chrono::microseconds(8333));
         }
 
-        // Calculate and accumulate rewards.
-        reward_manager_.pre_tick(agents_, arena_state_);
+        // Accumulate rewards and metrics. Rewards also update their previous state.
+        reward_manager_.accumulate_tick(agents_, arena_state_);
         for (size_t a = 0; a < agents_.size(); a++) {
             // opponent_team_ is an optional only set by pfsp envs. If it is not set then this evaluates to true.
             const bool track_telemetry = agents_[a].team != opponent_team_;
-            reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_, track_telemetry);
             metric_manager_.calculate_metrics(agents_[a], arena_state_, track_telemetry);
         }
-
-        // Update previous state.
-        reward_manager_.update_previous_state(arena_state_);
         metric_manager_.update_previous_state(arena_state_);
 
         // Reset touch counter if any car hit the ball or increment it.
@@ -185,6 +182,9 @@ StepResult RocketSimEnv::step(const int* actions) {
             break;
         }
     }
+
+    // Apply the reward options to the step's rewards. The opponent team is left out of the telemetry.
+    reward_manager_.end_step(reward_buffer_, opponent_team_);
 
     // Build the final observations.
     for (size_t i = 0; i < agents_.size(); i++) {

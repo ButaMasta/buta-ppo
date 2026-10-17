@@ -8,20 +8,17 @@
 namespace buta_ppo::reward {
 
 /**
- * @brief Rewards the bot for scoring a goal, punishes them for being scored on.
+ * @brief Rewards the team that scored a goal. Pair with `opp_scale = 1` to also punish the team that was scored on.
  */
-class GoalReward : public RewardFunction {
+class GoalReward : public TeamRewardFunction {
 public:
-    float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& /*prev_state*/) override {
+    float get_team_reward(ffi::Team team, const ffi::ArenaState& state, const ffi::ArenaState& /*prev_state*/) override {
         if (!state.events.is_ball_scored) {
             return 0.0f;
         }
-        bool blue_scored = state.ball.phys.pos[1] > 0;
-        if ((agent.team == ffi::Team::Blue && blue_scored) || (agent.team == ffi::Team::Orange && !blue_scored)) {
-            return 1.0f;
-        }
-
-        return -1.0f;
+        // The ball is past orange's goal line (positive Y) when blue scores.
+        const ffi::Team scoring_team = state.ball.phys.pos[1] > 0 ? ffi::Team::Blue : ffi::Team::Orange;
+        return team == scoring_team ? 1.0f : 0.0f;
     }
 
     [[nodiscard]] virtual std::unique_ptr<RewardFunction> clone() const override {

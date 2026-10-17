@@ -153,7 +153,7 @@ public:
         metric_manager_.update_telemetry();
     }
 
-    [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_telemetry() const { return reward_manager_.get_telemetry(); }
+    [[nodiscard]] const std::unordered_map<std::string, reward::RewardAccumulation>& get_reward_telemetry() const { return reward_manager_.get_telemetry(); }
     [[nodiscard]] const std::unordered_map<std::string, metric::MetricAccumulation>& get_metric_telemetry() const { return metric_manager_.get_telemetry(); }
     [[nodiscard]] size_t get_obs_size() const { return single_obs_size_; }
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; }

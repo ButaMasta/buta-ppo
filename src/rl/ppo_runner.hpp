@@ -265,6 +265,12 @@ private:
     int64_t next_log_step_{0};
 
     /**
+     * @brief Checks the reward entries against the match layouts. Throws on invalid entries and prints warnings
+     * for settings that likely don't do what was intended.
+     */
+    void validate_rewards() const;
+
+    /**
      * @brief Sets up the dimensions of tensors and buffers used in the training loop.
      * 
      * This method will handle initializing every factor used in training corresponding 
