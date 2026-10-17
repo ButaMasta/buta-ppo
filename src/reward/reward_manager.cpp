@@ -18,6 +18,12 @@ void RewardManager::reset(const ffi::ArenaState& initial_state) {
     }
 }
 
+void RewardManager::pre_tick(const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& current_state) {
+    for (auto& entry : rewards_) {
+        entry.function->pre_tick(agents, current_state, previous_state_);
+    }
+}
+
 float RewardManager::get_reward(const env::AgentMeta& agent, const ffi::ArenaState& current_state, bool track_telemetry) {
     float total_reward = 0.0f;
 

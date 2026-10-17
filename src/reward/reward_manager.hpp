@@ -29,6 +29,20 @@ public:
     virtual void reset(const ffi::ArenaState& /*initial_state*/) {}
 
     /**
+     * @brief Called once per sim tick before `get_reward` is called for any agent.
+     * Use this to compute state shared across agents for the current tick.
+     * 
+     * @param agents All agents in the environment.
+     * @param current_state The current tick state.
+     * @param previous_state The previous tick state.
+     */
+    virtual void pre_tick(
+        const std::vector<env::AgentMeta>& /*agents*/,
+        const ffi::ArenaState& /*current_state*/,
+        const ffi::ArenaState& /*previous_state*/
+    ) {}
+
+    /**
      * @brief Computes the reward value for a specific agent at the current sim tick.
      * 
      * @param agent The agent recieving the reward.
@@ -96,6 +110,14 @@ public:
      * @param initial_state The initial arena state to reset to.
      */
     void reset(const ffi::ArenaState& initial_state);
+
+    /**
+     * @brief Calls `pre_tick` on every reward. Called once per tick before any `get_reward` calls.
+     * 
+     * @param agents All agents in the environment.
+     * @param current_state The current arena state.
+     */
+    void pre_tick(const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& current_state);
 
     /**
      * @brief Calculates the weighted sum of all rewards for a given agent.
