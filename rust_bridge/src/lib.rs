@@ -158,11 +158,20 @@ fn ensure_pad_indices_cached(arena: &Arena) {
 /// Events and Global State.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct CCarBump {
+    pub bumped: bool,
+    pub is_demo: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct CArenaEvents {
     pub is_ball_scored: bool,
     pub car_hit_ball: [bool; 8],
     pub car_got_boost: [bool; 8],
     pub ball_hit_extra_vel: [f32; 8],
+    // Indexed [bumper][victim].
+    pub car_bumped_car: [[CCarBump; 8]; 8],
 }
 
 #[repr(C)]
@@ -449,6 +458,16 @@ pub extern "C" fn rs_arena_get_arena_state(
                 let idx: usize = pickup.car_idx as usize;
                 if idx < 8 {
                     state.events.car_got_boost[idx] = true;
+                }
+            }
+            ArenaEvent::CarHitCar(bump) => {
+                let bumper: usize = bump.bumper_car_idx;
+                let victim: usize = bump.victim_car_idx;
+                if bumper < 8 && victim < 8 {
+                    state.events.car_bumped_car[bumper][victim] = CCarBump {
+                        bumped: true,
+                        is_demo: bump.is_demo,
+                    };
                 }
             }
             _ => {}

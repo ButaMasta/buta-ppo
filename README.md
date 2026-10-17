@@ -269,6 +269,50 @@ New `.cpp` files must be added to the explicit source list in `CMakeLists.txt`.
 
 **Observations & Actions:** The obs size and action space size are read from the builders, so the network adapts to changes automatically. `src/bot_api.cpp` has to be kept in sync by hand (see [Deploying to RLBot](#deploying-to-rlbot)).
 
+### Arena State Reference
+
+Rewards, metrics, and state setters all read the game through `ffi::ArenaState` (declared in `include/buta_ppo/ffi.h`). It holds the world state after the current tick. It is never mirrored, so blue's goal is always at negative Y no matter which team an agent is on. Distances are in Unreal units (uu), velocities in uu/s, and angular velocities in rad/s. Index cars with `agent.car_id`.
+
+| Field | Description |
+| --- | --- |
+| `ball.phys` | The ball's physics state (see `PhysState` below). |
+| `cars[i].phys` | Car `i`'s physics state. |
+| `cars[i].team` | `0` for blue, `1` for orange. |
+| `cars[i].boost` | Boost amount, `0` to `100`. |
+| `cars[i].is_on_ground`, `has_jumped`, `has_double_jumped`, `has_flipped`, `has_flip_or_jump`, `is_jumping`, `is_flipping`, `is_auto_flipping`, `is_supersonic` | Car movement flags. `has_flip_or_jump` is true while the car can still jump or flip. |
+| `cars[i].air_time_since_jump`, `handbrake_val` | Seconds airborne since the last jump, and the handbrake amount. |
+| `cars[i].is_demoed`, `demo_respawn_timer` | Whether the car is demolished, and the seconds until it respawns. |
+| `boost_pads.big[6]`, `boost_pads.small[28]` | Seconds until each pad is available again. `0` means it can be picked up now. Pads are sorted by Y, then X. |
+| `num_cars`, `tick_count` | Number of cars in the arena, and the arena's tick counter. |
+
+**`PhysState`:** `pos[3]`, `vel[3]`, `ang_vel[3]`, and `rot_mat[3][3]`, where `rot_mat[0]` is the forward direction, `rot_mat[1]` is right, and `rot_mat[2]` is up.
+
+**Events (`events`):** Describe what happened during the current tick only.
+
+| Field | Description |
+| --- | --- |
+| `is_ball_scored` | A goal was scored this tick. Check which goal from the ball's Y position. |
+| `car_hit_ball[i]` | Car `i` touched the ball. |
+| `ball_hit_extra_vel[i]` | Size of the extra velocity car `i`'s touch added to the ball. |
+| `car_got_boost[i]` | Car `i` picked up a boost pad. |
+| `car_bumped_car[b][v].bumped` | Car `b` bumped car `v`. Only real bumps count (the bumper drives into the victim, inside its bump cone), not every contact between cars. A head-on collision can register in both directions. |
+| `car_bumped_car[b][v].is_demo` | The bump demolished car `v`. Only meaningful when `.bumped` is true. |
+
+For example, a reward for bumping opponents:
+
+```cpp
+float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, const ffi::ArenaState& /*prev_state*/) override {
+    float reward = 0.0f;
+    for (uint32_t v = 0; v < state.num_cars; v++) {
+        const ffi::CarBump& bump = state.events.car_bumped_car[agent.car_id][v];
+        if (bump.bumped && state.cars[v].team != state.cars[agent.car_id].team) {
+            reward += bump.is_demo ? 1.0f : 0.5f;
+        }
+    }
+    return reward;
+}
+```
+
 ## Checkpoints & the PFSP Pool
 
 ```text

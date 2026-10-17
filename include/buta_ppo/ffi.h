@@ -53,11 +53,18 @@ extern "C" {
         float small[28];
     };
 
+    struct rs_car_bump {
+        bool bumped;
+        bool is_demo;
+    };
+
     struct rs_arena_events {
         bool is_ball_scored;
         bool car_hit_ball[8];
         bool car_got_boost[8];
         float ball_hit_extra_vel[8];
+        // Indexed [bumper][victim].
+        rs_car_bump car_bumped_car[8][8];
     };
 
     struct rs_arena_state {
@@ -113,6 +120,7 @@ using BallState = rs_ball_state;
 using BallSimBallState = rs_ball_sim_ball_state;
 using CarState = rs_car_state;
 using BoostPadState = rs_boost_pad_state;
+using CarBump = rs_car_bump;
 using ArenaEvents = rs_arena_events;
 using ArenaState = rs_arena_state;
 using CarControls = rs_car_controls;

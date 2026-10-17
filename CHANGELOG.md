@@ -7,6 +7,8 @@
     - `Performance/Rollout_SPS` no longer includes time spent writing logs, so it reads slightly higher than before.
 3. Added an optional `pre_tick(agents, current_state, previous_state)` method to `RewardFunction`. It is called once per physics tick before `get_reward` is called for any agent, so rewards can compute state shared across agents for that tick.
     - Non-breaking. The default implementation does nothing, so existing rewards need no changes.
+4. Exposed RocketSim's car-to-car bump events. `ArenaState::events.car_bumped_car[bumper][victim]` has `bumped` set when a car bumps another car that tick, and `is_demo` set when that bump demolished the victim. Also added an "Arena State Reference" section to the README describing the fields available in `ArenaState`.
+    - Non-breaking. The new field is added at the end of `rs_arena_events`, and both sides of the FFI were updated together.
 
 #### 0.1.1
 1. Updated the logging with a patch via cmake to replace the dependency's invalid `int32_t` logging for the x-axis to be `int64_t`. 
