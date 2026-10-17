@@ -358,6 +358,59 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
     std::cout << "Checkpoint saved to: " << final_dir.string() << "\n";
 }
 
+void PPORunner::write_log_window() {
+    LogWindow& window = log_window_;
+    const double steps = static_cast<double>(window.steps);
+    const double updates = static_cast<double>(window.updates);
+
+    // Rewards and metrics accumulated inside the envs since the last log.
+    vec_env_->update_telemetry_breakdowns();
+    double total_reward = 0.0;
+    for (const auto& [name, total_weighted_reward] : vec_env_->get_reward_breakdown()) {
+        total_reward += total_weighted_reward;
+        logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(total_weighted_reward / steps));
+    }
+    logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / steps));
+
+    // Custom Metrics.
+    for (const auto& [name, accumulation] : vec_env_->get_metric_breakdown()) {
+        if (accumulation.count == 0) continue;
+        logger_->add_scalar("Metrics/" + name, global_step_, static_cast<float>(accumulation.value / accumulation.count));
+    }
+
+    logger_->add_scalar("Episode/Goals", global_step_, static_cast<float>(window.goals));
+    logger_->add_scalar("Episode/Truncations", global_step_,
+                        static_cast<float>(window.no_touch_truncations + window.time_limit_truncations));
+    logger_->add_scalar("Episode/Truncations_No_Touch", global_step_, static_cast<float>(window.no_touch_truncations));
+    logger_->add_scalar("Episode/Truncations_Time_Limit", global_step_, static_cast<float>(window.time_limit_truncations));
+
+    // PFSP totals over the window. Truncated episodes aren't counted.
+    if (!opponent_slots_.empty()) {
+        logger_->add_scalar("PFSP/Pool_Size", global_step_, static_cast<float>(opponent_pool_->size()));
+        logger_->add_scalar("PFSP/Games", global_step_, static_cast<float>(window.pfsp_games));
+        if (window.pfsp_games > 0) {
+            logger_->add_scalar("PFSP/Win_Rate", global_step_,
+                                static_cast<float>(window.pfsp_wins) / static_cast<float>(window.pfsp_games));
+        }
+    }
+
+    // Trainer metrics are averaged over the window's updates, which all have the same number of steps.
+    const auto mean_metric = [&](const std::string& name) {
+        return static_cast<float>(window.train_metrics.at(name) / updates);
+    };
+    logger_->add_scalar("Performance/Total_SPS", global_step_, steps / window.update_seconds);
+    logger_->add_scalar("Performance/Rollout_SPS", global_step_, steps / window.rollout_seconds);
+    logger_->add_scalar("Loss/Policy", global_step_, mean_metric("policy_loss"));
+    logger_->add_scalar("Loss/Value", global_step_, mean_metric("value_loss"));
+    logger_->add_scalar("Loss/Entropy", global_step_, mean_metric("entropy"));
+    logger_->add_scalar("Policy/Normalized_Entropy", global_step_, mean_metric("normalized_entropy"));
+    logger_->add_scalar("Policy/Approx_KL", global_step_, mean_metric("approx_kl"));
+    logger_->add_scalar("Policy/Clip_Fraction", global_step_, mean_metric("clip_fraction"));
+    logger_->add_scalar("Value/Explained_Variance", global_step_, mean_metric("explained_variance"));
+
+    window = {};
+}
+
 void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
     
     if (vec_env_->get_groups().size() < 2) {
@@ -383,6 +436,10 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         next_checkpoint_step_ = (global_step_ / checkpoint_interval + 1) * checkpoint_interval;
     }
 
+    // TensorBoard logs land on multiples of the interval like checkpoints. 0 logs every update.
+    const int64_t log_interval = config_.steps_per_log > 0 ? config_.steps_per_log : total_steps_per_update_;
+    next_log_step_ = (global_step_ / log_interval + 1) * log_interval;
+
     for (int update = 1; update <= num_updates; ++update) {
 
         if (stop_flag) {
@@ -396,7 +453,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         // This update's opponents: past versions sampled from the pool, or a copy of the current learner
         // until the PFSP start steps.
         std::vector<size_t> opponent_picks;
-        std::vector<int64_t> opponent_versions; // Kept for the log, since a snapshot added later invalidates the picks.
+        std::vector<int64_t> opponent_versions; // Kept for the console, since a snapshot added later invalidates the picks.
         if (opponent_pool_ && global_step_ >= config_.pfsp_cfg.start_steps) {
             opponent_picks = opponent_pool_->sample(opponent_slots_.size());
             for (const size_t pick : opponent_picks) {
@@ -440,32 +497,11 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         // Successful rollout, increment global steps.
         global_step_ += total_steps_per_update_;
 
-        // Update both reward and metric breakdowns.
-        vec_env_->update_telemetry_breakdowns();
-        const auto& reward_breakdown = vec_env_->get_reward_breakdown();
-
-        double total_reward = 0.0;
-        
-        for (const auto& [name, total_weighted_reward] : reward_breakdown) {
-            total_reward += total_weighted_reward;
-            const double avg_per_step = total_weighted_reward / static_cast<double>(total_steps_per_update_);
-            logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(avg_per_step));
-        }
-        logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / static_cast<double>(total_steps_per_update_)));
-
-        // Custom Metrics.
-        const auto& metric_breakdown = vec_env_->get_metric_breakdown();
-        for (const auto& [name, accumulation] : metric_breakdown) {
-            if (accumulation.count == 0) continue;
-            logger_->add_scalar("Metrics/" + name, global_step_, static_cast<float>(accumulation.value / accumulation.count));
-        }
-
+        // Episode counts are collected every update for the console, and summed into the log window.
         const env::EpisodeCounts episodes = vec_env_->collect_episode_counts();
-        logger_->add_scalar("Episode/Goals", global_step_, static_cast<float>(episodes.goals));
-        logger_->add_scalar("Episode/Truncations", global_step_,
-                            static_cast<float>(episodes.no_touch_truncations + episodes.time_limit_truncations));
-        logger_->add_scalar("Episode/Truncations_No_Touch", global_step_, static_cast<float>(episodes.no_touch_truncations));
-        logger_->add_scalar("Episode/Truncations_Time_Limit", global_step_, static_cast<float>(episodes.time_limit_truncations));
+        log_window_.goals += episodes.goals;
+        log_window_.no_touch_truncations += episodes.no_touch_truncations;
+        log_window_.time_limit_truncations += episodes.time_limit_truncations;
 
         // PFSP results against this update's opponent slots. Truncated episodes aren't counted.
         uint32_t pfsp_wins = 0;
@@ -477,22 +513,11 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             pfsp_games += games;
             if (!opponent_picks.empty()) {
                 opponent_pool_->record(opponent_picks[slot], pfsp_outcomes[slot].wins, pfsp_outcomes[slot].losses);
-                logger_->add_scalar("PFSP/Slot_" + std::to_string(slot) + "_Version", global_step_,
-                                    static_cast<float>(opponent_versions[slot]));
-            }
-            if (games > 0) {
-                logger_->add_scalar("PFSP/Slot_" + std::to_string(slot) + "_Win_Rate", global_step_,
-                                    static_cast<float>(pfsp_outcomes[slot].wins) / static_cast<float>(games));
             }
         }
-        if (!pfsp_outcomes.empty()) {
-            logger_->add_scalar("PFSP/Pool_Size", global_step_, static_cast<float>(opponent_pool_->size()));
-            logger_->add_scalar("PFSP/Games", global_step_, static_cast<float>(pfsp_games));
-            if (pfsp_games > 0) {
-                logger_->add_scalar("PFSP/Win_Rate", global_step_, static_cast<float>(pfsp_wins) / static_cast<float>(pfsp_games));
-            }
-        }
-        
+        log_window_.pfsp_wins += pfsp_wins;
+        log_window_.pfsp_games += pfsp_games;
+
         const auto rollout_end = std::chrono::high_resolution_clock::now();
 
         // GAE & Optimize. The full obs buffer holds every group's latest obs, and its first rows are the learners'.
@@ -525,15 +550,17 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         const double total_sps = total_steps_per_update_ / update_time.count();
         const double rollout_sps = total_steps_per_update_ / rollout_time.count();
 
-        logger_->add_scalar("Performance/Total_SPS", global_step_, total_sps);
-        logger_->add_scalar("Performance/Rollout_SPS", global_step_, rollout_sps);
-        logger_->add_scalar("Loss/Policy", global_step_, metrics.at("policy_loss"));
-        logger_->add_scalar("Loss/Value", global_step_, metrics.at("value_loss"));
-        logger_->add_scalar("Loss/Entropy", global_step_, metrics.at("entropy"));
-        logger_->add_scalar("Policy/Normalized_Entropy", global_step_, metrics.at("normalized_entropy"));
-        logger_->add_scalar("Policy/Approx_KL", global_step_, metrics.at("approx_kl"));
-        logger_->add_scalar("Policy/Clip_Fraction", global_step_, metrics.at("clip_fraction"));
-        logger_->add_scalar("Value/Explained_Variance", global_step_, metrics.at("explained_variance"));
+        log_window_.steps += total_steps_per_update_;
+        log_window_.updates++;
+        log_window_.update_seconds += update_time.count();
+        log_window_.rollout_seconds += rollout_time.count();
+        for (const auto& [name, value] : metrics) {
+            log_window_.train_metrics[name] += value;
+        }
+        if (global_step_ >= next_log_step_) {
+            write_log_window();
+            next_log_step_ = (global_step_ / log_interval + 1) * log_interval;
+        }
 
         std::cout << "Update: " << update 
                   << "\nLifetime Steps: " << global_step_
@@ -570,6 +597,11 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             last_checkpoint_step_ = global_step_;
             next_checkpoint_step_ = (global_step_ / checkpoint_interval + 1) * checkpoint_interval;
         }
+    }
+
+    // Log the partial window left by an interrupted or finished run.
+    if (log_window_.updates > 0) {
+        write_log_window();
     }
 
     // Skip the final save if the last update already wrote this checkpoint.

@@ -19,6 +19,7 @@
 #include <atomic>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 // Forward declarations.
@@ -97,6 +98,10 @@ struct RunnerConfig {
 
     // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.
     int64_t steps_per_checkpoint = 100'000'000;
+
+    // Lifetime steps between TensorBoard logs. Each log aggregates every update since the previous one.
+    // 0 logs every update, as does any value below the actual steps per update.
+    int64_t steps_per_log = 0;
 
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
@@ -242,6 +247,23 @@ private:
 
     std::unique_ptr<TensorBoardLogger> logger_;
 
+    // Everything since the last TensorBoard log, written as one aggregated point per log. Rewards and metrics
+    // keep accumulating inside the envs instead, until `update_telemetry_breakdowns` reads them at log time.
+    struct LogWindow {
+        int64_t steps = 0;
+        int64_t updates = 0;
+        double update_seconds = 0.0;
+        double rollout_seconds = 0.0;
+        uint64_t goals = 0;
+        uint64_t no_touch_truncations = 0;
+        uint64_t time_limit_truncations = 0;
+        uint64_t pfsp_wins = 0;
+        uint64_t pfsp_games = 0;
+        std::unordered_map<std::string, double> train_metrics; // Summed over updates.
+    };
+    LogWindow log_window_;
+    int64_t next_log_step_{0};
+
     /**
      * @brief Sets up the dimensions of tensors and buffers used in the training loop.
      * 
@@ -342,6 +364,13 @@ public:
      * @param dir The directory to save the checkpoint to.
      */
     void save_checkpoint(const std::string& dir) const;
+
+    /**
+     * @brief Writes the log window to TensorBoard as averages over its steps and updates, then clears it.
+     *
+     * Reads the envs' accumulated reward and metric telemetry, so it must not run while an env group is stepping.
+     */
+    void write_log_window();
 
     /**
      * @brief Chooses between running render or training based on the config.

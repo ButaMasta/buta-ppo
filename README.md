@@ -173,7 +173,7 @@ config.metric_entries = {
 
 Rewards are summed over the `ticks_per_step` ticks of each step, so per-tick rewards scale with `ticks_per_step`.
 
-Metrics are averaged over every tick of the update, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. See [Extending the Framework](#extending-the-framework) to write your own and [Telemetry](#telemetry) for how they are logged.
+Metrics are averaged over every tick since the previous TensorBoard log, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. See [Extending the Framework](#extending-the-framework) to write your own and [Telemetry](#telemetry) for how they are logged.
 
 ### Environments & Batch Size
 
@@ -290,15 +290,22 @@ To roll back, delete the checkpoint directories newer than the one you want. On 
 
 Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-axis.
 
+```cpp
+// Lifetime steps between TensorBoard logs, each aggregating the updates since the last. 0 logs every update.
+config.steps_per_log = 0;
+```
+
+By default, every update is logged. With a larger `steps_per_log`, each logged point covers every update since the previous one: rewards and metrics are averaged over all of its steps and ticks, episode and PFSP counts are totals, the training statistics are averaged over its updates, and steps per second covers its whole duration. Log points land on multiples of `steps_per_log`, so they stay on schedule across resumes. A value below the actual steps per update logs every update. When training stops, any updates logged since the last point are written as one final, shorter point. The console output is still printed every update.
+
 | Group | Metrics |
 |---|---|
 | `Reward_Components/`, `Reward/` | Each reward's average per step, and the total |
-| `Episode/` | Goals, and truncations split into no-touch and time-limit |
-| `Metrics/` | Each configured metric's average over every measured tick in the update. A metric that skipped every tick of an update isn't logged for it |
+| `Episode/` | Goals, and truncations split into no-touch and time-limit, summed since the previous log |
+| `Metrics/` | Each configured metric's average over every measured tick since the previous log. A metric that skipped every tick in that time isn't logged for it |
 | `Loss/` | Policy, value, entropy |
 | `Policy/` | Approx KL, clip fraction, normalized entropy |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
-| `PFSP/` | Win rate overall and per slot, the versions played, pool size, games |
+| `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
 | `Performance/` | Total and rollout steps per second |
 
 Approx KL and clip fraction are measured during each minibatch's forward pass, before its update. With `epochs = 1` and `num_minibatches = 1`, they only reflect small precision differences, not how far the update moved the policy.

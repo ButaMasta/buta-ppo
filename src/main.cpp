@@ -74,6 +74,9 @@ int main() {
     // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.
     config.steps_per_checkpoint = 100'000'000;
 
+    // Lifetime steps between TensorBoard logs, each aggregating the updates since the last. 0 logs every update.
+    config.steps_per_log = 0;
+
     config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
     config.ac_cfg.actor_layers  = { 768, 512 };
     config.ac_cfg.critic_layers = { 1024, 768 };
