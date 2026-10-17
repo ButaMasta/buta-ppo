@@ -16,14 +16,14 @@ For reference, the demo configuration in `src/main.cpp` (1v1, 253 envs, a ~6M pa
 * **PFSP:** Prioritized fictitious self-play pits a fraction of the environments against past versions of the learner, chosen by the learner's win rate against them.
 * **Observations & Actions:** Team-relative observations with X-axis mirroring, ball prediction, and shuffled car slots. A 90-action discrete lookup table with action masking based on the car's state.
 * **Rust FFI Bridge:** Physics runs in RocketSim through a lightweight C ABI exported from Rust.
-* **Telemetry & Checkpoints:** TensorBoard logging, automatic resume from the latest checkpoint, and a persistent PFSP opponent pool.
+* **Telemetry & Checkpoints:** TensorBoard logging with custom per-tick metrics, automatic resume from the latest checkpoint, and a persistent PFSP opponent pool.
 * **RLBot Deployment:** A Rust RLBot v5 bot binary that runs trained checkpoints in real matches.
 
 ## How It Works
 
 Each update runs through the following stages:
 
-1. **Rollout:** `VecEnv` steps every `RocketSimEnv` on a thread pool. Each env applies its agents' actions, ticks the arena `ticks_per_step` times while accumulating rewards, and builds the next observations and action masks. Finished episodes are reset automatically.
+1. **Rollout:** `VecEnv` steps every `RocketSimEnv` on a thread pool. Each env applies its agents' actions, ticks the arena `ticks_per_step` times while accumulating rewards and metrics, and builds the next observations and action masks. Finished episodes are reset automatically.
 2. **Inference:** Each env group's policy forward pass and action sampling run as a single CUDA graph replay that reads directly from `VecEnv`'s batched buffers.
 3. **Advantages:** `RolloutBuffer` stores every step on the GPU, then computes GAE advantages and returns. Truncated episodes are bootstrapped with the critic's estimate of the final state.
 4. **Training:** `PPOTrainer` shuffles the rollout into minibatches and replays the captured training graph for each one.
@@ -43,6 +43,7 @@ buta-ppo/
 ├── src/
 │   ├── action/              # Discrete action table and action masks
 │   ├── env/                 # Single environment and the vectorized env pool
+│   ├── metric/              # Metric functions and the metric manager
 │   ├── obs/                 # Observation builder and ball prediction
 │   ├── reward/              # Reward functions and the reward manager
 │   ├── rl/                  # Network, rollout buffer, trainer, optimizers, PFSP, and the training runner
@@ -139,7 +140,7 @@ Checkpoints are also saved every `config.steps_per_checkpoint` lifetime steps (`
 
 All configuration lives in `src/main.cpp`, in the `RunnerConfig` struct. The values there are demo values that show the available options, not tuned hyperparameters.
 
-### Matches, State Setters & Rewards
+### Matches, State Setters, Rewards & Metrics
 
 ```cpp
 // Match types, each with a weight for its share of the envs.
@@ -163,9 +164,16 @@ config.reward_entries = {
     {"TouchBall", create_touch_ball_reward(), 1.0f},
     {"Goal", create_goal_reward(), 10.0f}
 };
+
+// Optional metrics with their names (for logging). Metrics are computed every physics tick but don't affect training.
+config.metric_entries = {
+    {"InAirRatio", create_in_air_ratio_metric()}
+};
 ```
 
 Rewards are summed over the `ticks_per_step` ticks of each step, so per-tick rewards scale with `ticks_per_step`.
+
+Metrics are averaged over every tick of the update, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. See [Extending the Framework](#extending-the-framework) to write your own and [Telemetry](#telemetry) for how they are logged.
 
 ### Environments & Batch Size
 
@@ -233,6 +241,28 @@ Only goals count toward win rates. Truncated episodes are ignored.
 
 **Rewards:** Subclass `reward::RewardFunction` and implement `get_reward(agent, current_state, previous_state)` and `clone()`. Optionally override `reset(initial_state)`. Rewards are called once per agent per physics tick. Each env holds one instance shared by all of its agents, so store any per-agent state indexed by `agent.car_id`. Add a factory function to `src/reward/rewards.hpp`.
 
+**Metrics:** Subclass `metric::MetricFunction` and implement `get_metric(agent, current_state, previous_state)` and `clone()`. Metrics are called once per agent per physics tick and return a `std::optional<double>`. Each value is added to a running sum and count, and the logged result is the sum divided by the count, so a metric returning 1 or 0 logs the fraction of ticks where its condition held. Returning `std::nullopt` leaves that tick out of both the sum and the count, which is how a metric can average only over the ticks it applies to (for example, ball speed only on ticks where the agent touched it). `get_metric` is `const`, so metrics can't keep state between ticks. Use `previous_state` for anything that compares against the last tick. Add a factory function to `src/metric/metrics.hpp`.
+
+```cpp
+class InAirRatioMetric : public metric::MetricFunction {
+public:
+    std::optional<double> get_metric(
+        const env::AgentMeta& agent,
+        const ffi::ArenaState& current_state,
+        const ffi::ArenaState& /* previous_state */
+    ) const override {
+        // 1 when airborne, 0 on the ground. The logged average is the fraction of time spent in the air.
+        return current_state.cars[agent.car_id].is_on_ground ? 0.0 : 1.0;
+    }
+
+    [[nodiscard]] std::unique_ptr<metric::MetricFunction> clone() const override {
+        return std::make_unique<InAirRatioMetric>(*this);
+    }
+};
+```
+
+Only the agents being trained are measured. In PFSP envs, the past version's cars are left out. A metric that returns the same value for every agent, such as the ball's height, is still counted once per measured agent, so envs with more learner agents (for example 3v3 compared to 1v1) carry more weight in its average. Metrics are averaged per tick, so per-episode statistics (such as average episode length) aren't supported.
+
 **State Setters:** Subclass `state::StateSetter` and implement `apply(arena, current_state, agents, rng)` and `clone()`. Add a factory function to `src/state/setters.hpp`.
 
 New `.cpp` files must be added to the explicit source list in `CMakeLists.txt`.
@@ -264,6 +294,7 @@ Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-
 |---|---|
 | `Reward_Components/`, `Reward/` | Each reward's average per step, and the total |
 | `Episode/` | Goals, and truncations split into no-touch and time-limit |
+| `Metrics/` | Each configured metric's average over every measured tick in the update. A metric that skipped every tick of an update isn't logged for it |
 | `Loss/` | Policy, value, entropy |
 | `Policy/` | Approx KL, clip fraction, normalized entropy |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |

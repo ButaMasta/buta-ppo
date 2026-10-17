@@ -4,6 +4,7 @@
 #include "buta_ppo/ffi.h"
 #include "state/state_setter.hpp"
 #include "reward/reward_manager.hpp"
+#include "metric/metric_manager.hpp"
 #include "rl/pfsp.hpp"
 
 #include <cstddef>
@@ -122,6 +123,7 @@ private:
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
     std::unordered_map<std::string, double> aggregate_reward_breakdown_;
+    std::unordered_map<std::string, metric::MetricAccumulation> aggregate_metric_breakdown_;
 
     torch::Tensor batched_obs_;
     torch::Tensor batched_action_masks_;
@@ -195,6 +197,7 @@ public:
         const std::vector<rl::MatchDistribution>& match_distributions,
         const std::vector<state::StateSetterDistribution>& setter_distributions,
         const std::vector<reward::RewardEntry>& reward_entries,
+        const std::vector<metric::MetricEntry>& metric_entries,
         size_t num_threads, 
         int ticks_per_step = 8, 
         size_t max_players_per_team = 4, 
@@ -240,9 +243,11 @@ public:
     [[nodiscard]] BatchedStepResult wait();
 
     /**
-     * @brief Update the aggregated rewards for telemetry logging.
+     * @brief Update the aggregated rewards and metrics for telemetry logging.
+     * 
+     * Clears the per env accumulators and throws an error if called when a group is stepping.
      */
-    void update_reward_breakdown();
+    void update_telemetry_breakdowns();
 
     /**
      * @brief Sums the PFSP episode results per opponent slot since the last call, then clears them.
@@ -261,6 +266,7 @@ public:
     [[nodiscard]] EpisodeCounts collect_episode_counts();
 
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_breakdown() const { return aggregate_reward_breakdown_; };
+    [[nodiscard]] const std::unordered_map<std::string, metric::MetricAccumulation>& get_metric_breakdown() const { return aggregate_metric_breakdown_; };
     [[nodiscard]] const std::vector<EnvGroup>& get_groups() const { return groups_; };
     // Every agent's row, which is the row count of the batched buffers and the batched actions.
     [[nodiscard]] size_t get_total_agents() const { return total_agents_; };

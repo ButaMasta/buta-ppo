@@ -61,6 +61,8 @@ if(BUILD_RUST_BRIDGE)
         src/env/rocketsim_env.cpp
         src/env/vec_env.cpp
         src/obs/default_obs.cpp
+        src/metric/metric_manager.cpp
+        src/metric/in_air_ratio.cpp
         src/reward/reward_manager.cpp
         src/reward/event_goal.cpp
         src/reward/touch_ball.cpp

@@ -116,6 +116,7 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.match_distributions,
         config_.setter_distributions,
         config_.reward_entries,
+        config_.metric_entries,
         config_.num_threads, 
         config_.ticks_per_step, 
         config_.max_players_per_team,
@@ -439,7 +440,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         // Successful rollout, increment global steps.
         global_step_ += total_steps_per_update_;
 
-        vec_env_->update_reward_breakdown();
+        // Update both reward and metric breakdowns.
+        vec_env_->update_telemetry_breakdowns();
         const auto& reward_breakdown = vec_env_->get_reward_breakdown();
 
         double total_reward = 0.0;
@@ -450,6 +452,13 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(avg_per_step));
         }
         logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_reward / static_cast<double>(total_steps_per_update_)));
+
+        // Custom Metrics.
+        const auto& metric_breakdown = vec_env_->get_metric_breakdown();
+        for (const auto& [name, accumulation] : metric_breakdown) {
+            if (accumulation.count == 0) continue;
+            logger_->add_scalar("Metrics/" + name, global_step_, static_cast<float>(accumulation.value / accumulation.count));
+        }
 
         const env::EpisodeCounts episodes = vec_env_->collect_episode_counts();
         logger_->add_scalar("Episode/Goals", global_step_, static_cast<float>(episodes.goals));

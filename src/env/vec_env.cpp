@@ -20,6 +20,7 @@ VecEnv::VecEnv(
     const std::vector<rl::MatchDistribution>& match_distributions, 
     const std::vector<state::StateSetterDistribution>& setter_distributions, 
     const std::vector<reward::RewardEntry>& reward_entries,
+    const std::vector<metric::MetricEntry>& metric_entries,
     size_t num_threads, 
     int ticks_per_step, 
     size_t max_players_per_team, 
@@ -78,6 +79,7 @@ VecEnv::VecEnv(
                 layout, 
                 setter_distributions,
                 reward_entries,
+                metric_entries,
                 ticks_per_step, 
                 max_players_per_team, 
                 std::random_device{}(), 
@@ -422,17 +424,37 @@ EpisodeCounts VecEnv::collect_episode_counts() {
     return total;
 }
 
-void VecEnv::update_reward_breakdown() {
+void VecEnv::update_telemetry_breakdowns() {
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::update_telemetry_breakdowns called while an env group is still stepping.");
+    }
+
+    // Rewards reset.
     for (auto& [name, val] : aggregate_reward_breakdown_) {
         val = 0.0;
     }
 
+    // Metrics reset.
+    for (auto& [name, accumulation] : aggregate_metric_breakdown_) {
+        accumulation.value = 0.0;
+        accumulation.count = 0;
+    }
+
+    // Update for both in one pass.
     for (const auto& env : envs_) {
         env->update_reward_telemetry();
-        const auto& env_breakdown = env->get_reward_telemetry();
+        env->update_metric_telemetry();
+        const auto& env_reward_breakdown = env->get_reward_telemetry();
+        const auto& env_metric_breakdown = env->get_metric_telemetry();
 
-        for (const auto& [name, val] : env_breakdown) {
+        for (const auto& [name, val] : env_reward_breakdown) {
             aggregate_reward_breakdown_[name] += val;
+        }
+
+        for (const auto& [name, accumulation] : env_metric_breakdown) {
+            auto& aggregate_ref = aggregate_metric_breakdown_[name];
+            aggregate_ref.value += accumulation.value;
+            aggregate_ref.count += accumulation.count;
         }
     }
 }

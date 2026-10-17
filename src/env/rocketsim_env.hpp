@@ -6,6 +6,7 @@
 #include "reward/reward_manager.hpp"
 #include "action/default_action.hpp"
 #include "state/state_setter.hpp"
+#include "metric/metric_manager.hpp"
 
 #include <optional>
 #include <unordered_map>
@@ -90,6 +91,7 @@ private:
     obs::DefaultObs obs_builder_;
     reward::RewardManager reward_manager_;
     action::DefaultAction action_parser_;
+    metric::MetricManager metric_manager_;
 
     bool render_;
 
@@ -106,6 +108,7 @@ public:
         const std::vector<ffi::Team>& match_layout,
         const std::vector<state::StateSetterDistribution>& setters,
         const std::vector<reward::RewardEntry>& rewards,
+        const std::vector<metric::MetricEntry>& metrics,
         int ticks_per_step = 8, 
         size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}(),
@@ -143,7 +146,15 @@ public:
         reward_manager_.update_telemetry();
     }
 
+    /**
+     * @brief Update the internal metric manager's telemetry.
+     */
+    void update_metric_telemetry() {
+        metric_manager_.update_telemetry();
+    }
+
     [[nodiscard]] const std::unordered_map<std::string, double>& get_reward_telemetry() const { return reward_manager_.get_telemetry(); }
+    [[nodiscard]] const std::unordered_map<std::string, metric::MetricAccumulation>& get_metric_telemetry() const { return metric_manager_.get_telemetry(); }
     [[nodiscard]] size_t get_obs_size() const { return single_obs_size_; }
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; }
 };

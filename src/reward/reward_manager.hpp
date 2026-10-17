@@ -28,7 +28,6 @@ public:
      */
     virtual void reset(const ffi::ArenaState& /*initial_state*/) {}
 
-    // Called every tick. Receives the current state and the previous state.
     /**
      * @brief Computes the reward value for a specific agent at the current sim tick.
      * 
@@ -92,7 +91,7 @@ public:
     void set_rewards(const std::vector<RewardEntry>& rewards);
 
     /**
-     * @brief Resets all reward trackers with a new state at the end of an episode.
+     * @brief Resets all reward trackers with a new state at the start of a new episode.
      * 
      * @param initial_state The initial arena state to reset to.
      */

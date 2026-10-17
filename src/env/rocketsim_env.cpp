@@ -17,6 +17,7 @@ RocketSimEnv::RocketSimEnv(
     const std::vector<ffi::Team>& match_layout, 
     const std::vector<state::StateSetterDistribution>& setters, 
     const std::vector<reward::RewardEntry>& rewards,
+    const std::vector<metric::MetricEntry>& metrics,
     int ticks_per_step, size_t max_players_per_team, 
     uint32_t seed, 
     bool render,
@@ -75,6 +76,8 @@ RocketSimEnv::RocketSimEnv(
 
     // Setup Rewards.
     reward_manager_.set_rewards(rewards);
+    // Setup Metrics.
+    metric_manager_.set_metrics(metrics);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {
@@ -94,6 +97,7 @@ ResetResult RocketSimEnv::reset() {
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     reward_manager_.reset(arena_state_);
+    metric_manager_.reset(arena_state_);
     obs_builder_.reset();
     obs_builder_.team_indices_rand(agents_);
 
@@ -143,10 +147,12 @@ StepResult RocketSimEnv::step(const int* actions) {
             // opponent_team_ is an optional only set by pfsp envs. If it is not set then this evaluates to true.
             const bool track_telemetry = agents_[a].team != opponent_team_;
             reward_buffer_[a] += reward_manager_.get_reward(agents_[a], arena_state_, track_telemetry);
+            metric_manager_.calculate_metrics(agents_[a], arena_state_, track_telemetry);
         }
 
         // Update previous state.
         reward_manager_.update_previous_state(arena_state_);
+        metric_manager_.update_previous_state(arena_state_);
 
         // Reset touch counter if any car hit the ball or increment it.
         if (std::any_of(arena_state_.events.car_hit_ball, arena_state_.events.car_hit_ball + 8, [](bool v) { return v; })) {

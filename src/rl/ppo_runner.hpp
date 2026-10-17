@@ -7,6 +7,7 @@
 #include "pfsp.hpp"
 #include "state/state_setter.hpp"
 #include "reward/reward_manager.hpp"
+#include "metric/metric_manager.hpp"
 
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -84,6 +85,7 @@ struct RunnerConfig {
 
     std::vector<state::StateSetterDistribution> setter_distributions;
     std::vector<reward::RewardEntry> reward_entries;
+    std::vector<metric::MetricEntry> metric_entries = {};
 
     size_t num_envs_per_thread = 20;
     size_t num_threads = 12;

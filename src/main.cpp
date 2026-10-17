@@ -2,6 +2,7 @@
 #include "rl/ppo_runner.hpp"
 #include "state/setters.hpp"
 #include "reward/rewards.hpp"
+#include "metric/metrics.hpp"
 
 #include <iostream>
 #include <csignal>
@@ -14,6 +15,7 @@ using namespace buta_ppo::rl;
 using namespace buta_ppo::env;
 using namespace buta_ppo::state;
 using namespace buta_ppo::reward;
+using namespace buta_ppo::metric;
 
 std::atomic<bool> g_stop_training{false};
 
@@ -56,6 +58,10 @@ int main() {
         {"VelocityToBall", create_velocity_to_ball_reward(), 0.1f},
         {"TouchBall", create_touch_ball_reward(), 1.0f},
         {"Goal", create_goal_reward(), 10.0f}
+    };
+
+    config.metric_entries = {
+        {"InAirRatio", create_in_air_ratio_metric()}
     };
 
     config.num_envs_per_thread = 23;
