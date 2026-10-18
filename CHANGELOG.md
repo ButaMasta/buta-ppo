@@ -1,6 +1,8 @@
 ### Current Unreleased Changes
 1. LayerNorm during autocast now correctly interprets features in bf16 since internally on the version of libtorch compiled with the project this is computed in fp32 for the accumulations so there is no noticeable precision loss, just faster compute times skipping the cast prior.
     - Non-breaking. No changes here impact the user.
+2. Truncated value calculation with rewards is now deferred to happen once per rollout versus the prior setup which was once per step.
+    - Non-breaking. No changes here impact the user.
 
 ### Releases
 #### 0.2.0

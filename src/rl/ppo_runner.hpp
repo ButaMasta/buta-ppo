@@ -175,6 +175,7 @@ private:
     size_t learner_agents_{0}; // Agents acting with the learning policy, rows [0, learner agents). Only they are trained on.
     size_t buffer_size_{0};
     int64_t total_steps_per_update_{0};
+    size_t obs_size_{0};
 
     torch::Tensor actions_cpu_;
     torch::Tensor step_obs_gpu_;
@@ -182,8 +183,11 @@ private:
     torch::Tensor step_rewards_gpu_;
     torch::Tensor step_term_gpu_;
     torch::Tensor step_trunc_gpu_;
-    torch::Tensor step_terminal_obs_gpu_;
     torch::Tensor step_dones_gpu_;
+
+    // Staging buffers for deferred truncation critic forward pass.
+    std::vector<int64_t> deferred_idx_;
+    std::vector<float> deferred_obs_;
 
     // PFSP opponent slots: fixed modules whose weights are overwritten in place every update, so the inference
     // graphs that read them stay valid. Opponent obs and masks are staged on the GPU in their own buffers,
@@ -217,7 +221,6 @@ private:
         torch::Tensor rewards_gpu;
         torch::Tensor term_gpu;
         torch::Tensor trunc_gpu;
-        torch::Tensor terminal_obs_gpu;
         torch::Tensor dones_gpu;
 
         // The group's opponent rows for one opponent slot, as views like the learner rows above.

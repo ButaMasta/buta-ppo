@@ -144,7 +144,7 @@ void PPORunner::setup_dimensions_and_buffers() {
 
     total_agents_ = vec_env_->get_total_agents();
     learner_agents_ = vec_env_->get_learner_agents();
-    const size_t obs_size = vec_env_->get_single_obs_size();
+    obs_size_ = vec_env_->get_single_obs_size();
     const size_t action_space_size = vec_env_->get_action_space_size();
 
     if (config_.render) {
@@ -156,10 +156,15 @@ void PPORunner::setup_dimensions_and_buffers() {
         buffer_size_++;
     }
 
+    // Initialize staging buffers for deferred truncation critic forward pass.
+    // Reserve about 2× the rows a typical update stages; vectors keep capacity after clear(), so a larger update grows them once.
+    deferred_idx_.reserve(2 * learner_agents_);
+    deferred_obs_.reserve(2 * learner_agents_ * obs_size_);
+
     total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * learner_agents_);
     config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
 
-    config_.ac_cfg.obs_size = static_cast<int64_t>(obs_size);
+    config_.ac_cfg.obs_size = static_cast<int64_t>(obs_size_);
     config_.ac_cfg.action_size = static_cast<int64_t>(action_space_size);
     
     actor_critic_ = ActorCritic(config_.ac_cfg);
@@ -182,7 +187,7 @@ void PPORunner::setup_dimensions_and_buffers() {
     }
     
     buffer_ = std::make_unique<RolloutBuffer>(
-        buffer_size_, learner_agents_, obs_size, action_space_size, device_
+        buffer_size_, learner_agents_, obs_size_, action_space_size, device_
     );
 
     // Actions cover every row, since VecEnv reads each agent's action from its row.
@@ -193,16 +198,15 @@ void PPORunner::setup_dimensions_and_buffers() {
     actions_cpu_ = torch::empty({t_agents}, cpu_int_opts);
 
     const auto float_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
-    step_obs_gpu_ = torch::empty({l_agents, static_cast<int64_t>(obs_size)}, float_opts);
+    step_obs_gpu_ = torch::empty({l_agents, static_cast<int64_t>(obs_size_)}, float_opts);
     step_masks_gpu_ = torch::empty({l_agents, static_cast<int64_t>(action_space_size)}, float_opts);
     step_rewards_gpu_ = torch::empty({l_agents}, float_opts);
     step_term_gpu_ = torch::empty({l_agents}, float_opts);
     step_trunc_gpu_ = torch::empty({l_agents}, float_opts);
-    step_terminal_obs_gpu_ = torch::empty({l_agents, static_cast<int64_t>(obs_size)}, float_opts);
     step_dones_gpu_ = torch::empty({l_agents}, float_opts);
 
     const int64_t o_agents = t_agents - l_agents;
-    opp_obs_gpu_ = torch::empty({o_agents, static_cast<int64_t>(obs_size)}, float_opts);
+    opp_obs_gpu_ = torch::empty({o_agents, static_cast<int64_t>(obs_size_)}, float_opts);
     opp_masks_gpu_ = torch::empty({o_agents, static_cast<int64_t>(action_space_size)}, float_opts);
 }
 
@@ -223,7 +227,6 @@ void PPORunner::setup_rollout_groups(const torch::Tensor& obs, const torch::Tens
         group->rewards_gpu = step_rewards_gpu_.narrow(0, begin, count);
         group->term_gpu = step_term_gpu_.narrow(0, begin, count);
         group->trunc_gpu = step_trunc_gpu_.narrow(0, begin, count);
-        group->terminal_obs_gpu = step_terminal_obs_gpu_.narrow(0, begin, count);
         group->dones_gpu = step_dones_gpu_.narrow(0, begin, count);
 
         for (const env::RowRange& rows : env_group.opponent_slots) {
@@ -332,19 +335,16 @@ void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::B
     group.term_gpu.copy_(step_res.terminated, true);
     group.trunc_gpu.copy_(step_res.truncated, true);
 
-    // Bootstrap any truncated states.
-    if (step_res.truncated.any().item<bool>()) {
-        group.terminal_obs_gpu.copy_(step_res.terminal_observations, true);
+    // Store truncated states for deferred bootstrapping.
+    const float* truncated = step_res.truncated.data_ptr<float>();
+    const float* terminal_obs = step_res.terminal_observations.data_ptr<float>();
+    const int64_t obs_size = step_res.terminal_observations.size(1);
 
-        torch::Tensor bootstrap_values;
-        {
-            torch::NoGradGuard no_grad;
-            auto values = actor_critic_->forward_critic(group.terminal_obs_gpu);
-            bootstrap_values = values.squeeze(-1);
-        }
-
-        // This is rewards += bootstrap_values * trunc * config_.ppo_cfg.gae_gamma.
-        group.rewards_gpu.add_(bootstrap_values * group.trunc_gpu, config_.ppo_cfg.gae_gamma);
+    for (int64_t i = 0; i < group.learner_count; i++) {
+        if (truncated[i] == 0.0f) continue;
+        deferred_idx_.push_back(static_cast<int64_t>(step) * static_cast<int64_t>(learner_agents_) + group.learner_begin + i);
+        const float* row = terminal_obs + i * obs_size;
+        deferred_obs_.insert(deferred_obs_.end(), row, row + obs_size);
     }
 
     torch::max_out(group.dones_gpu, group.term_gpu, group.trunc_gpu);
@@ -548,6 +548,22 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         log_window_.pfsp_wins += pfsp_wins;
         log_window_.pfsp_games += pfsp_games;
 
+        // Deferred truncations forward pass for values.
+        const int64_t n = static_cast<int64_t>(deferred_idx_.size());
+        if (n > 0) {
+            torch::Tensor deferred_idx_gpu = torch::from_blob(deferred_idx_.data(), n, torch::kInt64).to(device_);
+            torch::Tensor deferred_obs_gpu = torch::from_blob(deferred_obs_.data(), {n, static_cast<int64_t>(obs_size_)}, torch::kFloat32).to(device_);
+            torch::Tensor truncated_values;
+            {
+                torch::NoGradGuard no_grad;
+                truncated_values = actor_critic_->forward_critic(deferred_obs_gpu).squeeze(-1);
+            }
+            
+            buffer_->rewards_.view({-1}).index_add_(0, deferred_idx_gpu, truncated_values * config_.ppo_cfg.gae_gamma);
+        }
+        deferred_idx_.clear();
+        deferred_obs_.clear();
+        
         const auto rollout_end = std::chrono::high_resolution_clock::now();
 
         // GAE & Optimize. The full obs buffer holds every group's latest obs, and its first rows are the learners'.
@@ -555,8 +571,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         torch::Tensor next_values;
         {
             torch::NoGradGuard no_grad;
-            auto values = actor_critic_->forward_critic(step_obs_gpu_);
-            next_values = values.squeeze(-1);
+            next_values = actor_critic_->forward_critic(step_obs_gpu_).squeeze(-1);
         }
 
         const auto gae_start = std::chrono::high_resolution_clock::now();
