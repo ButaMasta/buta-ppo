@@ -1,6 +1,8 @@
 // buta-ppo/src/rl/actor_critic.cpp
 #include "actor_critic.hpp"
 
+#include <ATen/autocast_mode.h>
+
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -26,6 +28,49 @@ torch::Tensor sample_masked(const torch::Tensor& masked_logits) {
     torch::Tensor probs = torch::softmax(masked_logits, -1);
     torch::Tensor noise = torch::empty_like(probs).exponential_().clamp_min_(std::numeric_limits<float>::min());
     return (probs / noise).argmax(-1);
+}
+
+/**
+ * @brief Turns CUDA autocast off for its scope, then back on.
+ */
+struct AutocastOffGuard {
+    AutocastOffGuard() {
+        at::autocast::set_autocast_enabled(torch::kCUDA, false);
+    }
+
+    ~AutocastOffGuard() {
+        at::autocast::set_autocast_enabled(torch::kCUDA, true);
+    }
+};
+
+
+/**
+ * @brief Runs a block's layers in order, like seq->forward(x), but it ensures that when autocast is on and x is bf16 to run layernorm in bf16 as well.
+ *
+ * Autocast runs LayerNorm in fp32, which casts every activation to fp32 and back. 
+ * The CUDA kernel accumulates in fp32 even for bf16 input (`acc_type<BFloat16> = float`, see `aten/src/ATen/native/cuda/layer_norm_kernel.cu` in v2.14),
+ * so this runs it on bf16 directly.
+ * 
+ * @param seq The block to run.
+ * @param x The tensor to pass through the block.
+ * @return The result of the pass, what this block outputs.
+ */
+torch::Tensor run_block(torch::nn::Sequential& seq, torch::Tensor x) {
+    const bool autocast_enabled = at::autocast::is_autocast_enabled(torch::kCUDA);
+    for (auto& layer : *seq) {
+        auto ln = std::dynamic_pointer_cast<torch::nn::LayerNormImpl>(layer.ptr());
+        if (ln && autocast_enabled && x.scalar_type() == torch::kBFloat16) {
+            AutocastOffGuard temp_disable_autocast_guard;
+            x = torch::layer_norm(x, 
+                                  ln->options.normalized_shape(), 
+                                  ln->weight.to(torch::kBFloat16), 
+                                  ln->bias.to(torch::kBFloat16), 
+                                  ln->options.eps());
+        } else {
+            x = layer.forward(x);
+        }
+    }
+    return x;
 }
 
 } // namespace
@@ -125,17 +170,17 @@ std::vector<ParamInfo> ActorCriticImpl::parameter_layout() const {
 std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor obs) {
     torch::Tensor shared_features = obs;
     if (shared_mlp_) {
-        shared_features = shared_mlp_->forward(shared_features);
+        shared_features = run_block(shared_mlp_, shared_features);
     }
 
     torch::Tensor actor_features = shared_features;
     if (actor_mlp_) {
-        actor_features = actor_mlp_->forward(actor_features);
+        actor_features = run_block(actor_mlp_, actor_features);
     }
 
     torch::Tensor critic_features = shared_features;
     if (critic_mlp_) {
-        critic_features = critic_mlp_->forward(critic_features);
+        critic_features = run_block(critic_mlp_, critic_features);
     }
 
     torch::Tensor logits = actor_head_->forward(actor_features);
@@ -147,10 +192,10 @@ std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor 
 torch::Tensor ActorCriticImpl::forward_actor(torch::Tensor obs) {
     torch::Tensor shared_features = obs;
     if (shared_mlp_) {
-        shared_features = shared_mlp_->forward(shared_features);
+        shared_features = run_block(shared_mlp_, shared_features);
     }
     if (actor_mlp_) {
-        shared_features = actor_mlp_->forward(shared_features);
+        shared_features = run_block(actor_mlp_, shared_features);
     }
     return actor_head_->forward(shared_features);
 }
@@ -158,10 +203,10 @@ torch::Tensor ActorCriticImpl::forward_actor(torch::Tensor obs) {
 torch::Tensor ActorCriticImpl::forward_critic(torch::Tensor obs) {
     torch::Tensor shared_features = obs;
     if (shared_mlp_) {
-        shared_features = shared_mlp_->forward(shared_features);
+        shared_features = run_block(shared_mlp_, shared_features);
     }
     if (critic_mlp_) {
-        shared_features = critic_mlp_->forward(shared_features);
+        shared_features = run_block(critic_mlp_, shared_features);
     }
     return critic_head_->forward(shared_features);
 }
