@@ -68,6 +68,12 @@ int main() {
     config.num_threads = 11;
     config.ticks_per_step = 8;
 
+    // Optional CPU pinning by logical CPU id (see `lscpu -e`). Empty leaves threads unpinned. Only worth trying when the
+    // console's Phys Wait is low (about 10%), e.g. on a 6 P-core + 8 E-core CPU: the main thread alone on P-core 0
+    // (CPUs 0-1), and 18 workers on everything else. Around 25% and up, physics is the limit and pinning can hurt.
+    // config.main_thread_cpus = {0};
+    // config.worker_cpus = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+
     config.target_steps_per_update = 50'000;
     config.num_minibatches = 1;
 

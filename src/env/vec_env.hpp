@@ -202,7 +202,8 @@ public:
         int ticks_per_step = 8, 
         size_t max_players_per_team = 4, 
         bool render = false,
-        const rl::PFSPConfig& pfsp_cfg = {}
+        const rl::PFSPConfig& pfsp_cfg = {},
+        const std::vector<int>& worker_cpus = {}
     );
 
     ~VecEnv();

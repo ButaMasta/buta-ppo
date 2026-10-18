@@ -4,10 +4,12 @@
 #include "rocketsim_env.hpp"
 #include "vec_env.hpp"
 #include "rl/ppo_runner.hpp"
+#include "util/thread_affinity.hpp"
 
 #include <cstddef>
 #include <cmath>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -25,7 +27,8 @@ VecEnv::VecEnv(
     int ticks_per_step, 
     size_t max_players_per_team, 
     bool render,
-    const rl::PFSPConfig& pfsp_cfg
+    const rl::PFSPConfig& pfsp_cfg,
+    const std::vector<int>& worker_cpus
 ) {
     num_envs_ = num_envs_per_thread * num_threads;
 
@@ -181,9 +184,12 @@ VecEnv::VecEnv(
         }
     }
 
-    // Create thread pool.
+    // Create thread pool. Workers given CPUs all share them, so the OS still balances the workers across them.
     for (size_t i = 0; i < num_threads; i++) {
         workers_.emplace_back(&VecEnv::worker_loop, this, i);
+        if (!worker_cpus.empty() && !util::pin_thread(workers_.back().native_handle(), worker_cpus)) {
+            std::cerr << "[WARN] Could not pin worker thread " << i << " to worker_cpus. It runs unpinned.\n";
+        }
     }
 }
 

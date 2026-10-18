@@ -90,6 +90,14 @@ struct RunnerConfig {
 
     size_t num_envs_per_thread = 20;
     size_t num_threads = 12;
+
+    // Optional CPU pinning, by logical CPU id (see `lscpu -e`). Empty leaves those threads unpinned.
+    // Pinning helps only when the main thread limits the rollout, shown by a low `Performance/Rollout_Physics_Wait`
+    // (about 0.1), e.g. on a hybrid CPU: the main thread gets a P-core to itself and the workers get every other CPU.
+    // When physics is the limit (about 0.25 and up), taking CPUs away from the workers slows training down.
+    std::vector<int> main_thread_cpus = {}; // The thread running inference and the step bookkeeping.
+    std::vector<int> worker_cpus = {};      // The env worker threads, which share these CPUs.
+
     size_t max_players_per_team = 3;
     int ticks_per_step = 8;
 
@@ -257,6 +265,7 @@ private:
         int64_t updates = 0;
         double update_seconds = 0.0;
         double rollout_seconds = 0.0;
+        double physics_wait_seconds = 0.0; // Part of the rollout the main thread spent waiting for the env workers.
         uint64_t goals = 0;
         uint64_t no_touch_truncations = 0;
         uint64_t time_limit_truncations = 0;
@@ -272,6 +281,12 @@ private:
      * for settings that likely don't do what was intended.
      */
     void validate_rewards() const;
+
+    /**
+     * @brief Checks the CPU pinning config. Throws on CPUs this process can't run on and warns when the main
+     * thread's CPUs are shared with the workers.
+     */
+    void validate_cpu_pinning() const;
 
     /**
      * @brief Sets up the dimensions of tensors and buffers used in the training loop.

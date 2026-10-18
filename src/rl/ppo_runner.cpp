@@ -4,6 +4,7 @@
 #include "opponent_pool.hpp"
 #include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
+#include "util/thread_affinity.hpp"
 
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
@@ -47,6 +48,7 @@ PPORunner::PPORunner(const RunnerConfig& config)
     }
 
     validate_rewards();
+    validate_cpu_pinning();
 
     fs::create_directories("logs");
     const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
@@ -121,6 +123,20 @@ void PPORunner::validate_rewards() const {
     }
 }
 
+void PPORunner::validate_cpu_pinning() const {
+    // Runs before any thread is pinned, so the allowed CPUs are the whole process's, e.g. as limited by `taskset`.
+    util::validate_cpus(config_.main_thread_cpus, "main_thread_cpus");
+    util::validate_cpus(config_.worker_cpus, "worker_cpus");
+
+    for (const int cpu : config_.main_thread_cpus) {
+        if (std::find(config_.worker_cpus.begin(), config_.worker_cpus.end(), cpu) != config_.worker_cpus.end()) {
+            std::cerr << "[WARN] main_thread_cpus and worker_cpus share CPU " << cpu
+                      << ", so the env workers can take turns with the main thread on it.\n";
+            break;
+        }
+    }
+}
+
 void PPORunner::setup_dimensions_and_buffers() {
 
     if (config_.render) {
@@ -139,7 +155,8 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.ticks_per_step, 
         config_.max_players_per_team,
         config_.render,
-        config_.pfsp_cfg
+        config_.pfsp_cfg,
+        config_.worker_cpus
     );
 
     total_agents_ = vec_env_->get_total_agents();
@@ -430,6 +447,7 @@ void PPORunner::write_log_window() {
     };
     logger_->add_scalar("Performance/Total_SPS", global_step_, steps / window.update_seconds);
     logger_->add_scalar("Performance/Rollout_SPS", global_step_, steps / window.rollout_seconds);
+    logger_->add_scalar("Performance/Rollout_Physics_Wait", global_step_, window.physics_wait_seconds / window.rollout_seconds);
     logger_->add_scalar("Loss/Policy", global_step_, mean_metric("policy_loss"));
     logger_->add_scalar("Loss/Value", global_step_, mean_metric("value_loss"));
     logger_->add_scalar("Loss/Entropy", global_step_, mean_metric("entropy"));
@@ -445,6 +463,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     
     if (vec_env_->get_groups().size() < 2) {
         throw std::invalid_argument("Training needs at least 2 envs, since the rollout is pipelined over two env groups.");
+    }
+
+    // The main thread runs inference and the step bookkeeping. Pinned only here, after the env workers and CUDA have
+    // started their threads, since threads it starts from now on inherit its CPUs.
+    if (!config_.main_thread_cpus.empty() && !util::pin_thread(pthread_self(), config_.main_thread_cpus)) {
+        std::cerr << "[WARN] Could not pin the main thread to main_thread_cpus. It runs unpinned.\n";
     }
 
     // Holds VecEnv's full batched buffers, which always contain every agent's latest obs and masks.
@@ -506,6 +530,16 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         int* const actions_ptr = actions_cpu_.data_ptr<int>();
         const size_t num_steps = buffer_size_;
 
+        // Time the main thread spends blocked on the env workers. A large share of the rollout means physics is the
+        // limit, and a share near 0 means the main thread's own work is.
+        double physics_wait_seconds = 0.0;
+        const auto wait_for_physics = [&] {
+            const auto wait_start = std::chrono::high_resolution_clock::now();
+            env::BatchedStepResult res = vec_env_->wait();
+            physics_wait_seconds += std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - wait_start).count();
+            return res;
+        };
+
         infer_group(group_a, group_a.obs_src, group_a.masks_src);
         vec_env_->step_async(0, actions_ptr);
         infer_group(group_b, group_b.obs_src, group_b.masks_src);
@@ -513,12 +547,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         for (size_t t = 0; t < num_steps; ++t) {
             const bool has_next = t + 1 < num_steps;
 
-            const auto res_a = vec_env_->wait();
+            const auto res_a = wait_for_physics();
             vec_env_->step_async(1, actions_ptr);
             finish_group_step(group_a, t, res_a);
             if (has_next) infer_group(group_a, res_a.observations, res_a.action_masks);
 
-            const auto res_b = vec_env_->wait();
+            const auto res_b = wait_for_physics();
             if (has_next) vec_env_->step_async(0, actions_ptr);
             finish_group_step(group_b, t, res_b);
             if (has_next) infer_group(group_b, res_b.observations, res_b.action_masks);
@@ -594,11 +628,13 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         const double total_sps = total_steps_per_update_ / update_time.count();
         const double rollout_sps = total_steps_per_update_ / rollout_time.count();
+        const double physics_wait_percent = 100.0 * physics_wait_seconds / rollout_time.count();
 
         log_window_.steps += total_steps_per_update_;
         log_window_.updates++;
         log_window_.update_seconds += update_time.count();
         log_window_.rollout_seconds += rollout_time.count();
+        log_window_.physics_wait_seconds += physics_wait_seconds;
         for (const auto& [name, value] : metrics) {
             log_window_.train_metrics[name] += value;
         }
@@ -615,6 +651,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n |  | Rollout:  " << rollout_time.count() << "s"
                   << "\n |  | GAE:      " << gae_time.count() << "s"
                   << "\n |  | Train:    " << train_time << "s"
+                  << "\n | Phys Wait:   " << std::setprecision(1) << physics_wait_percent << "% of rollout"
                   << "\n | Policy Loss: " << std::defaultfloat << std::setprecision(6) << metrics.at("policy_loss")
                   << "\n | Value Loss:  " << metrics.at("value_loss")
                   << "\n | Entropy:     " << metrics.at("entropy")

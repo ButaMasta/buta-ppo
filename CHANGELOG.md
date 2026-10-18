@@ -1,8 +1,13 @@
 ### Current Unreleased Changes
 1. LayerNorm during autocast now correctly interprets features in bf16 since internally on the version of libtorch compiled with the project this is computed in fp32 for the accumulations so there is no noticeable precision loss, just faster compute times skipping the cast prior.
-    - Non-breaking. No changes here impact the user.
+    - Non-breaking.
+    - Training uses about 2.3× less VRAM, since activations saved for backward are no longer fp32 copies.
 2. Truncated value calculation with rewards is now deferred to happen once per rollout versus the prior setup which was once per step.
     - Non-breaking. No changes here impact the user.
+3. Added a rollout bottleneck diagnostic and optional CPU pinning.
+    - The console prints `Phys Wait`, the share of the rollout the main thread spent waiting for the env workers, and TensorBoard logs it as `Performance/Rollout_Physics_Wait` (a fraction). A high value means physics is the limit, and a low one means the main thread is.
+    - `RunnerConfig::main_thread_cpus` and `RunnerConfig::worker_cpus` pin the main thread and the env workers to lists of logical CPU ids. Both default to empty, which leaves the threads unpinned as before. A CPU this process can't run on fails at startup, and lists that share a CPU print a `[WARN]`.
+    - Non-breaking. Existing configs run unpinned, as before.
 
 ### Releases
 #### 0.2.0

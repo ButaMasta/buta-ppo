@@ -207,6 +207,22 @@ config.num_minibatches = 1;
 
 The actual steps per update are rounded up from `target_steps_per_update`, so every agent contributes the same number of steps and the total divides evenly into `num_minibatches`. The update size is limited by VRAM. Start with a small `target_steps_per_update` or more minibatches, and increase from there.
 
+#### Finding the Rollout Bottleneck
+
+During the rollout, the main thread runs inference for one half of the envs while the worker threads step the physics of the other half. The console's `Phys Wait` line (and `Performance/Rollout_Physics_Wait` in TensorBoard, as a fraction) is the share of the rollout the main thread spent waiting for the workers:
+
+- **High (about 25% and up):** physics is the limit. More worker threads help, up to the number of logical CPUs.
+- **Low (about 10%):** the main thread's own work is the limit, so faster physics won't help much. On CPUs with spare cores, giving the main thread a core of its own can:
+
+```cpp
+// Logical CPU ids, as listed by `lscpu -e`. Empty (the default) leaves the threads unpinned.
+config.main_thread_cpus = {0};                     // e.g. P-core 0 (CPUs 0 and 1 on hyperthreaded P-cores), CPU 1 left free.
+config.worker_cpus = {2, 3, 4, /* ... */ 19};      // The workers share every other CPU.
+config.num_threads = 18;                           // One worker per worker CPU.
+```
+
+On a 6 P-core + 8 E-core CPU this was about 5% faster, since the E-cores join the workers without competing with the main thread. On a 4-core CPU, where physics was the limit, reserving a core for the main thread was 6–10% slower, so measure before and after. Startup fails if a listed CPU doesn't exist or is excluded by `taskset`, and warns if both lists share a CPU.
+
 ### Network
 
 The actor-critic network is a shared MLP trunk that branches into separate actor and critic MLPs. Any of the three can be empty. For example, `shared_layers = {}` gives fully separate actor and critic networks.
@@ -374,7 +390,7 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Policy/` | Approx KL, clip fraction, normalized entropy |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
-| `Performance/` | Total and rollout steps per second |
+| `Performance/` | Total and rollout steps per second, and `Rollout_Physics_Wait`, the fraction of the rollout spent waiting on physics (see [Finding the Rollout Bottleneck](#finding-the-rollout-bottleneck)) |
 
 Rewards are averaged over learner agent steps, so PFSP opponents are left out. A reward that itself returns opposite values to the two teams (for example −1 to the team that conceded) averages to about 0 in `Reward_Components/` during self-play, since both teams are learners. Making it zero-sum with `opp_scale` instead keeps `Reward_Components/` meaningful, since it is logged before the options. `Reward_Magnitude/` doesn't cancel either way. The absolute value is taken per step, matching what PPO trains on, so a reward that flips sign within one step counts as their sum.
 
