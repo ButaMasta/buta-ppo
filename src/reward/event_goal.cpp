@@ -1,7 +1,6 @@
 // buta-ppo/src/reward/touch_ball.cpp
 #include "reward_manager.hpp"
 #include "rewards.hpp"
-#include "env/rocketsim_env.hpp"
 
 #include <memory>
 
