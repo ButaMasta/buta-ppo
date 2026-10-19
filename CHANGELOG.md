@@ -34,6 +34,11 @@
     - Before, editing a header such as `default_obs.hpp` (which holds the obs coefficients) or `ffi.h` left the old `libbuta_ppo_bot.so` in place, so a deployed bot could build a different obs from the one it was trained on without any error.
     - `deploy.py` now copies the most recently built `libbuta_ppo_bot.so` and prints its path and build time. It used to copy whichever copy it found first, and Cargo keeps older copies from earlier builds next to the current one.
     - Non-breaking. Editing training-only C++ files now also reruns the bot build step, which adds a second or two to builds. Redeploy existing bots to make sure they use an up-to-date library.
+10. Models are now checked against the configured network when they're loaded: resuming training, the PFSP pool, and the RLBot bot.
+    - Every weight in the file must exist in the network with the same shape, and the other way around. A mismatch fails with an error naming the first weight that differs, e.g. `'shared_mlp.0.weight' has shape [1280, 226] in the file but [1280, 195] in the network`.
+    - Before, `torch::load` took on the file's shapes without checking. A resume after changing `ac_cfg`, or a bot whose `bot_api.cpp` settings didn't match its checkpoint, either failed at the first forward pass (the bot then sent no inputs every tick) or silently ran the checkpoint's network instead of the configured one.
+    - Weights are read onto the network's device, so resuming from a checkpoint saved on another device (e.g. the CPU) works too. The bot already did this.
+    - Non-breaking for matching checkpoints. Resolution for a mismatch: on resume, change `bot_name` or move the old checkpoints to start fresh. In the bot, set `bot_api.cpp` to the config the checkpoint was trained with. A PFSP snapshot that doesn't match is skipped with a message.
 
 ### Releases
 #### 0.2.0

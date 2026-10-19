@@ -128,7 +128,7 @@ Run the compiled binary from the project root, so the relative paths to `assets/
 ./build/buta_ppo
 ```
 
-On startup, the framework searches `checkpoints/` for the most recent checkpoint matching the configured `bot_name`. If one is found, training resumes from its step count. Otherwise, a fresh model is initialized.
+On startup, the framework searches `checkpoints/` for the most recent checkpoint matching the configured `bot_name`. If one is found, training resumes from its step count. Otherwise, a fresh model is initialized. A checkpoint has to match the configured network: if the `ac_cfg` layers or layer norm changed, or the obs size did (through `max_players_per_team` or the obs builder), startup fails with an error naming the first weight that doesn't match. Change `bot_name` or move the old checkpoints out of `checkpoints/` to start fresh.
 
 A run trains for at most the number of updates passed to `runner.run` in `main.cpp` (`1'000` by default, about 50M steps with the demo config), then saves a checkpoint and exits. Run the binary again to continue from there.
 
@@ -402,7 +402,7 @@ checkpoints/
     └── meta.txt        # Network shape the pool was saved with
 ```
 
-Checkpoints are written to a temporary directory and renamed when complete, so an interrupted save never produces a broken checkpoint. If the optimizer state can't be loaded (for example after changing the network), training continues with a fresh optimizer.
+Checkpoints are written to a temporary directory and renamed when complete, so an interrupted save never produces a broken checkpoint. If the optimizer state can't be loaded (for example after switching optimizer presets), training continues with a fresh optimizer.
 
 To roll back, delete the checkpoint directories newer than the one you want. On startup, pool snapshots newer than the resumed checkpoint are deleted automatically. If the network shape changed, the old pool is moved aside to `<bot_name>_pool.stale-<time>` and a fresh pool is started. TensorBoard logs are appended, not rolled back, so move the old event file out of `logs/` if you want clean curves.
 
@@ -466,7 +466,7 @@ The `buta_ppo_bot` binary runs a trained checkpoint as an RLBot v5 bot. It build
     * `shared_layers`, `actor_layers`, `critic_layers`, `use_layer_norm` = the `ac_cfg` values
     * The tick skip passed to `DefaultObs`, and `tick_skip` in `rust_bridge/src/main.rs` = `ticks_per_step`
 
-    A wrong layer size fails at startup. A wrong tick skip doesn't fail, it just plays worse.
+    A wrong layer size, layer norm setting, or `MAX_PLAYERS_PER_TEAM` stops the bot at startup with an error naming the first weight that doesn't match. A wrong tick skip doesn't fail, it just plays worse.
 2. **Build and Package:**
 ```bash
 python deploy.py

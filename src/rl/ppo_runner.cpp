@@ -158,7 +158,14 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
         return 0;
     }
 
-    torch::load(actor_critic_, (latest_dir / MODEL_FILE).string());
+    try {
+        actor_critic_->load_weights((latest_dir / MODEL_FILE).string());
+    } catch (const std::runtime_error& e) {
+        throw std::runtime_error(std::string("Could not resume from the latest checkpoint: ") + e.what() +
+                                 ". A changed network config (ac_cfg layers or layer norm), max_players_per_team or "
+                                 "obs builder makes old checkpoints unusable. Change bot_name or move the checkpoint "
+                                 "out of " + dir + " to start fresh.");
+    }
     std::cout << "Latest Model Found: " << latest_dir.string() << " (Lifetime Steps: " << max_steps << ")\n";
 
     const fs::path optimizer_path = latest_dir / OPTIMIZER_FILE;

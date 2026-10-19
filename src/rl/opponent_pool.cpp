@@ -122,9 +122,9 @@ void OpponentPool::open(const fs::path& dir, int64_t max_steps) {
 
         ActorCritic staging(ac_config_);
         try {
-            torch::load(staging, entry.path().string(), torch::kCPU);
-        } catch (const c10::Error& e) {
-            std::cout << "Skipping unreadable PFSP snapshot " << entry.path().string() << ": " << e.what_without_backtrace() << "\n";
+            staging->load_weights(entry.path().string());
+        } catch (const std::runtime_error& e) {
+            std::cout << "Skipping unusable PFSP snapshot: " << e.what() << "\n";
             continue;
         }
 

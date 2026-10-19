@@ -52,9 +52,11 @@ void* bot_api_init(const char* checkpoint_path) {
     ctx->model->to(ctx->device);
 
     try {
-        torch::load(ctx->model, checkpoint_path, ctx->device);
-    } catch (const c10::Error& e) {
-        std::cerr << "Error loading LibTorch model from " << checkpoint_path << ": " << e.what() << std::endl;
+        ctx->model->load_weights(checkpoint_path);
+    } catch (const std::runtime_error& e) {
+        std::cerr << "[buta_ppo_bot] Could not load the model: " << e.what() << "\n"
+                  << "The settings in bot_api.cpp must match the config the checkpoint was trained with "
+                  << "(see Deploying to RLBot in the README)." << std::endl;
         delete ctx;
         return nullptr;
     }

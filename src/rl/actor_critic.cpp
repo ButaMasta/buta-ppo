@@ -73,6 +73,57 @@ torch::Tensor run_block(torch::nn::Sequential& seq, torch::Tensor x) {
     return x;
 }
 
+/**
+ * @brief Pairs each of a module's tensors with the archive's, recursing into child modules like `Module::load`.
+ *
+ * Throws on a missing key, a shape mismatch, or a key in the archive the module doesn't have.
+ *
+ * @param module The module to read into.
+ * @param archive The archive `module`'s weights were saved to.
+ * @param prefix The module's dotted path, for error messages.
+ * @param pairs Gets each (module tensor, archive tensor) pair.
+ */
+void match_archive(torch::nn::Module& module, torch::serialize::InputArchive& archive, const std::string& prefix,
+                   std::vector<std::pair<torch::Tensor, torch::Tensor>>& pairs) {
+    std::vector<std::string> expected;
+
+    const auto match_tensor = [&](const std::string& name, const torch::Tensor& live) {
+        torch::Tensor saved;
+        if (!archive.try_read(name, saved)) {
+            throw std::runtime_error("the file has no '" + prefix + name + "'");
+        }
+        if (!saved.sizes().equals(live.sizes())) {
+            throw std::runtime_error("'" + prefix + name + "' has shape " + c10::str(saved.sizes()) +
+                                     " in the file but " + c10::str(live.sizes()) + " in the network");
+        }
+        pairs.emplace_back(live, saved);
+        expected.push_back(name);
+    };
+
+    for (const auto& item : module.named_parameters(/*recurse=*/false)) {
+        match_tensor(item.key(), item.value());
+    }
+    for (const auto& item : module.named_buffers(/*recurse=*/false)) {
+        match_tensor(item.key(), item.value());
+    }
+    for (const auto& child : module.named_children()) {
+        if (!child.value()->is_serializable()) continue;
+        torch::serialize::InputArchive child_archive;
+        if (!archive.try_read(child.key(), child_archive)) {
+            throw std::runtime_error("the file has no layer '" + prefix + child.key() + "'");
+        }
+        match_archive(*child.value(), child_archive, prefix + child.key() + ".", pairs);
+        expected.push_back(child.key());
+    }
+
+    // The same shapes for every tensor here doesn't rule out the file having more, e.g. an extra final layer.
+    for (const std::string& key : archive.keys()) {
+        if (std::find(expected.begin(), expected.end(), key) == expected.end()) {
+            throw std::runtime_error("the file has '" + prefix + key + "', which the network doesn't");
+        }
+    }
+}
+
 } // namespace
 
 torch::nn::Sequential ActorCriticImpl::build_block(int64_t in_size, const std::vector<int64_t>& sizes, bool use_ln) {
@@ -165,6 +216,30 @@ std::vector<ParamInfo> ActorCriticImpl::parameter_layout() const {
         layout.push_back({name, item.value(), section, kind});
     }
     return layout;
+}
+
+void ActorCriticImpl::load_weights(const std::string& path) {
+    // Read straight onto the network's device, so a checkpoint saved on the GPU also loads on a CPU-only machine.
+    const torch::Device device = parameters().front().device();
+    torch::serialize::InputArchive archive;
+    try {
+        archive.load_from(path, device);
+    } catch (const c10::Error& e) {
+        throw std::runtime_error("could not read " + path + ": " + e.what_without_backtrace());
+    }
+
+    // Check everything before copying anything, so a mismatch leaves the network untouched.
+    std::vector<std::pair<torch::Tensor, torch::Tensor>> pairs;
+    try {
+        match_archive(*this, archive, "", pairs);
+    } catch (const std::runtime_error& e) {
+        throw std::runtime_error(path + " doesn't match the network: " + e.what());
+    }
+
+    torch::NoGradGuard no_grad;
+    for (auto& [live, saved] : pairs) {
+        live.copy_(saved);
+    }
 }
 
 std::tuple<torch::Tensor, torch::Tensor> ActorCriticImpl::forward(torch::Tensor obs) {

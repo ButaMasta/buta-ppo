@@ -83,6 +83,19 @@ public:
     [[nodiscard]] std::vector<ParamInfo> parameter_layout() const;
 
     /**
+     * @brief Loads weights written by `torch::save` into this network, after checking the file matches it.
+     *
+     * Unlike `torch::load`, which takes on the file's shapes without checking them, every tensor and layer in the
+     * file must exist in this network with the same shape, and the other way around. So a checkpoint from a
+     * different network config (layer sizes, layer norm, obs or action size) fails here instead of loading silently.
+     * Values are copied into the existing tensors, which keep their devices and addresses.
+     *
+     * @param path The file to load, as written by `torch::save` of an `ActorCritic`.
+     * @throws std::runtime_error If the file can't be read or doesn't match, naming the first mismatch.
+     */
+    void load_weights(const std::string& path);
+
+    /**
      * @brief Performs a forward pass through the shared, actor, and critic networks. 
      * 
      * @param obs The batched obs tensor.
