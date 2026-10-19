@@ -3,6 +3,7 @@
 #include "buta_ppo/ffi.h"
 
 #include <algorithm>
+#include <cmath>
 #include <thread>
 #include <chrono>
 #include <stdexcept>
@@ -115,13 +116,18 @@ ResetResult RocketSimEnv::reset() {
 
 StepResult RocketSimEnv::step(const int* actions) {
     for (size_t i = 0; i < agents_.size(); i++) {
-        ffi::CarControls controls = decode_action(actions[i]);
+        ffi::CarControls controls;
+        if (heavy_workload_) [[unlikely]] {
+            controls = chaser_controls(arena_state_.cars[agents_[i].car_id]);
+        } else {
+            controls = decode_action(actions[i]);
 
-        // Invert necessary controls if the state was X-mirrored.
-        if (agent_x_inverted_[i]) {
-            controls.steer  *= -1.0f;
-            controls.yaw    *= -1.0f;
-            controls.roll   *= -1.0f;
+            // Invert necessary controls if the state was X-mirrored.
+            if (agent_x_inverted_[i]) {
+                controls.steer  *= -1.0f;
+                controls.yaw    *= -1.0f;
+                controls.roll   *= -1.0f;
+            }
         }
 
         ffi::set_car_controls(arena_, agents_[i].car_id, controls);
@@ -155,6 +161,7 @@ StepResult RocketSimEnv::step(const int* actions) {
         // Reset touch counter if any car hit the ball or increment it.
         if (std::any_of(arena_state_.events.car_hit_ball, arena_state_.events.car_hit_ball + 8, [](bool v) { return v; })) {
             ticks_since_last_touch_ = 0;
+            ++touch_ticks_;
         } else {
             ++ticks_since_last_touch_;
         }
@@ -197,6 +204,33 @@ StepResult RocketSimEnv::step(const int* actions) {
     }
 
     return { obs_buffer_, action_mask_buffer_, reward_buffer_, episode_terminated, blue_scored, episode_truncated, no_touch_truncated, ticks_elapsed };
+}
+
+void RocketSimEnv::set_heavy_workload(bool enabled) {
+    heavy_workload_ = enabled;
+    // A 1v1 bot that dribbles repredicts on about 1 in 6 steps. At least every 3rd step makes up for the scripted cars'
+    // contacts being shorter and cheaper than a dribble's, bringing the env cost per step to about the dribbler's.
+    obs_builder_.set_min_repred_interval(enabled ? 3 : 0);
+}
+
+ffi::CarControls RocketSimEnv::chaser_controls(const ffi::CarState& car) const {
+    const float* ball = arena_state_.ball.phys.pos;
+    const float to_ball[3] = { ball[0] - car.phys.pos[0], ball[1] - car.phys.pos[1], ball[2] - car.phys.pos[2] };
+    const float* forward = car.phys.rot_mat[0];
+    const float* right = car.phys.rot_mat[1];
+    const float ahead = to_ball[0] * forward[0] + to_ball[1] * forward[1] + to_ball[2] * forward[2];
+    const float side = to_ball[0] * right[0] + to_ball[1] * right[1] + to_ball[2] * right[2];
+    const float angle = std::atan2(side, ahead);
+    const float dist = std::sqrt(to_ball[0] * to_ball[0] + to_ball[1] * to_ball[1] + to_ball[2] * to_ball[2]);
+
+    // Drive at the ball, boost when facing it, powerslide when it's behind, and jump at balls in the air nearby.
+    ffi::CarControls controls{};
+    controls.throttle = 1.0f;
+    controls.steer = std::clamp(angle * 2.5f, -1.0f, 1.0f);
+    controls.boost = std::abs(angle) < 0.3f && car.boost > 0.0f;
+    controls.handbrake = std::abs(angle) > 1.6f;
+    controls.jump = car.is_on_ground && dist < 300.0f && ball[2] > 180.0f;
+    return controls;
 }
 
 ffi::CarControls RocketSimEnv::decode_action(size_t action_idx) {

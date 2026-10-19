@@ -8,6 +8,28 @@
     - The console prints `Phys Wait`, the share of the rollout the main thread spent waiting for the env workers, and TensorBoard logs it as `Performance/Rollout_Physics_Wait` (a fraction). A high value means physics is the limit, and a low one means the main thread is.
     - `RunnerConfig::main_thread_cpus` and `RunnerConfig::worker_cpus` pin the main thread and the env workers to lists of logical CPU ids. Both default to empty, which leaves the threads unpinned as before. A CPU this process can't run on fails at startup, and lists that share a CPU print a `[WARN]`.
     - Non-breaking. Existing configs run unpinned, as before.
+4. Added a benchmark mode that finds the fastest thread count, CPU pinning, and env count for a config on the current machine.
+    - `RunnerConfig::benchmark = true` measures instead of training, then prints a table and the recommended config values to paste in. Values the automatic settings already give are printed as `0`, and empty CPU lists mean unpinned. It asks for confirmation first, takes a few minutes, and loads, saves, and logs nothing. Each config runs real training updates, so the SPS shown are what training gets.
+    - Each config runs under a light workload (a fresh policy) and a heavy one (scripted ball-chasing cars with extra ball predictions), since a bot's speed swings between the two as it learns to play the ball.
+    - It recommends the configured env count unless one nearby scores at least 5 points higher, and the fastest unpinned CPU setup when it is within 2 points of a pinned one.
+    - Non-breaking. It defaults to off, and training runs as before. The TensorBoard log file is now opened when training starts instead of when the runner is constructed.
+5. Replaced `RunnerConfig::num_envs_per_thread` with `num_envs` and `target_steps_per_agent`, and made the thread count automatic.
+    - `num_envs` sets the total env count, which no longer has to be a multiple of `num_threads`, since workers already take envs one at a time.
+    - With `num_envs = 0` (the default), the env count is picked so each learner agent collects about `target_steps_per_agent` steps per update (default `100`).
+    - `num_threads = 0` (the default) uses one worker per CPU in `worker_cpus`, or when that's empty, one per CPU the process may run on except one, so the main thread has a CPU of its own.
+    - Breaking: configs that set `num_envs_per_thread` no longer compile. Set `num_envs` to the old `num_envs_per_thread * num_threads` to keep the same env count, or `target_steps_per_agent` to the steps per agent you want.
+6. Added env cost telemetry to TensorBoard, aggregated over each log window like the other tags.
+    - `Performance/Env_Step_Microseconds`: worker time per env step, including resets and copying out the results.
+    - `Performance/Touch_Ticks_Per_Env_Step` and `Performance/Repredictions_Per_Env_Step`: ticks with a ball touch and full ball predictions per env step. A bot that keeps touching the ball costs about twice as much per step as a fresh one, mostly in ball prediction, so these explain most SPS drops during training.
+    - Non-breaking.
+7. Training warns when the CPU setup leaves speed unused, once per run each, judged from the median `Phys Wait` of the last 20 updates.
+    - Physics is the limit (30% and up) while 2 or more CPUs have no env worker.
+    - The main thread is the limit (10% and below) while it's unpinned and shares every CPU with the workers.
+    - Non-breaking. Setups recommended by the benchmark trigger neither.
+8. Warnings no longer scroll away under the update prints.
+    - Every update ends with a ` | Warnings:` line listing a short label for each warning so far and when it was raised, and the full warnings are printed again when training ends.
+    - Covers the reward config, CPU pinning, unusable optimizer state, and rollout bottleneck warnings.
+    - Non-breaking.
 
 ### Releases
 #### 0.2.0

@@ -109,7 +109,10 @@ private:
     [[nodiscard]] std::vector<std::pair<std::string, torch::Tensor>> optimizer_state() const;
 
 public:
-    PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device);
+    /**
+     * @param verbose Whether to print the network's parameter counts.
+     */
+    PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device, bool verbose = true);
 
     /**
      * @brief Executes PPO optimization loop over collected rollouts.

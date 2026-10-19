@@ -86,7 +86,11 @@ bool DefaultObs::needs_repred(const ffi::BallSimBallState& curr_ball_sim_state) 
 void DefaultObs::pred_ballsim(const ffi::BallSimBallState& curr_arena_ball_state, uint64_t ticks_at_update) {
     if (ticks_at_update == tick_last_updated_ball_pred_) { return; }
 
-    if (needs_repred(curr_arena_ball_state)) {
+    const bool forced = min_repred_interval_ > 0 && ++updates_since_repred_ >= min_repred_interval_;
+    const bool repred = forced || needs_repred(curr_arena_ball_state);
+    if (repred) {
+        updates_since_repred_ = 0;
+        repredictions_++;
         ffi::set_ball_state_ball_sim(ball_pred_arena_, curr_arena_ball_state);
         ball_pred_head_ = 0;
 

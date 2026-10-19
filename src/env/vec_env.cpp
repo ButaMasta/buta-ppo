@@ -6,6 +6,7 @@
 #include "rl/ppo_runner.hpp"
 #include "util/thread_affinity.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cmath>
 #include <cstring>
@@ -18,7 +19,7 @@
 namespace buta_ppo::env {
 
 VecEnv::VecEnv(
-    size_t num_envs_per_thread, 
+    size_t num_envs,
     const std::vector<rl::MatchDistribution>& match_distributions, 
     const std::vector<state::StateSetterDistribution>& setter_distributions, 
     const std::vector<reward::RewardEntry>& reward_entries,
@@ -30,7 +31,7 @@ VecEnv::VecEnv(
     const rl::PFSPConfig& pfsp_cfg,
     const std::vector<int>& worker_cpus
 ) {
-    num_envs_ = num_envs_per_thread * num_threads;
+    num_envs_ = num_envs;
 
     // Rendering runs a single env, which is always self-play.
     const bool pfsp = pfsp_cfg.enabled() && !render;
@@ -48,6 +49,7 @@ VecEnv::VecEnv(
     env_opponent_slot_.assign(num_envs_, -1);
     env_outcomes_.resize(num_envs_);
     env_episode_counts_.resize(num_envs_);
+    env_cost_counts_.resize(num_envs_);
 
     // Whether each agent is controlled by a past policy, in env order like `agent_rows_`.
     std::vector<bool> agent_is_opponent;
@@ -238,6 +240,7 @@ void VecEnv::worker_loop(size_t /*worker_id*/) {
             // Claim envs until all are taken (see RESET).
             for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < batch_env_end_;
                  i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
+                const auto env_start = std::chrono::steady_clock::now();
                 const size_t agent_offset = env_agent_offsets_[i];
                 const size_t num_agents = env_agent_counts_[i];
                 const uint32_t* rows = agent_rows_.data() + agent_offset;
@@ -296,6 +299,9 @@ void VecEnv::worker_loop(size_t /*worker_id*/) {
                 } else {
                     write_obs_and_masks(i, result.observations, result.action_masks);
                 }
+                EnvCostCounts& cost = env_cost_counts_[i];
+                cost.env_steps++;
+                cost.step_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - env_start).count();
             }
             break;
         }
@@ -428,6 +434,33 @@ EpisodeCounts VecEnv::collect_episode_counts() {
         counts = {};
     }
     return total;
+}
+
+EnvCostCounts VecEnv::collect_cost_counts() {
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::collect_cost_counts called while an env group is still stepping.");
+    }
+
+    EnvCostCounts total;
+    for (size_t i = 0; i < num_envs_; i++) {
+        total.env_steps += env_cost_counts_[i].env_steps;
+        total.step_seconds += env_cost_counts_[i].step_seconds;
+        env_cost_counts_[i] = {};
+
+        const BallCostCounts ball = envs_[i]->take_ball_cost_counts();
+        total.touch_ticks += ball.touch_ticks;
+        total.repredictions += ball.repredictions;
+    }
+    return total;
+}
+
+void VecEnv::set_heavy_workload(bool enabled) {
+    if (group_in_flight_) {
+        throw std::logic_error("VecEnv::set_heavy_workload called while an env group is still stepping.");
+    }
+    for (auto& env : envs_) {
+        env->set_heavy_workload(enabled);
+    }
 }
 
 void VecEnv::update_telemetry_breakdowns() {

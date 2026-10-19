@@ -12,7 +12,7 @@
 
 namespace buta_ppo::rl {
 
-PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device)
+PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device device, bool verbose)
     : config_(config), actor_critic_(actor_critic), device_(device) {
     const std::vector<ParamInfo> layout = actor_critic_->parameter_layout();
     for (const auto& info : layout) {
@@ -29,10 +29,12 @@ PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device
             case ParamSection::Critic: critic_count += info.tensor.numel(); break;
         }
     }
-    std::cout << "Model Parameters: " << shared_count + actor_count + critic_count
-              << "\n | Shared: " << shared_count
-              << "\n | Actor:  " << actor_count
-              << "\n | Critic: " << critic_count << "\n";
+    if (verbose) {
+        std::cout << "Model Parameters: " << shared_count + actor_count + critic_count
+                  << "\n | Shared: " << shared_count
+                  << "\n | Actor:  " << actor_count
+                  << "\n | Critic: " << critic_count << "\n";
+    }
 
     optimizers_ = build_optimizers(layout, config_.optimizer);
     // std::cout << "Optimizers:\n";

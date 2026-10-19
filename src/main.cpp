@@ -43,6 +43,10 @@ int main() {
     config.bot_name = "default";
     config.render = false;
 
+    // Instead of training, measures thread counts, CPU pinning and env counts for this config, then prints the fastest
+    // as the num_threads, num_envs, main_thread_cpus and worker_cpus lines below. See "Benchmarking Your Hardware".
+    config.benchmark = false;
+
     config.match_distributions = {
         {1, 1, 1.0f}
     };
@@ -64,24 +68,24 @@ int main() {
         {"InAirRatio", create_in_air_ratio_metric()}
     };
 
-    config.num_envs_per_thread = 23;
-    config.num_threads = 11;
+    config.num_envs = 500;     // 0 picks the env count from target_steps_per_agent below.
+    config.num_threads = 18;   // 0 = one per CPU in worker_cpus, or every CPU but one when unpinned.
     config.ticks_per_step = 8;
 
-    // Optional CPU pinning by logical CPU id (see `lscpu -e`). Empty leaves threads unpinned. Only worth trying when the
-    // console's Phys Wait is low (about 10%), e.g. on a 6 P-core + 8 E-core CPU: the main thread alone on P-core 0
-    // (CPUs 0-1), and 18 workers on everything else. Around 25% and up, physics is the limit and pinning can hurt.
-    // config.main_thread_cpus = {0};
-    // config.worker_cpus = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+    // Optional CPU pinning by logical CPU id (see `lscpu -e`). Empty leaves the threads unpinned. Whether pinning helps
+    // depends on the CPU, so let benchmark mode compare it with unpinned setups and copy its lines here.
+    config.main_thread_cpus = {0};
+    config.worker_cpus = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
-    config.target_steps_per_update = 50'000;
+    config.target_steps_per_update = 100'000;
     config.num_minibatches = 1;
+    config.target_steps_per_agent = 100;   // Steps each agent collects per update. Sets the env count when num_envs is 0.
 
     // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.
     config.steps_per_checkpoint = 100'000'000;
 
     // Lifetime steps between TensorBoard logs, each aggregating the updates since the last. 0 logs every update.
-    config.steps_per_log = 0;
+    config.steps_per_log = 500'000;
 
     config.ac_cfg.shared_layers = { 1280, 1280, 1024 };
     config.ac_cfg.actor_layers  = { 768, 512 };
@@ -96,7 +100,7 @@ int main() {
     config.ppo_cfg.epochs = 1;
 
     // PFSP: fraction of even-team envs playing past versions, and how many versions are played each update.
-    config.pfsp_cfg.envs = 0.0f;
+    config.pfsp_cfg.envs = 0.2f;
     config.pfsp_cfg.versions = 2;
 
     try {

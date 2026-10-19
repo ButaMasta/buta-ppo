@@ -72,13 +72,19 @@ struct MatchDistribution {
  * NOTE: `setter_distributions` MUST be set by the user.
  * NOTE: `num_minibatches` is HIGHLY hardware and network layer setup dependent. Experiment 
  * on your own. Start small on steps per iteration and high on num minibatches. For me with 
- * 12gb VRAM I was able to comfortably get away with 50'000 steps per iter and 1
+ * 12gb VRAM I was able to comfortably get away with 125'000 steps per iter and 1
  * minibatch. I honestly dont know what happens if you exceed available VRAM but it should
  * crash immediately and just be the program... probably.  
  */
 struct RunnerConfig {
     std::string bot_name = "default";
     bool render = false;
+
+    // Instead of training, measures thread counts, CPU pinning and env counts on this machine and prints the fastest
+    // as config values to paste in. It runs this config's match layouts and network with fresh weights, under a light
+    // workload (a fresh policy, mostly airborne) and a heavy one (scripted cars chasing the ball, like a bot that keeps
+    // touching it), since a bot's speed swings between the two as it learns. Nothing is loaded, saved, or logged.
+    bool benchmark = false;
 
     std::vector<MatchDistribution> match_distributions = {
         {1, 1, 1.0f}
@@ -88,8 +94,12 @@ struct RunnerConfig {
     std::vector<reward::RewardEntry> reward_entries;
     std::vector<metric::MetricEntry> metric_entries = {};
 
-    size_t num_envs_per_thread = 20;
-    size_t num_threads = 12;
+    // Total envs. 0 picks the env count whose steps per agent come closest to target_steps_per_agent.
+    // Workers take envs one at a time, so it doesn't need to divide by the thread count. Training needs at least 2.
+    size_t num_envs = 0;
+    // Env worker threads. 0 uses one per CPU in worker_cpus, or when it's empty, one per CPU this process may run on
+    // except one left for the main thread.
+    size_t num_threads = 0;
 
     // Optional CPU pinning, by logical CPU id (see `lscpu -e`). Empty leaves those threads unpinned.
     // Pinning helps only when the main thread limits the rollout, shown by a low `Performance/Rollout_Physics_Wait`
@@ -103,6 +113,10 @@ struct RunnerConfig {
 
     size_t target_steps_per_update = 50'000; // Good starting values to guage your hardware with your network size.
     size_t num_minibatches = 4;
+    // The steps each learner agent collects per update (target_steps_per_update / learner agents). Sets the env count
+    // when num_envs is 0. Fewer steps per agent means more envs, which is usually faster, but each update then learns
+    // from shorter stretches of play. The benchmark aims its env counts at the resulting env count.
+    size_t target_steps_per_agent = 100;
 
     // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.
     int64_t steps_per_checkpoint = 100'000'000;
@@ -114,6 +128,13 @@ struct RunnerConfig {
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
     PFSPConfig pfsp_cfg;
+
+    /**
+     * @brief The total envs: `num_envs`, or the env count closest to `target_steps_per_agent` when it is 0.
+     *
+     * @throws std::invalid_argument If both are 0.
+     */
+    [[nodiscard]] size_t total_envs() const;
 };
 
 /**
@@ -165,6 +186,14 @@ struct RunnerConfig {
 
     return counts;
 }
+
+/**
+ * @brief The learner agents a total env count gets, as VecEnv lays them out. PFSP opponents aren't counted.
+ *
+ * @param envs The total envs.
+ * @param config The config with the match distributions and PFSP settings.
+ */
+[[nodiscard]] size_t learner_agents_for(size_t envs, const RunnerConfig& config);
 
 /**
  * @brief The core class that encapsulates the logic for actually running the entire training process.
@@ -258,6 +287,11 @@ private:
 
     std::unique_ptr<TensorBoardLogger> logger_;
 
+    // Benchmark runners measure one candidate config each, quietly and without logging.
+    bool benchmark_child_ = false;
+    // VecEnv's full batched obs buffer, which always holds every agent's latest obs. Set by `prepare_rollouts`.
+    torch::Tensor batched_obs_;
+
     // Everything since the last TensorBoard log, written as one aggregated point per log. Rewards and metrics
     // keep accumulating inside the envs instead, until `update_telemetry_breakdowns` reads them at log time.
     struct LogWindow {
@@ -276,17 +310,62 @@ private:
     LogWindow log_window_;
     int64_t next_log_step_{0};
 
+    // Rollout bottleneck warnings, see `check_rollout_bottleneck`.
+    size_t allowed_cpus_{0};                  // CPUs this process may run on, read before any thread is pinned.
+    std::vector<double> recent_physics_wait_; // The last updates' Phys Wait fractions, oldest overwritten first.
+    size_t next_physics_wait_{0};
+    bool warned_physics_bound_{false};
+    bool warned_main_bound_{false};
+
+    // Every warning of this run, so fast scrolling updates can't hide them, see `warn`.
+    struct RunWarning {
+        std::string message;
+        std::string reminder; // Short label repeated under every update.
+        int update;           // The update it was raised in, 0 before training.
+    };
+    std::vector<RunWarning> warnings_;
+    int current_update_{0};
+
+    /**
+     * @brief Prints a warning and keeps it for the reminder line under every update and the end of run summary.
+     *
+     * @param message The full warning, printed now and again at the end of the run.
+     * @param reminder A short label for the reminder line. Warnings sharing a label show it once.
+     */
+    void warn(const std::string& message, const std::string& reminder);
+
+    /**
+     * @brief Prints the reminder line of the warnings so far under an update. Prints nothing without warnings.
+     */
+    void print_warning_reminders() const;
+
+    /**
+     * @brief Prints every warning of the run again, at the end of training.
+     */
+    void print_warning_summary() const;
+
     /**
      * @brief Checks the reward entries against the match layouts. Throws on invalid entries and prints warnings
      * for settings that likely don't do what was intended.
      */
-    void validate_rewards() const;
+    void validate_rewards();
 
     /**
      * @brief Checks the CPU pinning config. Throws on CPUs this process can't run on and warns when the main
      * thread's CPUs are shared with the workers.
      */
-    void validate_cpu_pinning() const;
+    void validate_cpu_pinning();
+
+    /**
+     * @brief Warns, once per run, when the rollout's bottleneck has gone on for a while with CPUs that could help.
+     *
+     * Looks at the median Phys Wait of the last updates, so it ignores the swings of a bot's play. Physics as the
+     * limit while CPUs have no worker, or the main thread as the limit while it shares every CPU with the workers,
+     * both mean the CPU setup leaves speed on the table. Configs the benchmark recommends trigger neither.
+     *
+     * @param physics_wait The share of this update's rollout the main thread spent waiting for the env workers.
+     */
+    void check_rollout_bottleneck(double physics_wait);
 
     /**
      * @brief Sets up the dimensions of tensors and buffers used in the training loop.
@@ -350,6 +429,25 @@ private:
     void finish_group_step(RolloutGroup& group, size_t step, const env::BatchedStepResult& step_res);
 
     /**
+     * @brief Resets the envs and sets up the rollout groups on VecEnv's batched buffers. Run once before rollouts.
+     */
+    void prepare_rollouts();
+
+    /**
+     * @brief Collects one update's rollout into the buffer, including the deferred truncation bootstraps.
+     *
+     * Needs `prepare_rollouts` and the opponent slots loaded first.
+     *
+     * @return The seconds the main thread spent waiting for the env workers.
+     */
+    double collect_rollout();
+
+    /**
+     * @brief Bootstraps the rollout's cutoff from the critic and computes the buffer's returns and advantages.
+     */
+    void compute_advantages();
+
+    /**
      * @brief Attempts to find and load the latest checkpoint (model and optimizer) for a given bot.
      *
      * Checkpoints are directories with the format: <bot name>_<total steps trained>/ containing
@@ -368,6 +466,39 @@ private:
      * @param checkpoint_dir The directory to save a checkpoint to.
      */
     void run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
+
+    /**
+     * @brief A benchmark runner for one candidate config. Prints nothing while building and never logs.
+     */
+    PPORunner(const RunnerConfig& config, bool benchmark_child);
+
+    /**
+     * @brief Measures thread counts, CPU pinning and env counts, then prints the results and the recommended config.
+     *
+     * @param stop_flag Stops the benchmark early, printing what was measured so far.
+     */
+    void run_benchmark(const std::atomic<bool>& stop_flag);
+
+    /**
+     * @brief Timing of one benchmark sample.
+     */
+    struct UpdateSample {
+        std::vector<double> update_seconds;  // One per measured update: rollout, advantages and training.
+        std::vector<double> rollout_seconds;
+        std::vector<double> physics_wait;    // Fraction of each update's rollout spent waiting for the env workers.
+    };
+
+    /**
+     * @brief Times training updates of this benchmark runner under one workload, the same way `run_training` runs them.
+     *
+     * The rollouts and the training between them both count: back-to-back rollouts alone run at a different speed
+     * than in training on some CPU setups.
+     *
+     * @param heavy Whether to run the heavy workload (see `RunnerConfig::benchmark`).
+     * @param warmup Updates run first and not measured.
+     * @param measured Updates measured.
+     */
+    UpdateSample measure_updates(bool heavy, int warmup, int measured);
 
     /**
      * @brief Handles running a single environment as a render of the bot in RocketSim.

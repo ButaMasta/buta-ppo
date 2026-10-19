@@ -84,6 +84,16 @@ struct EpisodeCounts {
 };
 
 /**
+ * @brief How expensive the envs were to step, summed across all envs.
+ */
+struct EnvCostCounts {
+    uint64_t env_steps = 0;
+    double step_seconds = 0.0;  // Worker time spent stepping envs, including resets and copying out the results.
+    uint64_t touch_ticks = 0;   // Ticks in which any car touched the ball.
+    uint64_t repredictions = 0; // Full ball predictions, mostly after touches.
+};
+
+/**
  * @brief Episode results of PFSP matches from the learner's side. Truncated episodes aren't counted.
  */
 struct PFSPOutcome {
@@ -120,6 +130,7 @@ private:
     // Written only by the worker stepping the env.
     std::vector<PFSPOutcome> env_outcomes_;
     std::vector<EpisodeCounts> env_episode_counts_;
+    std::vector<EnvCostCounts> env_cost_counts_; // Only steps and step time, the env counts the rest.
 
     std::vector<std::unique_ptr<RocketSimEnv>> envs_;
     std::unordered_map<std::string, reward::RewardAccumulation> aggregate_reward_breakdown_;
@@ -193,7 +204,7 @@ private:
     
 public:
     VecEnv(
-        size_t num_envs_per_thread, 
+        size_t num_envs,
         const std::vector<rl::MatchDistribution>& match_distributions,
         const std::vector<state::StateSetterDistribution>& setter_distributions,
         const std::vector<reward::RewardEntry>& reward_entries,
@@ -242,6 +253,20 @@ public:
      * @return That group's learner rows of the batched step buffers.
      */
     [[nodiscard]] BatchedStepResult wait();
+
+    /**
+     * @brief Sums how expensive the envs were to step since the last call, then clears the counts.
+     *
+     * Must not be called while an env group is stepping.
+     */
+    [[nodiscard]] EnvCostCounts collect_cost_counts();
+
+    /**
+     * @brief Switches every env to the benchmark's heavy workload, or back. See `RocketSimEnv::set_heavy_workload`.
+     *
+     * Must not be called while an env group is stepping.
+     */
+    void set_heavy_workload(bool enabled);
 
     /**
      * @brief Update the aggregated rewards and metrics for telemetry logging.

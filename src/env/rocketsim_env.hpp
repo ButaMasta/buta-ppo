@@ -15,6 +15,7 @@
 #include <random>
 #include <string>
 #include <cstddef>
+#include <utility>
 
 namespace buta_ppo::env {
 
@@ -24,6 +25,14 @@ namespace buta_ppo::env {
 struct ResetResult {
     const std::vector<float>& observations;
     const std::vector<float>& action_masks;
+};
+
+/**
+ * @brief Counts of the events that make an env expensive to step, for telemetry.
+ */
+struct BallCostCounts {
+    uint64_t touch_ticks = 0;   // Ticks in which any car touched the ball.
+    uint64_t repredictions = 0; // Full ball predictions, mostly after touches.
 };
 
 /**
@@ -86,6 +95,7 @@ private:
     static constexpr int no_touch_ticks_limit_ = 1200;  // 10 seconds.
     static constexpr int match_ticks_limit_ = 18'000;   // 2.5 minutes.
     int ticks_since_last_touch_ = 0;
+    uint64_t touch_ticks_ = 0; // Since the last `take_ball_cost_counts`.
     int match_ticks_ = 0;
 
     obs::DefaultObs obs_builder_;
@@ -94,6 +104,12 @@ private:
     metric::MetricManager metric_manager_;
 
     bool render_;
+    bool heavy_workload_ = false; // Benchmark only, see `set_heavy_workload`.
+
+    /**
+     * @brief Controls for a scripted car that chases the ball, used by the benchmark's heavy workload.
+     */
+    [[nodiscard]] ffi::CarControls chaser_controls(const ffi::CarState& car) const;
 
     /**
      * @brief Wrapper method to grab the car controls for an action given by the action parser in this env.
@@ -138,6 +154,22 @@ public:
      * @return The result of the step.
      */
     [[nodiscard]] StepResult step(const int* actions);
+
+    /**
+     * @brief Switches the env to the benchmark's heavy workload, or back.
+     *
+     * Every car is driven by a scripted ball-chaser instead of its actions, and the ball is repredicted at least every
+     * few steps. Together they cost about as much as a bot that keeps contact with the ball, the most expensive case,
+     * and behave the same on every machine. The policy still runs, so its actions are computed and then ignored.
+     */
+    void set_heavy_workload(bool enabled);
+
+    /**
+     * @brief Ball touch ticks and full ball repredictions since the last call, then clears them.
+     */
+    [[nodiscard]] BallCostCounts take_ball_cost_counts() {
+        return { std::exchange(touch_ticks_, 0), obs_builder_.take_repredictions() };
+    }
 
     /**
      * @brief Update the internal reward manager's telemetry.

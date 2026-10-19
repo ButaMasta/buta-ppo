@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <random>
 #include <array>
+#include <utility>
 
 // Forward declaration.
 namespace buta_ppo::env { struct AgentMeta; }
@@ -94,6 +95,19 @@ public:
         float* out_buffer
     );
 
+    /**
+     * @brief Forces a full ball reprediction whenever this many prediction updates pass without one. 0 turns it off.
+     *
+     * Only for benchmarking: it stands in for the repredictions of a bot that keeps touching the ball,
+     * which make up a large share of the env cost.
+     */
+    void set_min_repred_interval(uint32_t interval) { min_repred_interval_ = interval; }
+
+    /**
+     * @brief Full ball repredictions since the last call, then clears the count.
+     */
+    [[nodiscard]] uint64_t take_repredictions() { return std::exchange(repredictions_, 0); }
+
 private:
     size_t max_players_per_team_;
     uint8_t tick_skip_;
@@ -113,6 +127,12 @@ private:
 
     // Tracks the last arena tick that the prediction was updated to avoid unnecessary repredictions.
     uint64_t tick_last_updated_ball_pred_ = UINT64_MAX;
+
+    // Benchmark only, see `set_min_repred_interval`.
+    uint32_t min_repred_interval_ = 0;
+    uint32_t updates_since_repred_ = 0;
+
+    uint64_t repredictions_ = 0; // Since the last `take_repredictions`.
 
     // These are the lightweight buffers to shuffle when inserting cars into the obs.
     std::vector<uint32_t> team_A_indices_;

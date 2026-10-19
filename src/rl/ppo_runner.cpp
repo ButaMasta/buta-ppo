@@ -5,6 +5,7 @@
 #include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
 #include "util/thread_affinity.hpp"
+#include "util/cpu_topology.hpp"
 
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
@@ -13,6 +14,8 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <limits>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
@@ -32,11 +35,53 @@ constexpr const char* OPTIMIZER_FILE = "optimizer.pt";
 constexpr const char* POOL_DIR_SUFFIX = "_pool";
 } // namespace
 
-PPORunner::PPORunner(const RunnerConfig& config)
-    : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU) {
+size_t learner_agents_for(size_t envs, const RunnerConfig& config) {
+    const std::vector<size_t> counts = compute_env_counts(envs, config.match_distributions);
+    size_t learners = 0;
+    for (size_t d = 0; d < counts.size(); d++) {
+        const MatchDistribution& dist = config.match_distributions[d];
+        // As VecEnv assigns them: a share of the even-team envs, where the past version plays one team.
+        size_t opponent_envs = 0;
+        if (config.pfsp_cfg.enabled() && !config.render && dist.blue_players == dist.orange_players) {
+            opponent_envs = static_cast<size_t>(std::lround(config.pfsp_cfg.envs * static_cast<float>(counts[d])));
+        }
+        learners += counts[d] * dist.total_players() - opponent_envs * dist.blue_players;
+    }
+    return learners;
+}
+
+size_t RunnerConfig::total_envs() const {
+    if (num_envs > 0) return num_envs;
+    if (target_steps_per_agent == 0) {
+        throw std::invalid_argument("Set num_envs or target_steps_per_agent, since both are 0.");
+    }
+
+    // Steps per agent only shrink as envs grow, so stop once they fall below a tenth of the target.
+    size_t best = 2;
+    double best_error = std::numeric_limits<double>::infinity();
+    for (size_t envs = 2; envs < 1'000'000; envs++) {
+        const size_t learners = learner_agents_for(envs, *this);
+        if (learners == 0) continue;
+        const double steps_per_agent = static_cast<double>(target_steps_per_update) / static_cast<double>(learners);
+        const double error = std::abs(std::log(steps_per_agent / static_cast<double>(target_steps_per_agent)));
+        if (error < best_error) {
+            best_error = error;
+            best = envs;
+        }
+        if (steps_per_agent < 0.1 * static_cast<double>(target_steps_per_agent)) break;
+    }
+    return best;
+}
+
+PPORunner::PPORunner(const RunnerConfig& config) : PPORunner(config, false) {}
+
+PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
+    : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU), benchmark_child_(benchmark_child) {
     
     if (torch::cuda::is_available()) {
-        std::cout << "CUDA detected. Running on GPU.\n";
+        if (!benchmark_child_) {
+            std::cout << "CUDA detected. Running on GPU.\n";
+        }
         at::globalContext().setUserEnabledCuDNN(true);
         at::globalContext().setBenchmarkCuDNN(true);
 
@@ -47,14 +92,31 @@ PPORunner::PPORunner(const RunnerConfig& config)
         throw std::runtime_error("CUDA not found. CPU is currently not supported.");
     }
 
-    validate_rewards();
-    validate_cpu_pinning();
+    if (config_.benchmark && config_.render) {
+        throw std::invalid_argument("benchmark and render can't both be set.");
+    }
 
-    fs::create_directories("logs");
-    const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
-    TensorBoardLoggerOptions logger_options_{};
-    logger_options_.resume_ = true;
-    logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options_);
+    // A benchmark runner's config was already checked by the benchmark that made it.
+    if (!benchmark_child_) {
+        validate_rewards();
+        validate_cpu_pinning();
+    }
+
+    // Resolve the automatic env and thread counts once, so everything after sees the actual values.
+    // Nothing is pinned yet, so the allowed CPUs are the whole process's.
+    allowed_cpus_ = util::allowed_cpus().size();
+    if (!config_.render) {
+        config_.num_envs = config_.total_envs();
+        // Unpinned, one CPU is left for the main thread, which is slower when it has to share every CPU with workers.
+        if (config_.num_threads == 0) {
+            config_.num_threads = config_.worker_cpus.empty() ? std::max<size_t>(1, allowed_cpus_ - 1) : config_.worker_cpus.size();
+        }
+    }
+
+    // The benchmark builds a runner for each config it measures instead.
+    if (config_.benchmark && !benchmark_child_) {
+        return;
+    }
 
     setup_dimensions_and_buffers();
 }
@@ -100,15 +162,18 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
     std::cout << "Latest Model Found: " << latest_dir.string() << " (Lifetime Steps: " << max_steps << ")\n";
 
     const fs::path optimizer_path = latest_dir / OPTIMIZER_FILE;
-    if (fs::exists(optimizer_path) && trainer_->load_optimizer(optimizer_path.string())) {
+    if (!fs::exists(optimizer_path)) {
+        std::cout << "No optimizer state found. Starting with a fresh optimizer.\n";
+    } else if (trainer_->load_optimizer(optimizer_path.string())) {
         std::cout << "Optimizer state restored.\n";
     } else {
-        std::cout << "No usable optimizer state found. Starting with a fresh optimizer.\n";
+        warn("The checkpoint's optimizer state could not be used, see above. Starting with a fresh optimizer.",
+             "Fresh optimizer");
     }
     return max_steps;
 }
 
-void PPORunner::validate_rewards() const {
+void PPORunner::validate_rewards() {
     // Only layouts that get envs matter.
     size_t largest_team = 0;
     bool has_empty_team = false;
@@ -119,19 +184,19 @@ void PPORunner::validate_rewards() const {
     }
 
     for (const std::string& warning : reward::validate_reward_entries(config_.reward_entries, largest_team, has_empty_team)) {
-        std::cerr << "[WARN] " << warning << "\n";
+        warn(warning, "Reward config");
     }
 }
 
-void PPORunner::validate_cpu_pinning() const {
+void PPORunner::validate_cpu_pinning() {
     // Runs before any thread is pinned, so the allowed CPUs are the whole process's, e.g. as limited by `taskset`.
     util::validate_cpus(config_.main_thread_cpus, "main_thread_cpus");
     util::validate_cpus(config_.worker_cpus, "worker_cpus");
 
     for (const int cpu : config_.main_thread_cpus) {
         if (std::find(config_.worker_cpus.begin(), config_.worker_cpus.end(), cpu) != config_.worker_cpus.end()) {
-            std::cerr << "[WARN] main_thread_cpus and worker_cpus share CPU " << cpu
-                      << ", so the env workers can take turns with the main thread on it.\n";
+            warn("main_thread_cpus and worker_cpus share CPU " + std::to_string(cpu)
+                 + ", so the env workers can take turns with the main thread on it.", "Main thread shares CPU " + std::to_string(cpu));
             break;
         }
     }
@@ -140,13 +205,13 @@ void PPORunner::validate_cpu_pinning() const {
 void PPORunner::setup_dimensions_and_buffers() {
 
     if (config_.render) {
-        config_.num_envs_per_thread = 1;
+        config_.num_envs = 1;
         config_.num_threads = 1;
         config_.num_minibatches = 1;
     }
 
     vec_env_ = std::make_unique<env::VecEnv>(
-        config_.num_envs_per_thread, 
+        config_.total_envs(),
         config_.match_distributions,
         config_.setter_distributions,
         config_.reward_entries,
@@ -181,13 +246,18 @@ void PPORunner::setup_dimensions_and_buffers() {
     total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * learner_agents_);
     config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
 
+    if (!benchmark_child_ && !config_.render) {
+        std::cout << "Envs: " << config_.num_envs << " (" << learner_agents_ << " learner agents, " << buffer_size_
+                  << " steps each per update), worker threads: " << config_.num_threads << "\n";
+    }
+
     config_.ac_cfg.obs_size = static_cast<int64_t>(obs_size_);
     config_.ac_cfg.action_size = static_cast<int64_t>(action_space_size);
     
     actor_critic_ = ActorCritic(config_.ac_cfg);
     actor_critic_->to(device_);
 
-    trainer_ = std::make_unique<PPOTrainer>(config_.ppo_cfg, actor_critic_, device_);
+    trainer_ = std::make_unique<PPOTrainer>(config_.ppo_cfg, actor_critic_, device_, !benchmark_child_);
 
     // Opponent slots only run inference, so their weights never need gradients.
     for (size_t slot = 0; slot < vec_env_->get_num_opponent_slots(); slot++) {
@@ -373,6 +443,164 @@ void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::B
     );
 }
 
+double PPORunner::collect_rollout() {
+    // Pipelined rollout over two env groups: while one group's physics runs on the workers, the main thread
+    // uploads the other group's results and runs its inference. Each env still acts on its own latest obs
+    // before it advances, so there is no action delay; only the order of steps across groups changes.
+    RolloutGroup& group_a = *rollout_groups_[0];
+    RolloutGroup& group_b = *rollout_groups_[1];
+    int* const actions_ptr = actions_cpu_.data_ptr<int>();
+    const size_t num_steps = buffer_size_;
+
+    // Time the main thread spends blocked on the env workers. A large share of the rollout means physics is the
+    // limit, and a share near 0 means the main thread's own work is.
+    double physics_wait_seconds = 0.0;
+    const auto wait_for_physics = [&] {
+        const auto wait_start = std::chrono::high_resolution_clock::now();
+        env::BatchedStepResult res = vec_env_->wait();
+        physics_wait_seconds += std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - wait_start).count();
+        return res;
+    };
+
+    infer_group(group_a, group_a.obs_src, group_a.masks_src);
+    vec_env_->step_async(0, actions_ptr);
+    infer_group(group_b, group_b.obs_src, group_b.masks_src);
+
+    for (size_t t = 0; t < num_steps; ++t) {
+        const bool has_next = t + 1 < num_steps;
+
+        const auto res_a = wait_for_physics();
+        vec_env_->step_async(1, actions_ptr);
+        finish_group_step(group_a, t, res_a);
+        if (has_next) infer_group(group_a, res_a.observations, res_a.action_masks);
+
+        const auto res_b = wait_for_physics();
+        if (has_next) vec_env_->step_async(0, actions_ptr);
+        finish_group_step(group_b, t, res_b);
+        if (has_next) infer_group(group_b, res_b.observations, res_b.action_masks);
+    }
+
+    // Deferred truncations forward pass for values.
+    const int64_t n = static_cast<int64_t>(deferred_idx_.size());
+    if (n > 0) {
+        torch::Tensor deferred_idx_gpu = torch::from_blob(deferred_idx_.data(), n, torch::kInt64).to(device_);
+        torch::Tensor deferred_obs_gpu = torch::from_blob(deferred_obs_.data(), {n, static_cast<int64_t>(obs_size_)}, torch::kFloat32).to(device_);
+        torch::Tensor truncated_values;
+        {
+            torch::NoGradGuard no_grad;
+            truncated_values = actor_critic_->forward_critic(deferred_obs_gpu).squeeze(-1);
+        }
+        
+        buffer_->rewards_.view({-1}).index_add_(0, deferred_idx_gpu, truncated_values * config_.ppo_cfg.gae_gamma);
+    }
+    deferred_idx_.clear();
+    deferred_obs_.clear();
+
+    return physics_wait_seconds;
+}
+
+void PPORunner::warn(const std::string& message, const std::string& reminder) {
+    // cout is fully buffered when redirected, so flush it first to keep the warning next to what it's about.
+    std::cout << std::flush;
+    std::cerr << "[WARN] " << message << "\n";
+    warnings_.push_back({message, reminder, current_update_});
+}
+
+void PPORunner::print_warning_reminders() const {
+    if (warnings_.empty()) return;
+
+    std::vector<std::string> shown;
+    std::cout << " | Warnings:    ";
+    for (const RunWarning& warning : warnings_) {
+        if (std::find(shown.begin(), shown.end(), warning.reminder) != shown.end()) continue;
+        std::cout << (shown.empty() ? "" : ", ") << warning.reminder << " ("
+                  << (warning.update == 0 ? "startup" : "update " + std::to_string(warning.update)) << ")";
+        shown.push_back(warning.reminder);
+    }
+    std::cout << "\n";
+}
+
+void PPORunner::print_warning_summary() const {
+    if (warnings_.empty()) return;
+
+    std::cout << std::flush;
+    std::cerr << "\nWarnings from this run:\n";
+    for (const RunWarning& warning : warnings_) {
+        std::cerr << " [" << (warning.update == 0 ? "startup" : "update " + std::to_string(warning.update)) << "] "
+                  << warning.message << "\n";
+    }
+    std::cerr << "\n";
+}
+
+void PPORunner::check_rollout_bottleneck(double physics_wait) {
+    // About 20 updates is long enough to ignore single slow updates and short swings in the bot's play.
+    constexpr size_t WINDOW = 20;
+    // Phys Wait above this means physics is the limit, below the other the main thread is.
+    constexpr double PHYSICS_BOUND = 0.30;
+    constexpr double MAIN_BOUND = 0.10;
+    // CPUs without a worker before physics-bound warns. A single one is normal: the main thread's spare hyperthread.
+    constexpr size_t MIN_IDLE_CPUS = 2;
+
+    if (recent_physics_wait_.size() < WINDOW) {
+        recent_physics_wait_.push_back(physics_wait);
+    } else {
+        recent_physics_wait_[next_physics_wait_] = physics_wait;
+    }
+    next_physics_wait_ = (next_physics_wait_ + 1) % WINDOW;
+    if (recent_physics_wait_.size() < WINDOW) return;
+
+    std::vector<double> sorted = recent_physics_wait_;
+    std::nth_element(sorted.begin(), sorted.begin() + WINDOW / 2, sorted.end());
+    const double median_wait = sorted[WINDOW / 2];
+    const int wait_percent = static_cast<int>(std::lround(100.0 * median_wait));
+
+    // CPUs with no worker on them: the main thread takes its pinned CPUs, or one CPU when unpinned. Pinned workers
+    // can't use CPUs outside worker_cpus, and too few threads leave some of their CPUs empty.
+    const std::vector<int>& main_cpus = config_.main_thread_cpus;
+    const std::vector<int>& worker_cpus = config_.worker_cpus;
+    const size_t main_taken = main_cpus.empty() ? 1 : main_cpus.size();
+    size_t idle_cpus = 0;
+    if (worker_cpus.empty()) {
+        idle_cpus = allowed_cpus_ > main_taken + config_.num_threads ? allowed_cpus_ - main_taken - config_.num_threads : 0;
+    } else {
+        std::vector<int> used = worker_cpus;
+        used.insert(used.end(), main_cpus.begin(), main_cpus.end());
+        std::sort(used.begin(), used.end());
+        used.erase(std::unique(used.begin(), used.end()), used.end());
+        idle_cpus = (worker_cpus.size() > config_.num_threads ? worker_cpus.size() - config_.num_threads : 0)
+                  + (allowed_cpus_ > used.size() ? allowed_cpus_ - used.size() : 0);
+    }
+
+    if (!warned_physics_bound_ && median_wait >= PHYSICS_BOUND && idle_cpus >= MIN_IDLE_CPUS) {
+        warned_physics_bound_ = true;
+        warn("Physics was the limit over the last " + std::to_string(WINDOW) + " updates (Phys Wait "
+             + std::to_string(wait_percent) + "%), while about " + std::to_string(idle_cpus) + " CPUs had no env worker. "
+             + "More worker threads should be faster: try num_threads = 0, or compare setups with benchmark mode.",
+             "Physics-bound with ~" + std::to_string(idle_cpus) + " idle CPUs");
+    }
+
+    // Unpinned with a worker for every CPU, the main thread has no CPU to itself and waits its turn with the workers.
+    const bool main_shares_cpus = main_cpus.empty() && worker_cpus.empty() && config_.num_threads >= allowed_cpus_;
+    if (!warned_main_bound_ && median_wait <= MAIN_BOUND && main_shares_cpus && allowed_cpus_ >= 4) {
+        warned_main_bound_ = true;
+        warn("The main thread was the limit over the last " + std::to_string(WINDOW) + " updates (Phys Wait "
+             + std::to_string(wait_percent) + "%), and shares every CPU with the " + std::to_string(config_.num_threads)
+             + " env workers. Pinning it to a core of its own or a worker fewer may be faster: compare setups with "
+             + "benchmark mode.", "Main-thread-bound, sharing every CPU");
+    }
+}
+
+void PPORunner::compute_advantages() {
+    // The full obs buffer holds every group's latest obs, and its first rows are the learners'.
+    step_obs_gpu_.copy_(batched_obs_.narrow(0, 0, static_cast<int64_t>(learner_agents_)), true);
+    torch::Tensor next_values;
+    {
+        torch::NoGradGuard no_grad;
+        next_values = actor_critic_->forward_critic(step_obs_gpu_).squeeze(-1);
+    }
+    buffer_->compute_returns_and_advantages(next_values, config_.ppo_cfg.gae_gamma, config_.ppo_cfg.gae_lambda);
+}
+
 void PPORunner::save_checkpoint(const std::string& dir) const {
     const fs::path final_dir = fs::path(dir) / (config_.bot_name + "_" + std::to_string(global_step_));
     const fs::path tmp_dir = final_dir.string() + ".tmp";
@@ -448,6 +676,16 @@ void PPORunner::write_log_window() {
     logger_->add_scalar("Performance/Total_SPS", global_step_, steps / window.update_seconds);
     logger_->add_scalar("Performance/Rollout_SPS", global_step_, steps / window.rollout_seconds);
     logger_->add_scalar("Performance/Rollout_Physics_Wait", global_step_, window.physics_wait_seconds / window.rollout_seconds);
+
+    // What the envs cost to step since the last log. Touches and repredictions explain most of the step time's rise
+    // as a bot learns to play the ball.
+    const env::EnvCostCounts cost = vec_env_->collect_cost_counts();
+    if (cost.env_steps > 0) {
+        const auto env_steps = static_cast<double>(cost.env_steps);
+        logger_->add_scalar("Performance/Env_Step_Microseconds", global_step_, 1e6 * cost.step_seconds / env_steps);
+        logger_->add_scalar("Performance/Touch_Ticks_Per_Env_Step", global_step_, static_cast<double>(cost.touch_ticks) / env_steps);
+        logger_->add_scalar("Performance/Repredictions_Per_Env_Step", global_step_, static_cast<double>(cost.repredictions) / env_steps);
+    }
     logger_->add_scalar("Loss/Policy", global_step_, mean_metric("policy_loss"));
     logger_->add_scalar("Loss/Value", global_step_, mean_metric("value_loss"));
     logger_->add_scalar("Loss/Entropy", global_step_, mean_metric("entropy"));
@@ -459,21 +697,31 @@ void PPORunner::write_log_window() {
     window = {};
 }
 
-void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
-    
+void PPORunner::prepare_rollouts() {
     if (vec_env_->get_groups().size() < 2) {
         throw std::invalid_argument("Training needs at least 2 envs, since the rollout is pipelined over two env groups.");
     }
 
+    const auto reset_res = vec_env_->reset();
+    batched_obs_ = reset_res.observations;
+    setup_rollout_groups(reset_res.observations, reset_res.action_masks);
+}
+
+void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
+
+    fs::create_directories("logs");
+    const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
+    TensorBoardLoggerOptions logger_options{};
+    logger_options.resume_ = true;
+    logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options);
+
     // The main thread runs inference and the step bookkeeping. Pinned only here, after the env workers and CUDA have
     // started their threads, since threads it starts from now on inherit its CPUs.
     if (!config_.main_thread_cpus.empty() && !util::pin_thread(pthread_self(), config_.main_thread_cpus)) {
-        std::cerr << "[WARN] Could not pin the main thread to main_thread_cpus. It runs unpinned.\n";
+        warn("Could not pin the main thread to main_thread_cpus. It runs unpinned.", "Main thread unpinned");
     }
 
-    // Holds VecEnv's full batched buffers, which always contain every agent's latest obs and masks.
-    const auto reset_res = vec_env_->reset();
-    setup_rollout_groups(reset_res.observations, reset_res.action_masks);
+    prepare_rollouts();
 
     // Seed an empty pool with the starting learner, so there is always a version to play.
     const int64_t snapshot_interval = config_.pfsp_cfg.snapshot_interval;
@@ -495,6 +743,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     next_log_step_ = (global_step_ / log_interval + 1) * log_interval;
 
     for (int update = 1; update <= num_updates; ++update) {
+        current_update_ = update;
 
         if (stop_flag) {
             std::cout << "\nTraining interrupted by user. Stopping...\n";
@@ -522,41 +771,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             }
         }
 
-        // Pipelined rollout over two env groups: while one group's physics runs on the workers, the main thread
-        // uploads the other group's results and runs its inference. Each env still acts on its own latest obs
-        // before it advances, so there is no action delay; only the order of steps across groups changes.
-        RolloutGroup& group_a = *rollout_groups_[0];
-        RolloutGroup& group_b = *rollout_groups_[1];
-        int* const actions_ptr = actions_cpu_.data_ptr<int>();
-        const size_t num_steps = buffer_size_;
-
-        // Time the main thread spends blocked on the env workers. A large share of the rollout means physics is the
-        // limit, and a share near 0 means the main thread's own work is.
-        double physics_wait_seconds = 0.0;
-        const auto wait_for_physics = [&] {
-            const auto wait_start = std::chrono::high_resolution_clock::now();
-            env::BatchedStepResult res = vec_env_->wait();
-            physics_wait_seconds += std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - wait_start).count();
-            return res;
-        };
-
-        infer_group(group_a, group_a.obs_src, group_a.masks_src);
-        vec_env_->step_async(0, actions_ptr);
-        infer_group(group_b, group_b.obs_src, group_b.masks_src);
-
-        for (size_t t = 0; t < num_steps; ++t) {
-            const bool has_next = t + 1 < num_steps;
-
-            const auto res_a = wait_for_physics();
-            vec_env_->step_async(1, actions_ptr);
-            finish_group_step(group_a, t, res_a);
-            if (has_next) infer_group(group_a, res_a.observations, res_a.action_masks);
-
-            const auto res_b = wait_for_physics();
-            if (has_next) vec_env_->step_async(0, actions_ptr);
-            finish_group_step(group_b, t, res_b);
-            if (has_next) infer_group(group_b, res_b.observations, res_b.action_masks);
-        }
+        const double physics_wait_seconds = collect_rollout();
 
         // Successful rollout, increment global steps.
         global_step_ += total_steps_per_update_;
@@ -582,34 +797,11 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         log_window_.pfsp_wins += pfsp_wins;
         log_window_.pfsp_games += pfsp_games;
 
-        // Deferred truncations forward pass for values.
-        const int64_t n = static_cast<int64_t>(deferred_idx_.size());
-        if (n > 0) {
-            torch::Tensor deferred_idx_gpu = torch::from_blob(deferred_idx_.data(), n, torch::kInt64).to(device_);
-            torch::Tensor deferred_obs_gpu = torch::from_blob(deferred_obs_.data(), {n, static_cast<int64_t>(obs_size_)}, torch::kFloat32).to(device_);
-            torch::Tensor truncated_values;
-            {
-                torch::NoGradGuard no_grad;
-                truncated_values = actor_critic_->forward_critic(deferred_obs_gpu).squeeze(-1);
-            }
-            
-            buffer_->rewards_.view({-1}).index_add_(0, deferred_idx_gpu, truncated_values * config_.ppo_cfg.gae_gamma);
-        }
-        deferred_idx_.clear();
-        deferred_obs_.clear();
-        
         const auto rollout_end = std::chrono::high_resolution_clock::now();
 
-        // GAE & Optimize. The full obs buffer holds every group's latest obs, and its first rows are the learners'.
-        step_obs_gpu_.copy_(reset_res.observations.narrow(0, 0, static_cast<int64_t>(learner_agents_)), true);
-        torch::Tensor next_values;
-        {
-            torch::NoGradGuard no_grad;
-            next_values = actor_critic_->forward_critic(step_obs_gpu_).squeeze(-1);
-        }
-
+        // GAE & Optimize.
         const auto gae_start = std::chrono::high_resolution_clock::now();
-        buffer_->compute_returns_and_advantages(next_values, config_.ppo_cfg.gae_gamma, config_.ppo_cfg.gae_lambda);
+        compute_advantages();
         const auto gae_end = std::chrono::high_resolution_clock::now();
         const auto metrics = trainer_->train_step(*buffer_);
 
@@ -674,6 +866,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
             std::cout << " (pool: " << opponent_pool_->size() << ")\n";
         }
 
+        check_rollout_bottleneck(physics_wait_seconds / rollout_time.count());
+        print_warning_reminders();
+
         if (checkpoint_interval > 0 && global_step_ >= next_checkpoint_step_) {
             save_checkpoint(checkpoint_dir);
             last_checkpoint_step_ = global_step_;
@@ -690,6 +885,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     if (global_step_ != last_checkpoint_step_) {
         save_checkpoint(checkpoint_dir);
     }
+
+    // Last, so the warnings are the first thing seen after the run.
+    print_warning_summary();
 }
 
 void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
@@ -716,6 +914,11 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
 }
 
 void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
+    if (config_.benchmark) {
+        run_benchmark(stop_flag);
+        return;
+    }
+
     global_step_ = load_latest_checkpoint(checkpoint_dir);
 
     if (opponent_pool_) {

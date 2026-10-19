@@ -72,6 +72,7 @@ if(BUILD_RUST_BRIDGE)
         src/rl/optimizers.cpp
         src/rl/ppo_trainer.cpp
         src/rl/ppo_runner.cpp
+        src/rl/ppo_benchmark.cpp
         src/rl/opponent_pool.cpp
         src/state/default_kickoff.cpp
         src/state/random_state.cpp
