@@ -239,6 +239,12 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 static_normalized_entropy_ = torch::zeros({1}, float_opts);
             }
 
+            // The captured graph reads these buffers at fixed addresses, and `index_select_out` would reallocate them
+            // for a minibatch of another size. The runner sizes the rollout so every minibatch is the same size.
+            TORCH_CHECK(mb_inds.size(0) == static_mb_obs_.size(0), "A minibatch has ", mb_inds.size(0),
+                        " rows, but the captured training graph uses ", static_mb_obs_.size(0),
+                        ". The steps per update must divide evenly by mini_batch_size.");
+
             torch::index_select_out(static_mb_obs_, b_obs, 0, mb_inds);
             torch::index_select_out(static_mb_actions_, b_actions, 0, mb_inds);
             torch::index_select_out(static_mb_action_masks_, b_action_masks, 0, mb_inds);

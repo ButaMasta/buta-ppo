@@ -1,10 +1,13 @@
-// buta-ppo/src/env/default_action.cpp
+// buta-ppo/src/action/default_action.cpp
 
 /*
 *   Implementation is entirely based off of actions used in GigaLearn.
 */
 
 #include "default_action.hpp"
+
+#include <stdexcept>
+#include <string>
 
 namespace buta_ppo::action {
 
@@ -37,7 +40,7 @@ DefaultAction::DefaultAction() {
                     action.boost = boost;
                     action.handbrake = handbrake;
 
-                    actions_table_[idx++] = action;
+                    actions_table_.at(idx++) = action;
                 }
             }
         }
@@ -74,11 +77,18 @@ DefaultAction::DefaultAction() {
                         action.boost = boost;
                         action.handbrake = handbrake;
 
-                        actions_table_[idx++] = action;
+                        actions_table_.at(idx++) = action;
                     }
                 }
             }
         }
+    }
+
+    // Editing the loops above can change the action count. More actions than ACTION_SPACE_SIZE throw at the `at()`
+    // writes, and fewer would leave the remaining entries uninitialized.
+    if (idx != ACTION_SPACE_SIZE) {
+        throw std::logic_error("DefaultAction built " + std::to_string(idx) + " actions, but ACTION_SPACE_SIZE is " +
+                               std::to_string(ACTION_SPACE_SIZE) + ".");
     }
 
     // Precompute Masks.

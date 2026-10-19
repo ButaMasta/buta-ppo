@@ -132,7 +132,7 @@ On startup, the framework searches `checkpoints/` for the most recent checkpoint
 
 A run trains for at most the number of updates passed to `runner.run` in `main.cpp` (`1'000` by default, about 50M steps with the demo config), then saves a checkpoint and exits. Run the binary again to continue from there.
 
-To stop training safely, press Ctrl+C. The current update finishes, a checkpoint is saved, and the program exits.
+To stop training safely, press Ctrl+C, or send `SIGTERM` (what `kill`, `systemctl stop`, and `docker stop` send). The current update finishes, a checkpoint is saved, and the program exits.
 
 Checkpoints are also saved every `config.steps_per_checkpoint` lifetime steps (`100'000'000` by default; `0` turns this off), so a crash only loses the progress since the last one. Every checkpoint is kept, and each one is roughly as large as the network and its optimizer state (about 50 MB for the demo network), so delete old ones you don't need.
 

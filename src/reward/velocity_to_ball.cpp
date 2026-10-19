@@ -1,4 +1,4 @@
-// buta-ppo/src/reward/touch_ball.cpp
+// buta-ppo/src/reward/velocity_to_ball.cpp
 #include "reward_manager.hpp"
 #include "rewards.hpp"
 #include "env/rocketsim_env.hpp"

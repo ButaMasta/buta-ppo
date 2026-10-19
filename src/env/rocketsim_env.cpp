@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <thread>
 #include <chrono>
 #include <stdexcept>
@@ -159,7 +160,7 @@ StepResult RocketSimEnv::step(const int* actions) {
         metric_manager_.update_previous_state(arena_state_);
 
         // Reset touch counter if any car hit the ball or increment it.
-        if (std::any_of(arena_state_.events.car_hit_ball, arena_state_.events.car_hit_ball + 8, [](bool v) { return v; })) {
+        if (std::any_of(std::begin(arena_state_.events.car_hit_ball), std::end(arena_state_.events.car_hit_ball), [](bool v) { return v; })) {
             ticks_since_last_touch_ = 0;
             ++touch_ticks_;
         } else {

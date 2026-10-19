@@ -1,4 +1,4 @@
-// buta-ppo/src/env/state_setter.hpp
+// buta-ppo/src/state/state_setter.hpp
 #pragma once
 
 #include "buta_ppo/ffi.h"

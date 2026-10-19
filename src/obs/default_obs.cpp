@@ -1,4 +1,4 @@
-// buta-ppo/src/env/default_obs.cpp
+// buta-ppo/src/obs/default_obs.cpp
 
 #include "default_obs.hpp"
 #include "env/rocketsim_env.hpp" // For AgentMeta
@@ -13,7 +13,7 @@ namespace math = buta_ppo::util::math;
 namespace buta_ppo::obs {
 
 DefaultObs::DefaultObs(size_t max_players_per_team, uint8_t tick_skip, uint32_t seed)
-    : max_players_per_team_(max_players_per_team), tick_skip_(tick_skip), rng_(seed), tick_last_updated_ball_pred_(9999) {
+    : max_players_per_team_(max_players_per_team), tick_skip_(tick_skip), rng_(seed) {
     ball_pred_arena_ = ffi::create_arena_ball_sim(0);
     team_A_indices_.reserve(max_players_per_team_);
     team_B_indices_.reserve(max_players_per_team_);

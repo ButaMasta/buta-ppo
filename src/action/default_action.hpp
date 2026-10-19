@@ -1,4 +1,4 @@
-// buta-ppo/src/env/default_action.hpp
+// buta-ppo/src/action/default_action.hpp
 
 /*
 *   Implementation is based off of actions used in GigaLearn.

@@ -1,4 +1,4 @@
-// buta-ppo/src/env/reward_manager.cpp
+// buta-ppo/src/reward/reward_manager.cpp
 #include "reward_manager.hpp"
 #include "env/rocketsim_env.hpp"
 

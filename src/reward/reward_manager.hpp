@@ -1,4 +1,4 @@
-// buta-ppo/src/env/reward_manager.hpp
+// buta-ppo/src/reward/reward_manager.hpp
 #pragma once
 
 #include "buta_ppo/ffi.h"

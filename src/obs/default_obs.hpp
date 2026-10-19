@@ -1,4 +1,4 @@
-// buta-ppo/src/env/default_obs.hpp
+// buta-ppo/src/obs/default_obs.hpp
 #pragma once
 
 #include "buta_ppo/ffi.h"

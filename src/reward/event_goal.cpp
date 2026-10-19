@@ -1,4 +1,4 @@
-// buta-ppo/src/reward/touch_ball.cpp
+// buta-ppo/src/reward/event_goal.cpp
 #include "reward_manager.hpp"
 #include "rewards.hpp"
 

@@ -500,8 +500,14 @@ pub extern "C" fn rs_arena_set_car_controls(
 ) {
     if arena_ptr.is_null() { return; }
     let arena: &mut Arena = unsafe { &mut *arena_ptr };
+    let idx: usize = car_idx as usize;
 
-    arena.set_car_controls(car_idx as usize, CarControls::from(controls));
+    // An out of range index would panic, which aborts the whole process across the C ABI.
+    if idx >= arena.num_cars() {
+        return;
+    }
+
+    arena.set_car_controls(idx, CarControls::from(controls));
 }
 
 /// Set ball phys state.

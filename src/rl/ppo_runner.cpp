@@ -20,6 +20,7 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -240,9 +241,30 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.target_steps_per_update = learner_agents_;
     }
 
+    // Every minibatch must be the same size for the captured training graph, so the buffer grows until the
+    // minibatches divide its steps. That's usually a step or two, but some minibatch counts need many more.
     buffer_size_ = (config_.target_steps_per_update + learner_agents_ - 1) / learner_agents_;
+    const size_t target_buffer_size = buffer_size_;
     while ((buffer_size_ * learner_agents_) % config_.num_minibatches != 0) {
         buffer_size_++;
+    }
+    if (!benchmark_child_ && buffer_size_ * 20 > target_buffer_size * 21) {
+        // The minibatch count closest to the configured one that needs no growth. 1 always qualifies.
+        const size_t target_steps = target_buffer_size * learner_agents_;
+        const size_t requested = config_.num_minibatches;
+        const auto distance = [requested](size_t m) { return m > requested ? m - requested : requested - m; };
+        size_t suggested = 1;
+        for (size_t m = 2; m <= 2 * requested; m++) {
+            if (target_steps % m == 0 && distance(m) < distance(suggested)) suggested = m;
+        }
+        std::ostringstream growth;
+        growth << std::fixed << std::setprecision(1)
+               << 100.0 * static_cast<double>(buffer_size_ - target_buffer_size) / static_cast<double>(target_buffer_size);
+        warn("num_minibatches = " + std::to_string(config_.num_minibatches) + " doesn't divide the steps per update "
+             "evenly, so each agent's steps per update grew from " + std::to_string(target_buffer_size) + " to " +
+             std::to_string(buffer_size_) + " (+" + growth.str() + "% steps, time and memory per update). "
+             "num_minibatches = " + std::to_string(suggested) + " would keep " + std::to_string(target_buffer_size) + ".",
+             "Steps per update +" + growth.str() + "%");
     }
 
     // Initialize staging buffers for deferred truncation critic forward pass.

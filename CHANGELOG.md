@@ -39,6 +39,14 @@
     - Before, `torch::load` took on the file's shapes without checking. A resume after changing `ac_cfg`, or a bot whose `bot_api.cpp` settings didn't match its checkpoint, either failed at the first forward pass (the bot then sent no inputs every tick) or silently ran the checkpoint's network instead of the configured one.
     - Weights are read onto the network's device, so resuming from a checkpoint saved on another device (e.g. the CPU) works too. The bot already did this.
     - Non-breaking for matching checkpoints. Resolution for a mismatch: on resume, change `bot_name` or move the old checkpoints to start fresh. In the bot, set `bot_api.cpp` to the config the checkpoint was trained with. A PFSP snapshot that doesn't match is skipped with a message.
+11. Hardening and small fixes.
+    - `SIGTERM` now stops training like Ctrl+C: the current update finishes and a checkpoint is saved. Before, process managers (`systemctl stop`, `docker stop`, Slurm) killed the run and lost everything since the last checkpoint.
+    - A `[WARN]` when `num_minibatches` doesn't divide the steps per update evenly and the rollout grows by more than 5% to make it fit. It names the nearest minibatch count that needs no growth. Some counts used to grow the steps, time and memory per update several times over without a message.
+    - Errors instead of silent corruption for invariants that hold today but were only implied: the training graph checks that every minibatch has the size it was captured with, and `DefaultAction` checks that its loops build exactly `ACTION_SPACE_SIZE` actions.
+    - The tensorboard_logger patch fails the configure if `add_scalar` doesn't come out with a 64-bit step, so a changed upstream signature can't silently bring back negative steps past 2^31.
+    - `rs_arena_set_car_controls` ignores an out of range car index, like `rs_arena_set_car_state`, instead of panicking and aborting the process.
+    - Corrected the path comments at the top of 10 source files.
+    - Non-breaking.
 
 ### Releases
 #### 0.2.0
