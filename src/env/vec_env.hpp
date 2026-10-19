@@ -2,6 +2,7 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
+#include "env/episode_limits.hpp"
 #include "state/state_setter.hpp"
 #include "reward/reward_manager.hpp"
 #include "metric/metric_manager.hpp"
@@ -211,6 +212,7 @@ public:
         const std::vector<metric::MetricEntry>& metric_entries,
         size_t num_threads, 
         int ticks_per_step = 8, 
+        const EpisodeLimits& episode_limits = {},
         size_t max_players_per_team = 4, 
         bool render = false,
         const rl::PFSPConfig& pfsp_cfg = {},

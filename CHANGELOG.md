@@ -47,6 +47,9 @@
     - `rs_arena_set_car_controls` ignores an out of range car index, like `rs_arena_set_car_state`, instead of panicking and aborting the process.
     - Corrected the path comments at the top of 10 source files.
     - Non-breaking.
+12. The no-touch timeout and the episode time limit are now config values, `RunnerConfig::no_touch_timeout_seconds` (default `10`) and `RunnerConfig::episode_time_limit_seconds` (default `150`). Both used to be fixed.
+    - `0` turns a limit off. A negative or non-finite value stops training at startup, and a no-touch timeout longer than the time limit prints a `[WARN]`, since it can never end an episode.
+    - Non-breaking. The defaults match the old fixed values, so existing configs behave the same.
 
 ### Releases
 #### 0.2.0

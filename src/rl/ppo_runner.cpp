@@ -34,6 +34,26 @@ constexpr const char* OPTIMIZER_FILE = "optimizer.pt";
 // Suffix of the PFSP pool's directory, `<bot name>_pool/`, next to the checkpoints.
 // Checkpoint loading skips it, since "pool" isn't a step count.
 constexpr const char* POOL_DIR_SUFFIX = "_pool";
+
+/**
+ * @brief Converts an episode limit in seconds to physics ticks, 120 per second. 0 stays 0, which turns it off.
+ *
+ * @throws std::invalid_argument If the limit is negative, not finite, too large, or shorter than one tick.
+ */
+int limit_ticks(float seconds, const std::string& name) {
+    constexpr double TICKS_PER_SECOND = 120.0;
+    if (!std::isfinite(seconds) || seconds < 0.0f) {
+        throw std::invalid_argument(name + " must be finite and at least 0 (0 turns it off).");
+    }
+    const double ticks = std::round(static_cast<double>(seconds) * TICKS_PER_SECOND);
+    if (ticks > static_cast<double>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument(name + " is too large. Set it to 0 to turn the limit off.");
+    }
+    if (seconds > 0.0f && ticks == 0.0) {
+        throw std::invalid_argument(name + " must be 0 (off) or at least one physics tick, 1/120 of a second.");
+    }
+    return static_cast<int>(ticks);
+}
 } // namespace
 
 size_t learner_agents_for(size_t envs, const RunnerConfig& config) {
@@ -101,6 +121,15 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
     if (!benchmark_child_) {
         validate_rewards();
         validate_cpu_pinning();
+    }
+
+    // Converted before the benchmark returns below, so a bad value fails once here instead of in every candidate.
+    episode_limits_ = {limit_ticks(config_.no_touch_timeout_seconds, "no_touch_timeout_seconds"),
+                       limit_ticks(config_.episode_time_limit_seconds, "episode_time_limit_seconds")};
+    if (!benchmark_child_ && episode_limits_.no_touch_ticks > 0 && episode_limits_.time_limit_ticks > 0 &&
+        episode_limits_.no_touch_ticks > episode_limits_.time_limit_ticks) {
+        warn("no_touch_timeout_seconds is longer than episode_time_limit_seconds, so it never ends an episode.",
+             "No-touch timeout unused");
     }
 
     // Resolve the automatic env and thread counts once, so everything after sees the actual values.
@@ -226,6 +255,7 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.metric_entries,
         config_.num_threads, 
         config_.ticks_per_step, 
+        episode_limits_,
         config_.max_players_per_team,
         config_.render,
         config_.pfsp_cfg,

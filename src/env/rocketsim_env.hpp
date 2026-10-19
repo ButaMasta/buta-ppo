@@ -2,6 +2,7 @@
 #pragma once
 
 #include "buta_ppo/ffi.h"
+#include "env/episode_limits.hpp"
 #include "obs/default_obs.hpp"
 #include "reward/reward_manager.hpp"
 #include "action/default_action.hpp"
@@ -92,8 +93,7 @@ private:
     int ticks_per_step_;
     size_t single_obs_size_;
     size_t action_space_size_;
-    static constexpr int no_touch_ticks_limit_ = 1200;  // 10 seconds.
-    static constexpr int match_ticks_limit_ = 18'000;   // 2.5 minutes.
+    EpisodeLimits limits_;
     int ticks_since_last_touch_ = 0;
     uint64_t touch_ticks_ = 0; // Since the last `take_ball_cost_counts`.
     int match_ticks_ = 0;
@@ -125,7 +125,8 @@ public:
         const std::vector<state::StateSetterDistribution>& setters,
         const std::vector<reward::RewardEntry>& rewards,
         const std::vector<metric::MetricEntry>& metrics,
-        int ticks_per_step = 8, 
+        int ticks_per_step = 8,
+        const EpisodeLimits& limits = {},
         size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}(),
         bool render = false,

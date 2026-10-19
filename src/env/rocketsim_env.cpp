@@ -20,7 +20,7 @@ RocketSimEnv::RocketSimEnv(
     const std::vector<state::StateSetterDistribution>& setters, 
     const std::vector<reward::RewardEntry>& rewards,
     const std::vector<metric::MetricEntry>& metrics,
-    int ticks_per_step, size_t max_players_per_team, 
+    int ticks_per_step, const EpisodeLimits& limits, size_t max_players_per_team,
     uint32_t seed, 
     bool render,
     std::optional<ffi::Team> opponent_team
@@ -28,6 +28,7 @@ RocketSimEnv::RocketSimEnv(
     setters_(setters),
     rng_(seed),
     ticks_per_step_(ticks_per_step),
+    limits_(limits),
     obs_builder_(max_players_per_team, ticks_per_step, seed), 
     render_(render) {
 
@@ -98,6 +99,8 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
 ResetResult RocketSimEnv::reset() {
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
+    ticks_since_last_touch_ = 0;
+    match_ticks_ = 0;
     reward_manager_.reset(agents_, arena_state_);
     metric_manager_.reset(arena_state_);
     obs_builder_.reset();
@@ -173,18 +176,16 @@ StepResult RocketSimEnv::step(const int* actions) {
         if (arena_state_.events.is_ball_scored) {
             // The ball is past orange's goal line (positive Y) when blue scores.
             blue_scored = arena_state_.ball.phys.pos[1] > 0;
-            ticks_since_last_touch_ = 0;
-            match_ticks_ = 0;
             ticks_elapsed = i + 1;
             episode_terminated = true;
             break;
         }
 
-        // Tick count related truncation states.
-        if (ticks_since_last_touch_ >= no_touch_ticks_limit_ || match_ticks_ >= match_ticks_limit_) {
-            no_touch_truncated = ticks_since_last_touch_ >= no_touch_ticks_limit_;
-            ticks_since_last_touch_ = 0;
-            match_ticks_ = 0;
+        // Tick count related truncation states. A limit of 0 is off.
+        const bool no_touch = limits_.no_touch_ticks > 0 && ticks_since_last_touch_ >= limits_.no_touch_ticks;
+        const bool time_up = limits_.time_limit_ticks > 0 && match_ticks_ >= limits_.time_limit_ticks;
+        if (no_touch || time_up) {
+            no_touch_truncated = no_touch;
             ticks_elapsed = i + 1;
             episode_truncated = true;
             break;

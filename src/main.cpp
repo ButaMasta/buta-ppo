@@ -60,6 +60,11 @@ int main() {
         {create_random_state_setter(true, true, true), 0.35f},
         {create_random_state_setter(true, true, false), 0.35f}
     };
+
+    // Besides a goal, episodes end when no car touches the ball for this long, or once they last this long.
+    // 0 turns a limit off.
+    config.no_touch_timeout_seconds = 10.0f;
+    config.episode_time_limit_seconds = 150.0f;
     
     config.reward_entries = {
         {"VelocityToBall", create_velocity_to_ball_reward(), 0.1f},

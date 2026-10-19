@@ -158,6 +158,10 @@ config.setter_distributions = {
     {create_random_state_setter(true, true, false), 0.35f}  // Fully random at 35%.
 };
 
+// Besides a goal, episodes end after this long without a touch, or once they last this long. 0 turns a limit off.
+config.no_touch_timeout_seconds = 10.0f;
+config.episode_time_limit_seconds = 150.0f;
+
 // Rewards with their names (for logging) and weights. Rewards are computed every physics tick.
 config.reward_entries = {
     {"VelocityToBall", create_velocity_to_ball_reward(), 0.1f},
@@ -170,6 +174,8 @@ config.metric_entries = {
     {"InAirRatio", create_in_air_ratio_metric()}
 };
 ```
+
+**Episode Limits:** Besides a goal, an episode ends when no car has touched the ball for `no_touch_timeout_seconds`, or once it has lasted `episode_time_limit_seconds`. These are truncations, not terminations: the critic's estimate of the last state stands in for the rest of the episode, so an episode that is cut short isn't treated as worth nothing from there on. A short no-touch timeout keeps slow, ball-less play out of the training data, but the bot then rarely learns from it. `Episode/Truncations_No_Touch` and `Episode/Truncations_Time_Limit` in [Telemetry](#telemetry) show how often each limit ends episodes. `0` turns a limit off, a negative value stops training at startup, and a no-touch timeout longer than the time limit prints a `[WARN]`, since it can never fire.
 
 Rewards are summed over the `ticks_per_step` ticks of each step, so per-tick rewards scale with `ticks_per_step`.
 

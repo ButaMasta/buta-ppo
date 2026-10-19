@@ -8,6 +8,7 @@
 #include "state/state_setter.hpp"
 #include "reward/reward_manager.hpp"
 #include "metric/metric_manager.hpp"
+#include "env/episode_limits.hpp"
 
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -91,6 +92,12 @@ struct RunnerConfig {
     };
 
     std::vector<state::StateSetterDistribution> setter_distributions;
+
+    // Besides a goal, an episode ends when no car has touched the ball for this long, or when it has lasted this
+    // long. Both are truncations, so the critic's value of the last state stands in for the rest of the episode.
+    // 0 turns a limit off.
+    float no_touch_timeout_seconds = 10.0f;
+    float episode_time_limit_seconds = 150.0f;
     std::vector<reward::RewardEntry> reward_entries;
     std::vector<metric::MetricEntry> metric_entries = {};
 
@@ -202,6 +209,7 @@ class PPORunner {
 private:
     RunnerConfig config_;
     torch::Device device_;
+    env::EpisodeLimits episode_limits_; // The config's episode limits in physics ticks.
 
     std::unique_ptr<env::VecEnv> vec_env_;
     ActorCritic actor_critic_{nullptr};
