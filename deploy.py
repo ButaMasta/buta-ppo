@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 def deploy():
@@ -25,11 +26,15 @@ def deploy():
     print(f"Copying executable to {bot_dir.absolute()}...")
     shutil.copy("rust_bridge/target/release/buta_ppo_bot", bot_dir)
 
+    # Cargo keeps a build directory per build script configuration, so older copies of the library can sit next to
+    # the current one. The most recently built is the one the build above produced or kept.
     print("Locating custom C++ shared library...")
-    for path in Path("rust_bridge/target/release/build").rglob("libbuta_ppo_bot.so"):
-        shutil.copy(path, bot_lib_dir)
-        print(f"  -> Copied {path.name}")
-        break
+    libs = list(Path("rust_bridge/target/release/build").rglob("libbuta_ppo_bot.so"))
+    if libs:
+        newest = max(libs, key=lambda p: p.stat().st_mtime)
+        shutil.copy(newest, bot_lib_dir)
+        built = datetime.fromtimestamp(newest.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"  -> Copied {newest} (built {built})")
     else:
         print("  -> Warning: libbuta_ppo_bot.so not found in rust_bridge/target/release/build")
 

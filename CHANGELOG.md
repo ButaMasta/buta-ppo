@@ -30,6 +30,10 @@
     - Every update ends with a ` | Warnings:` line listing a short label for each warning so far and when it was raised, and the full warnings are printed again when training ends.
     - Covers the reward config, CPU pinning, unusable optimizer state, and rollout bottleneck warnings.
     - Non-breaking.
+9. The RLBot bot library now rebuilds when any C++ header or CMake file changes, not only when one of four `.cpp` files does.
+    - Before, editing a header such as `default_obs.hpp` (which holds the obs coefficients) or `ffi.h` left the old `libbuta_ppo_bot.so` in place, so a deployed bot could build a different obs from the one it was trained on without any error.
+    - `deploy.py` now copies the most recently built `libbuta_ppo_bot.so` and prints its path and build time. It used to copy whichever copy it found first, and Cargo keeps older copies from earlier builds next to the current one.
+    - Non-breaking. Editing training-only C++ files now also reruns the bot build step, which adds a second or two to builds. Redeploy existing bots to make sure they use an up-to-date library.
 
 ### Releases
 #### 0.2.0

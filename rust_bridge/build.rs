@@ -23,11 +23,13 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=torch_cpu");
     println!("cargo:rustc-link-lib=dylib=c10");
 
-    // Tell Cargo to re-run this script if any C++ source files change.
-    println!("cargo:rerun-if-changed=../src/bot_api.cpp");
-    println!("cargo:rerun-if-changed=../src/obs/default_obs.cpp");
-    println!("cargo:rerun-if-changed=../src/action/default_action.cpp");
-    println!("cargo:rerun-if-changed=../src/rl/actor_critic.cpp");
+    // Re-run this script when any C++ source, header, or CMake file changes. Cargo scans directories recursively.
+    // Headers matter as much as sources: the obs coefficients and the FFI struct layouts live in them, and a stale
+    // library would build a different obs than training did without any error. CMake then rebuilds only what changed.
+    println!("cargo:rerun-if-changed=../src");
+    println!("cargo:rerun-if-changed=../include");
+    println!("cargo:rerun-if-changed=../cmake");
+    println!("cargo:rerun-if-changed=../CMakeLists.txt");
 
     // Instruct the dynamic linker to check the executable's directory for .so files.
     println!("cargo:rustc-link-arg=-Wl,-rpath=$ORIGIN/libs");
