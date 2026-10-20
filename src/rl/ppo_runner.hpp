@@ -284,6 +284,17 @@ private:
         torch::Tensor actions_gpu;
         torch::Tensor log_probs_gpu;
         torch::Tensor values_gpu;
+
+        // Insert graph: uploads a step's results and writes the step into the buffer. The step it writes lives on the
+        // device, and the graph advances it, so one capture serves every step. `buffer_step` is the host's count of
+        // the same steps, checked against the device's at the end of each rollout.
+        at::cuda::CUDAGraph insert_graph;
+        bool insert_captured = false;
+        torch::Tensor buffer_step_gpu;
+        size_t buffer_step = 0;
+        torch::Tensor rewards_src;   // VecEnv's pinned result rows that the insert graph uploads from.
+        torch::Tensor term_src;
+        torch::Tensor trunc_src;
     };
     std::vector<std::unique_ptr<RolloutGroup>> rollout_groups_;
 
@@ -426,13 +437,22 @@ private:
     void infer_group(RolloutGroup& group, const torch::Tensor& obs, const torch::Tensor& masks);
 
     /**
-     * @brief Uploads a group's step results, bootstraps its truncated agents, and inserts the step into the buffer.
+     * @brief The insert work captured in a group's insert graph.
+     *
+     * Uploads the group's rewards and episode ends, writes the step's obs, masks, inference outputs and results into
+     * the buffer at the group's device step, and advances that step.
+     */
+    void insert_graph_logic(RolloutGroup& group);
+
+    /**
+     * @brief Stores a group's truncated agents for bootstrapping, and inserts the step into the buffer by replaying
+     * the group's insert graph, capturing it on first use. Doesn't wait for the GPU.
      *
      * Must run before the group's next `infer_group`, which overwrites the obs rows and graph outputs it inserts.
      *
      * @param group The group whose step finished.
-     * @param step The buffer step to write.
-     * @param step_res The group's rows of the step result.
+     * @param step The buffer step to write. Must be the group's next step, which the insert graph writes.
+     * @param step_res The group's rows of the step result. Must be the same rows on every call.
      */
     void finish_group_step(RolloutGroup& group, size_t step, const env::BatchedStepResult& step_res);
 

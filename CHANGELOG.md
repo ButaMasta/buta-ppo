@@ -54,6 +54,13 @@
     - Before, it used the textbook right-handed convention, which has the opposite sign for pitch and roll, so a setter asking for the nose 30° up got it 30° down.
     - Breaking for custom code that calls `euler_to_mat3` with a nonzero pitch or roll. Resolution: to keep the old orientation, negate both, `euler_to_mat3(-pitch, yaw, -roll, ...)`. Code that passes angles from RLBot or RLGym needs no change, and is now correct.
     - The built-in random state setter is unaffected: its pitch and roll ranges are symmetric, so it spawns the same distribution of orientations as before. Existing checkpoints are unaffected.
+14. Each rollout step's results are now written into the rollout buffer by one replay of a CUDA graph per env group, in place of 11 separate GPU operations launched from the main thread.
+    - The demo config trains about 1% faster on an i5-14600K with an RTX 5070. Setups where the main thread is the limit (a low `Phys Wait`) gain the most, and setups where physics is the limit gain nothing.
+    - The rollout buffer, advantages, and training come out bit-identical to before. The graph tracks the buffer step on the GPU, and that count is checked against the CPU's at the end of every rollout, so a step written twice or not at all stops training with an error instead of leaving stale data in the buffer.
+    - Non-breaking.
+15. The per-tick arena state read is cheaper: clearing the state before each read now costs a fraction of what it did, with every field read exactly as before.
+    - Setups where physics is the limit (a `Phys Wait` around 50% or more) train about 0.7% faster.
+    - Non-breaking.
 
 ### Releases
 #### 0.2.0

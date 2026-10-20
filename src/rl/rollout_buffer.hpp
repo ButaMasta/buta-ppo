@@ -47,8 +47,9 @@ public:
      * @brief Writes one step of data for a contiguous range of agents into the buffer.
      *
      * Each env group writes its own agent rows, so a step is complete once every group has inserted it.
-     * 
-     * @param step The buffer step to write.
+     * The step is read on the device, so a CUDA graph can capture the insert once and replay it for every step.
+     *
+     * @param step The buffer step to write, as a one-element int64 tensor on the buffer's device.
      * @param agent_offset The first agent (column) to write. The range's size is the batch size of the inputs.
      * @param obs The batched observations for this step.
      * @param actions The batched viable actions selected by the policy for this step.
@@ -59,7 +60,7 @@ public:
      * @param values The batched critic values for this step.
      */
     void insert(
-        size_t step,
+        const torch::Tensor& step,
         int64_t agent_offset,
         const torch::Tensor& obs,
         const torch::Tensor& actions,

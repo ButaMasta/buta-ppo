@@ -42,7 +42,7 @@ RolloutBuffer::RolloutBuffer(size_t buffer_size, size_t num_agents, size_t obs_s
 }
 
 void RolloutBuffer::insert(
-    size_t step,
+    const torch::Tensor& step,
     int64_t agent_offset,
     const torch::Tensor& obs,
     const torch::Tensor& actions,
@@ -52,18 +52,25 @@ void RolloutBuffer::insert(
     const torch::Tensor& log_probs,
     const torch::Tensor& values
 ) {
+    TORCH_CHECK(step.numel() == 1 && step.scalar_type() == torch::kInt64 && step.device() == obs_.device(),
+                "RolloutBuffer insert needs the step as a one-element int64 tensor on the buffer's device.");
     const int64_t count = obs.size(0);
-    if (step >= buffer_size_ || agent_offset < 0 || agent_offset + count > static_cast<int64_t>(num_agents_)) {
+    if (agent_offset < 0 || agent_offset + count > static_cast<int64_t>(num_agents_)) {
         throw std::out_of_range("RolloutBuffer insert is outside the buffer.");
     }
 
-    obs_[step].narrow(0, agent_offset, count).copy_(obs);
-    actions_[step].narrow(0, agent_offset, count).copy_(actions);
-    action_masks_[step].narrow(0, agent_offset, count).copy_(action_masks);
-    rewards_[step].narrow(0, agent_offset, count).copy_(rewards);
-    dones_[step].narrow(0, agent_offset, count).copy_(dones);
-    log_probs_[step].narrow(0, agent_offset, count).copy_(log_probs);
-    values_[step].narrow(0, agent_offset, count).copy_(values);
+    // The step is only known on the device, so a step past the end fails the copy's index check instead of here.
+    // `to` casts like `copy_` did (masks to bool) and is a no-op when the type already matches.
+    const auto write = [&](torch::Tensor& dst, const torch::Tensor& src) {
+        dst.narrow(1, agent_offset, count).index_copy_(0, step, src.to(dst.scalar_type()).unsqueeze(0));
+    };
+    write(obs_, obs);
+    write(actions_, actions);
+    write(action_masks_, action_masks);
+    write(rewards_, rewards);
+    write(dones_, dones);
+    write(log_probs_, log_probs);
+    write(values_, values);
 }
 
 void RolloutBuffer::compute_returns_and_advantages(

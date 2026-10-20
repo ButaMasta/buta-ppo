@@ -374,6 +374,7 @@ void PPORunner::setup_rollout_groups(const torch::Tensor& obs, const torch::Tens
         group->term_gpu = step_term_gpu_.narrow(0, begin, count);
         group->trunc_gpu = step_trunc_gpu_.narrow(0, begin, count);
         group->dones_gpu = step_dones_gpu_.narrow(0, begin, count);
+        group->buffer_step_gpu = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt64).device(device_));
 
         for (const env::RowRange& rows : env_group.opponent_slots) {
             const auto opp_begin = static_cast<int64_t>(rows.begin);
@@ -476,10 +477,26 @@ void PPORunner::infer_group(RolloutGroup& group, const torch::Tensor& obs, const
     at::cuda::getCurrentCUDAStream().synchronize();
 }
 
+void PPORunner::insert_graph_logic(RolloutGroup& group) {
+    group.rewards_gpu.copy_(group.rewards_src, true);
+    group.term_gpu.copy_(group.term_src, true);
+    group.trunc_gpu.copy_(group.trunc_src, true);
+    torch::max_out(group.dones_gpu, group.term_gpu, group.trunc_gpu);
+
+    buffer_->insert(
+        group.buffer_step_gpu, group.learner_begin,
+        group.obs_gpu, group.actions_gpu, group.masks_gpu,
+        group.rewards_gpu, group.dones_gpu, group.log_probs_gpu, group.values_gpu
+    );
+    group.buffer_step_gpu.add_(1);
+}
+
 void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::BatchedStepResult& step_res) {
-    group.rewards_gpu.copy_(step_res.rewards, true);
-    group.term_gpu.copy_(step_res.terminated, true);
-    group.trunc_gpu.copy_(step_res.truncated, true);
+    // The insert graph writes the step on the device, so the host's step has to be the one it writes next.
+    if (step != group.buffer_step || step >= buffer_size_) {
+        throw std::logic_error("Rollout step " + std::to_string(step) + " doesn't match the buffer step "
+                               + std::to_string(group.buffer_step) + " the insert graph writes next.");
+    }
 
     // Store truncated states for deferred bootstrapping.
     const float* truncated = step_res.truncated.data_ptr<float>();
@@ -493,13 +510,37 @@ void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::B
         deferred_obs_.insert(deferred_obs_.end(), row, row + obs_size);
     }
 
-    torch::max_out(group.dones_gpu, group.term_gpu, group.trunc_gpu);
+    if (!group.insert_captured) {
+        group.rewards_src = step_res.rewards;
+        group.term_src = step_res.terminated;
+        group.trunc_src = step_res.truncated;
 
-    buffer_->insert(
-        step, group.learner_begin,
-        group.obs_gpu, group.actions_gpu, group.masks_gpu,
-        group.rewards_gpu, group.dones_gpu, group.log_probs_gpu, group.values_gpu
-    );
+        // This first step runs eagerly, which also warms up the ops before the capture.
+        insert_graph_logic(group);
+
+        // Capture on a private stream, after the eager step. Capturing doesn't run the work again.
+        at::cuda::CUDAStream capture_stream = at::cuda::getStreamFromPool();
+        {
+            at::cuda::CUDAEvent ready;
+            ready.record(at::cuda::getCurrentCUDAStream());
+            ready.block(capture_stream);
+        }
+        {
+            at::cuda::CUDAStreamGuard stream_guard(capture_stream);
+            group.insert_graph.capture_begin();
+            insert_graph_logic(group);
+            group.insert_graph.capture_end();
+        }
+        group.insert_captured = true;
+    } else {
+        // The graph baked in the result rows' addresses.
+        TORCH_CHECK(step_res.rewards.data_ptr() == group.rewards_src.data_ptr()
+                    && step_res.terminated.data_ptr() == group.term_src.data_ptr()
+                    && step_res.truncated.data_ptr() == group.trunc_src.data_ptr(),
+                    "Rollout insert graph inputs must be the group's rows of VecEnv's persistent result buffers.");
+        group.insert_graph.replay();
+    }
+    group.buffer_step++;
 }
 
 double PPORunner::collect_rollout() {
@@ -521,6 +562,11 @@ double PPORunner::collect_rollout() {
         return res;
     };
 
+    for (const auto& group : rollout_groups_) {
+        group->buffer_step = 0;
+        group->buffer_step_gpu.zero_();
+    }
+
     infer_group(group_a, group_a.obs_src, group_a.masks_src);
     vec_env_->step_async(0, actions_ptr);
     infer_group(group_b, group_b.obs_src, group_b.masks_src);
@@ -537,6 +583,17 @@ double PPORunner::collect_rollout() {
         if (has_next) vec_env_->step_async(0, actions_ptr);
         finish_group_step(group_b, t, res_b);
         if (has_next) infer_group(group_b, res_b.observations, res_b.action_masks);
+    }
+
+    // Every group must have written every step exactly once, on the device too. A step the graphs skipped would
+    // otherwise leave the last rollout's data in its place without an error.
+    for (const auto& group : rollout_groups_) {
+        const int64_t device_steps = group->buffer_step_gpu.item<int64_t>();
+        if (group->buffer_step != num_steps || device_steps != static_cast<int64_t>(num_steps)) {
+            throw std::logic_error("The rollout buffer got " + std::to_string(device_steps) + " steps on the GPU and "
+                                   + std::to_string(group->buffer_step) + " on the CPU from an env group, but needs "
+                                   + std::to_string(num_steps) + ".");
+        }
     }
 
     // Deferred truncations forward pass for values.

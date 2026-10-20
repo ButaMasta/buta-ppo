@@ -394,8 +394,9 @@ pub extern "C" fn rs_arena_get_arena_state(
     let arena: &Arena = unsafe { &*arena_ptr };
     let state: &mut CArenaState = unsafe { &mut *out_state };
 
-    // For now just clear the state to be safe.
-    *state = CArenaState::default();
+    // Clear the state, so unused car slots and events read as default. All-zero bytes are every field's default
+    // (false, 0, 0.0), and a plain memset costs a fraction of `*state = CArenaState::default()`, which runs every tick.
+    unsafe { std::ptr::write_bytes(out_state, 0, 1); }
 
     state.tick_count = arena.tick_count();
 
