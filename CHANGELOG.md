@@ -50,6 +50,10 @@
 12. The no-touch timeout and the episode time limit are now config values, `RunnerConfig::no_touch_timeout_seconds` (default `10`) and `RunnerConfig::episode_time_limit_seconds` (default `150`). Both used to be fixed.
     - `0` turns a limit off. A negative or non-finite value stops training at startup, and a no-touch timeout longer than the time limit prints a `[WARN]`, since it can never end an episode.
     - Non-breaking. The defaults match the old fixed values, so existing configs behave the same.
+13. `util::math::euler_to_mat3` now uses the game's angle convention, the same as RLBot's `Rotator`, RLGym, and RocketSim: positive pitch raises the nose, positive yaw turns toward the car's right, and positive roll lowers its right side. Added `util::math::mat3_to_euler`, its inverse, for working in angles in setters, rewards, and metrics.
+    - Before, it used the textbook right-handed convention, which has the opposite sign for pitch and roll, so a setter asking for the nose 30° up got it 30° down.
+    - Breaking for custom code that calls `euler_to_mat3` with a nonzero pitch or roll. Resolution: to keep the old orientation, negate both, `euler_to_mat3(-pitch, yaw, -roll, ...)`. Code that passes angles from RLBot or RLGym needs no change, and is now correct.
+    - The built-in random state setter is unaffected: its pitch and roll ranges are symmetric, so it spawns the same distribution of orientations as before. Existing checkpoints are unaffected.
 
 ### Releases
 #### 0.2.0

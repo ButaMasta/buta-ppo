@@ -367,7 +367,7 @@ Rewards, metrics, and state setters all read the game through `ffi::ArenaState` 
 | `boost_pads.big[6]`, `boost_pads.small[28]` | Seconds until each pad is available again. `0` means it can be picked up now. Pads are sorted by Y, then X. |
 | `num_cars`, `tick_count` | Number of cars in the arena, and the arena's tick counter. |
 
-**`PhysState`:** `pos[3]`, `vel[3]`, `ang_vel[3]`, and `rot_mat[3][3]`, where `rot_mat[0]` is the forward direction, `rot_mat[1]` is right, and `rot_mat[2]` is up.
+**`PhysState`:** `pos[3]`, `vel[3]`, `ang_vel[3]`, and `rot_mat[3][3]`, where `rot_mat[0]` is the forward direction, `rot_mat[1]` is right, and `rot_mat[2]` is up. To work in angles, `util::math::euler_to_mat3` and `mat3_to_euler` (`src/util/math_utils.hpp`) convert between `rot_mat` and pitch, yaw and roll in radians, in the game's convention, the same as RLBot's `Rotator` and RLGym: positive pitch raises the nose, positive yaw turns toward the car's right (from +X toward +Y), and positive roll lowers its right side.
 
 **Events (`events`):** Describe what happened during the current tick only.
 
