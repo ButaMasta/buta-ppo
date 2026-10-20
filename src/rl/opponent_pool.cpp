@@ -56,8 +56,8 @@ std::string join_sizes(const std::vector<int64_t>& sizes) {
 }
 } // namespace
 
-OpponentPool::OpponentPool(const PFSPConfig& config, const ActorCriticConfig& ac_config, uint32_t seed)
-    : config_(config), ac_config_(ac_config), rng_(seed) {
+OpponentPool::OpponentPool(const PFSPConfig& config, const ModelConfig& model_config, uint32_t seed)
+    : config_(config), model_config_(model_config), rng_(seed) {
     if (config_.pool_size == 0 || config_.snapshot_interval <= 0 || config_.win_rate_window < 1.0f ||
         config_.min_weight <= 0.0f) {
         throw std::invalid_argument("PFSP needs a pool size of at least 1, a positive snapshot interval, "
@@ -66,12 +66,13 @@ OpponentPool::OpponentPool(const PFSPConfig& config, const ActorCriticConfig& ac
 }
 
 std::string OpponentPool::meta_text() const {
-    return "obs_size " + std::to_string(ac_config_.obs_size) + "\n" +
-           "action_size " + std::to_string(ac_config_.action_size) + "\n" +
-           "shared_layers" + join_sizes(ac_config_.shared_layers) + "\n" +
-           "actor_layers" + join_sizes(ac_config_.actor_layers) + "\n" +
-           "critic_layers" + join_sizes(ac_config_.critic_layers) + "\n" +
-           "use_layer_norm " + std::to_string(ac_config_.use_layer_norm ? 1 : 0) + "\n";
+    const ActorCriticConfig& network = model_config_.network;
+    return "obs_size " + std::to_string(network.obs_size) + "\n" +
+           "action_size " + std::to_string(network.action_size) + "\n" +
+           "shared_layers" + join_sizes(network.shared_layers) + "\n" +
+           "actor_layers" + join_sizes(network.actor_layers) + "\n" +
+           "critic_layers" + join_sizes(network.critic_layers) + "\n" +
+           "use_layer_norm " + std::to_string(network.use_layer_norm ? 1 : 0) + "\n";
 }
 
 void OpponentPool::open(const fs::path& dir, int64_t max_steps) {
@@ -120,7 +121,7 @@ void OpponentPool::open(const fs::path& dir, int64_t max_steps) {
             continue;
         }
 
-        ActorCritic staging(ac_config_);
+        ActorCritic staging(model_config_.network);
         try {
             staging->load_weights(entry.path().string());
         } catch (const std::runtime_error& e) {
@@ -182,7 +183,7 @@ void OpponentPool::add(int64_t steps, const ActorCritic& learner) {
         // Save the full model, via a temp file and rename so an interrupted save is never loaded.
         const fs::path path = snapshot_path(dir_, steps);
         const fs::path tmp = path.string() + ".tmp";
-        torch::save(learner, tmp.string());
+        save_model(learner, model_config_, tmp.string());
         fs::rename(tmp, path);
     }
 

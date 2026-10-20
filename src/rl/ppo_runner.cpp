@@ -20,6 +20,7 @@
 #include <iostream>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -188,8 +189,27 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
         return 0;
     }
 
+    const std::string model_path = (latest_dir / MODEL_FILE).string();
+    const ModelConfig current = model_config();
+
+    // Checkpoints saved before models stored their config only get the weight check below.
+    const std::optional<ModelConfig> saved = read_model_config(model_path);
+    if (saved && (saved->network != current.network || saved->max_players_per_team != current.max_players_per_team)) {
+        throw std::runtime_error("Could not resume from the latest checkpoint, " + model_path + ". It was trained with\n  " +
+                                 describe_model_config(*saved) + "\nbut the config gives\n  " +
+                                 describe_model_config(current) + "\nA changed obs_size or action_size means the obs "
+                                 "builder or action parser changed. Change bot_name or move the checkpoint out of " +
+                                 dir + " to start fresh.");
+    }
+    if (saved && saved->ticks_per_step != current.ticks_per_step) {
+        warn("The latest checkpoint was trained with ticks_per_step " + std::to_string(saved->ticks_per_step) +
+             ", but the config gives " + std::to_string(current.ticks_per_step) + ". Training continues with " +
+             std::to_string(current.ticks_per_step) + ", and checkpoints from now on store it.",
+             "ticks_per_step changed");
+    }
+
     try {
-        actor_critic_->load_weights((latest_dir / MODEL_FILE).string());
+        actor_critic_->load_weights(model_path);
     } catch (const std::runtime_error& e) {
         throw std::runtime_error(std::string("Could not resume from the latest checkpoint: ") + e.what() +
                                  ". A changed network config (ac_cfg layers or layer norm), max_players_per_team or "
@@ -329,7 +349,7 @@ void PPORunner::setup_dimensions_and_buffers() {
         opponent_streams_.push_back(at::cuda::getStreamFromPool());
     }
     if (!opponent_slots_.empty()) {
-        opponent_pool_ = std::make_unique<OpponentPool>(config_.pfsp_cfg, config_.ac_cfg);
+        opponent_pool_ = std::make_unique<OpponentPool>(config_.pfsp_cfg, model_config());
     }
     
     buffer_ = std::make_unique<RolloutBuffer>(
@@ -717,6 +737,10 @@ void PPORunner::compute_advantages() {
     buffer_->compute_returns_and_advantages(next_values, config_.ppo_cfg.gae_gamma, config_.ppo_cfg.gae_lambda);
 }
 
+ModelConfig PPORunner::model_config() const {
+    return {config_.ac_cfg, static_cast<int64_t>(config_.max_players_per_team), config_.ticks_per_step};
+}
+
 void PPORunner::save_checkpoint(const std::string& dir) const {
     const fs::path final_dir = fs::path(dir) / (config_.bot_name + "_" + std::to_string(global_step_));
     const fs::path tmp_dir = final_dir.string() + ".tmp";
@@ -724,7 +748,7 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
     // Write into a temp dir and rename once complete so an interrupted save never looks like a valid checkpoint.
     fs::remove_all(tmp_dir);
     fs::create_directories(tmp_dir);
-    torch::save(actor_critic_, (tmp_dir / MODEL_FILE).string());
+    save_model(actor_critic_, model_config(), (tmp_dir / MODEL_FILE).string());
     trainer_->save_optimizer((tmp_dir / OPTIMIZER_FILE).string());
 
     fs::remove_all(final_dir);

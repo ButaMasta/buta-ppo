@@ -485,6 +485,11 @@ private:
      * @return If a checkpoint was found then the total steps trained, otherwise 0.
      */
     int64_t load_latest_checkpoint(const std::string& dir);
+
+    /**
+     * @brief The config saved with every model: the network config and the obs settings from the runner config.
+     */
+    [[nodiscard]] ModelConfig model_config() const;
     
     /**
      * @brief Runs bot training and handles all associated processes.
@@ -542,7 +547,7 @@ public:
     /**
      * @brief Saves a checkpoint of the bot's model and optimizer state.
      *
-     * Writes `model.pt` and `optimizer.pt` into <dir>/<bot name>_<total steps trained>/.
+     * Writes `model.pt` (with its `ModelConfig`) and `optimizer.pt` into <dir>/<bot name>_<total steps trained>/.
      *
      * @param dir The directory to save the checkpoint to.
      */

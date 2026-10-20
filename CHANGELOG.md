@@ -61,6 +61,23 @@
 15. The per-tick arena state read is cheaper: clearing the state before each read now costs a fraction of what it did, with every field read exactly as before.
     - Setups where physics is the limit (a `Phys Wait` around 50% or more) train about 0.7% faster.
     - Non-breaking.
+16. Saved models now store the settings they were trained with (the `ac_cfg` network config, `max_players_per_team`, and `ticks_per_step`), and the RLBot bot sets itself up from them, so its settings no longer have to be matched to the training config by hand.
+    - `src/bot_api.cpp` and `rust_bridge/src/main.rs` no longer hardcode the layer sizes, layer norm, max players per team, or tick skip. One build of the bot runs any model, and prints the settings it read on startup. A bot built from obs or action code whose obs or action size differs from the model's stops at startup with both sizes.
+    - `python deploy.py` now also copies the model and the collision meshes into `bot/`. By default it deploys the latest checkpoint; pass a checkpoint directory or a `.pt` file (such as a PFSP pool snapshot) to deploy another, and `--bot <bot_name>` when `checkpoints/` holds more than one bot.
+    - The bot runs the model named by the first argument of its run command, or `model.pt` without one, so copies of `bot.toml` can put several versions of a bot in RLBot.
+    - Resuming training from a checkpoint with a different network config or `max_players_per_team` now fails with the checkpoint's settings next to the configured ones, instead of naming the first mismatched weight. A changed `ticks_per_step`, which used to pass silently, prints a `[WARN]`.
+    - Breaking for deploying models saved before this change: they have no stored config, so the bot and `deploy.py` refuse them. Training still resumes from them, and checkpoints and pool snapshots saved from then on store it. Resolution: to re-save one for deploying, make its checkpoint the latest in `checkpoints/` and run training once with the update count in `runner.run(...)` set to `0`, which saves it again in place with the same weights and optimizer state. For a checkpoint that isn't the latest, move the newer ones out first and set `pfsp_cfg.envs = 0` for that run, since resuming deletes pool snapshots newer than the resumed checkpoint.
+    - Breaking for custom code calling the bot's C API: `bot_api_max_players_per_team` now takes the context returned by `bot_api_init`, and `bot_api_tick_skip(ctx)` was added.
+17. Editing C++ files no longer rebuilds the Rust bridge. An edit to `main.cpp` builds in about 5 s instead of about 22 s.
+    - The RLBot bot binary is now its own package, `rust_bridge/bot/`, in a Cargo workspace with the bridge. The training build only builds the bridge, which no longer has a build script, so it no longer builds the bot binary and its C++ library on every C++ edit, and no longer needs LibTorch.
+    - `deploy.py` builds the bot with `cargo build --release -p buta_ppo_bot`, and still rebuilds it when any C++ file changes.
+    - Non-breaking, unless you build the bot by hand: use `cargo build --release -p buta_ppo_bot` in `rust_bridge/` in place of `--bin buta_ppo_bot`. Its sources moved to `rust_bridge/bot/src/`.
+18. The RLBot bot now runs inference on the CPU on one thread, and `bot/` carries every LibTorch library it needs, so it can be moved or copied to another x86-64 Linux machine without LibTorch, CUDA, or a GPU.
+    - Before, the bot loaded every LibTorch and CUDA library from the LibTorch path it was built against, and the four libraries `deploy.py` copied into `bot/libs/` (429 MB) were never loaded. It only ran on a machine with LibTorch at that path.
+    - `deploy.py` now empties `bot/libs/` and copies the libraries the bot's C++ library actually loads: `libtorch_cpu`, `libc10`, and their dependencies, about 440 MB.
+    - With the demo network, a decision took about 0.6 ms, and at most 2.5 ms, on an i5-14600K with every core kept busy, against 0.5 ms (at most 5.5 ms) for the old GPU bot. LibTorch's default multi-threaded CPU inference went past the 8.33 ms between game ticks on every decision under the same load, so the bot uses a single thread. The first decision no longer takes about 130 ms while CUDA starts up.
+    - The bot's C++ library is no longer built with `-march=native`, so it runs on other CPUs. The machine running the bot needs a glibc at least as new as the build machine's.
+    - Non-breaking. Rerun `deploy.py` to repackage an existing bot.
 
 ### Releases
 #### 0.2.0

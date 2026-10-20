@@ -128,7 +128,7 @@ Run the compiled binary from the project root, so the relative paths to `assets/
 ./build/buta_ppo
 ```
 
-On startup, the framework searches `checkpoints/` for the most recent checkpoint matching the configured `bot_name`. If one is found, training resumes from its step count. Otherwise, a fresh model is initialized. A checkpoint has to match the configured network: if the `ac_cfg` layers or layer norm changed, or the obs size did (through `max_players_per_team` or the obs builder), startup fails with an error naming the first weight that doesn't match. Change `bot_name` or move the old checkpoints out of `checkpoints/` to start fresh.
+On startup, the framework searches `checkpoints/` for the most recent checkpoint matching the configured `bot_name`. If one is found, training resumes from its step count. Otherwise, a fresh model is initialized. A checkpoint has to match the configured network: if the `ac_cfg` layers or layer norm changed, or the obs size did (through `max_players_per_team` or the obs builder), startup fails with an error showing the settings the checkpoint was trained with next to the configured ones. Change `bot_name` or move the old checkpoints out of `checkpoints/` to start fresh. A changed `ticks_per_step` only prints a `[WARN]`, and training continues with the new value.
 
 A run trains for at most the number of updates passed to `runner.run` in `main.cpp` (`1'000` by default, about 50M steps with the demo config), then saves a checkpoint and exits. Run the binary again to continue from there.
 
@@ -349,7 +349,7 @@ Only the agents being trained are measured. In PFSP envs, the past version's car
 
 New `.cpp` files must be added to the explicit source list in `CMakeLists.txt`.
 
-**Observations & Actions:** The obs size and action space size are read from the builders, so the network adapts to changes automatically. `src/bot_api.cpp` has to be kept in sync by hand (see [Deploying to RLBot](#deploying-to-rlbot)).
+**Observations & Actions:** The obs size and action space size are read from the builders, so the network adapts to changes automatically. The RLBot bot uses the obs and action code it was built with, so deploy a model with the code it was trained with (see [Deploying to RLBot](#deploying-to-rlbot)).
 
 ### Arena State Reference
 
@@ -400,10 +400,10 @@ float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, cons
 ```text
 checkpoints/
 ├── <bot_name>_<steps>/
-│   ├── model.pt        # Network weights
+│   ├── model.pt        # Network weights and the settings the bot needs to run them
 │   └── optimizer.pt    # Optimizer state
 └── <bot_name>_pool/    # PFSP opponent pool
-    ├── <steps>.pt      # Snapshots, loadable like any model.pt
+    ├── <steps>.pt      # Snapshots, loadable and deployable like any model.pt
     ├── state.txt       # Win records
     └── meta.txt        # Network shape the pool was saved with
 ```
@@ -465,24 +465,28 @@ Setting `config.render = true;` in `main.cpp` skips training and runs a single e
 
 ## Deploying to RLBot
 
-The `buta_ppo_bot` binary runs a trained checkpoint as an RLBot v5 bot. It builds the same observations as training, queries the model every `tick_skip` frames, and holds the chosen controls in between.
+The `buta_ppo_bot` binary runs a trained model as an RLBot v5 bot. It builds the same observations as training, queries the model every `ticks_per_step` frames, and holds the chosen controls in between. Every saved model stores the network config (`ac_cfg`), `max_players_per_team`, and `ticks_per_step` it was trained with, and the bot sets itself up from those. Nothing has to be matched by hand, and one build of the bot runs any model.
 
-1. **Match the Training Config:** `src/bot_api.cpp` hardcodes its own settings, which must match the config the checkpoint was trained with:
-    * `MAX_PLAYERS_PER_TEAM` = `max_players_per_team`
-    * `shared_layers`, `actor_layers`, `critic_layers`, `use_layer_norm` = the `ac_cfg` values
-    * The tick skip passed to `DefaultObs`, and `tick_skip` in `rust_bridge/src/main.rs` = `ticks_per_step`
-
-    A wrong layer size, layer norm setting, or `MAX_PLAYERS_PER_TEAM` stops the bot at startup with an error naming the first weight that doesn't match. A wrong tick skip doesn't fail, it just plays worse.
-2. **Build and Package:**
+1. **Build and Package:**
 ```bash
-python deploy.py
+python deploy.py                                          # The latest checkpoint
+python deploy.py checkpoints/<bot_name>_<steps>           # A specific checkpoint
+python deploy.py checkpoints/<bot_name>_pool/<steps>.pt   # A PFSP pool snapshot
 ```
-This builds the bot binary and copies it, the C++ inference library, and the main LibTorch libraries into `bot/`. It needs the `LIBTORCH` environment variable set (see [Build Instructions](#build-instructions)).
+This builds the bot binary and copies it, the C++ inference library, the LibTorch libraries that library needs, the model (as `bot/model.pt`), and `assets/collision_meshes/` into `bot/`. When `checkpoints/` holds more than one bot, pick one with `--bot <bot_name>`. It needs the `LIBTORCH` environment variable set (see [Build Instructions](#build-instructions)). To switch models later without rebuilding, copy another `model.pt` or pool snapshot over `bot/model.pt`.
 
-3. **Add the Remaining Files:** Copy `checkpoints/<bot_name>_<steps>/model.pt` and `assets/collision_meshes/` into `bot/`. The values marked `TEMPLATE` in `bot/bot.toml` and `bot/loadout.toml` belong to the original bot, so change them for yours. In particular `agent_id`, `name`, and `logo_file`, since the logo isn't included in the repository.
-4. **Run:** Add the bot to a match through RLBot v5, using `bot/bot.toml`.
+2. **Set Up the Bot Config:** The values marked `TEMPLATE` in `bot/bot.toml` and `bot/loadout.toml` belong to the original bot, so change them for yours. In particular `agent_id`, `name`, and `logo_file`, since the logo isn't included in the repository.
+3. **Run:** Add the bot to a match through RLBot v5, using `bot/bot.toml`.
 
-The packaged bot still loads some CUDA and LibTorch libraries from your local LibTorch installation, so it will only run on a machine with LibTorch installed at the same path.
+On startup the bot prints the settings it read from the model. It stops with an error if the model can't be run: a team in the match larger than its `max_players_per_team`, or an obs or action size that differs from what this build's `DefaultObs` and `DefaultAction` produce.
+
+**Several Versions In-Game:** The bot runs the model named by the first argument of its run command, or `model.pt` without one. To play versions against each other, copy their models into `bot/` (e.g. `bot/models/<steps>.pt`) and make a copy of `bot/bot.toml` for each, with its own `agent_id`, `name`, and the model's path in both run commands, e.g. `run_command = "./buta_ppo_bot models/<steps>.pt"`.
+
+**Obs and Action Code:** A model stores its settings, not the obs and action code. The bot uses the `DefaultObs` and `DefaultAction` it was built with, so if you change them after training, deploy older models from the code they were trained with. A change to the obs or action size stops the bot at startup, but other changes, such as a coefficient, aren't detected.
+
+**Models Saved Before Configs Were Stored:** The bot and `deploy.py` refuse them. To re-save one, make its checkpoint the latest in `checkpoints/` and run training once with the update count in `runner.run(...)` set to `0`. That loads the checkpoint and saves it again in place, with the same weights and optimizer state plus the config. For a checkpoint that isn't the latest, move the newer ones out of `checkpoints/` first and set `pfsp_cfg.envs = 0` for that run, since resuming deletes pool snapshots newer than the resumed checkpoint.
+
+**Running Elsewhere:** The bot runs inference on the CPU, on a single thread, so it uses neither the GPU nor more than one core while the game is running. With the demo network a decision took about 0.6 ms, and never more than 2.5 ms, on an i5-14600K with every core kept busy, well inside the 8.33 ms between game ticks. LibTorch's default multi-threaded CPU inference went past that window on every decision once all cores were busy, which is why the bot uses one thread. `bot/` carries the LibTorch libraries it needs (about 440 MB) in `bot/libs/` and finds them relative to itself, so the folder can be moved or copied to another x86-64 Linux machine without LibTorch, CUDA, or a GPU. That machine needs a glibc at least as new as the one the bot was built with, so a bot built on a rolling-release distro may need a recent distro to run.
 
 ## Versioning
 

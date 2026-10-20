@@ -1,0 +1,13 @@
+[package]
+name = "buta_ppo_bot"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+cmake = "0.1"
+
+[dependencies]
+rust_bridge = { path = ".." }
+rocketsim = "0.2.11"
+ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git", rev = "88279c9f3b6f431dc2f342947e1f5b32db8f0254" }
+rlbot-rocketsim = "0.1.0"

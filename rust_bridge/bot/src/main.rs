@@ -1,4 +1,4 @@
-// buta-ppo/rust_bridge/src/main.rs
+// buta-ppo/rust_bridge/bot/src/main.rs
 mod bot_ffi;
 
 use std::ffi::CString;
@@ -6,7 +6,7 @@ use std::os::raw::c_void;
 use std::sync::Arc;
 
 use rust_bridge::{CArenaState, CBallState, CCarControls, CCarState, CPhysState};
-use crate::bot_ffi::{bot_api_free, bot_api_get_action, bot_api_init, bot_api_max_players_per_team};
+use crate::bot_ffi::{bot_api_free, bot_api_get_action, bot_api_init, bot_api_max_players_per_team, bot_api_tick_skip};
 
 use rlbot_rocketsim::rlbot::agents::{run_bot_agents, BotAgent};
 use rlbot_rocketsim::rlbot::flat::{
@@ -55,8 +55,17 @@ impl BotAgent for ButaPPOBot {
         field_info: Arc<FieldInfo>,
         _packet_queue: &mut PacketQueue,
     ) -> Self {
+        // The model to run: the first argument of the run command in bot.toml, or model.pt. Relative to the bot directory.
+        let path_str = std::env::args().nth(1).unwrap_or_else(|| "model.pt".into());
+        let path_c = CString::new(path_str.as_str()).expect("Invalid CString");
+        let ctx_ptr = unsafe { bot_api_init(path_c.as_ptr()) };
+
+        if ctx_ptr.is_null() {
+            panic!("Failed to load C++ LibTorch checkpoint at: {}", path_str);
+        }
+
         // The obs has a fixed number of car slots, so exit if a team won't fit.
-        let max_per_team = unsafe { bot_api_max_players_per_team() } as usize;
+        let max_per_team = unsafe { bot_api_max_players_per_team(ctx_ptr) } as usize;
         let players = &match_config.player_configurations;
         let blue_count = players.iter().filter(|p| p.team == 0).count();
         let orange_count = players.len() - blue_count;
@@ -92,21 +101,13 @@ impl BotAgent for ButaPPOBot {
         let big_pad_indices: Vec<usize> = big_pads.into_iter().map(|(i, _, _)| i).collect();
         let small_pad_indices: Vec<usize> = small_pads.into_iter().map(|(i, _, _)| i).collect();
 
-        let path_str = "model.pt";
-        let path_c = CString::new(path_str).expect("Invalid CString");
-        let ctx_ptr = unsafe { bot_api_init(path_c.as_ptr()) };
-        
-        if ctx_ptr.is_null() {
-            panic!("Failed to load C++ LibTorch checkpoint at: {}", path_str);
-        }
-
         Self {
             player_index: controllable_info.index as usize,
             enricher: GameStateEnricher::from_match_context(context),
             ctx_ptr,
             held_controls: CCarControls::default(),
             next_decision_frame: None,
-            tick_skip: 8,
+            tick_skip: unsafe { bot_api_tick_skip(ctx_ptr) },
             big_pad_indices,
             small_pad_indices,
             last_phase: None,

@@ -9,6 +9,9 @@ name = "Porkchop"
 # Path to the loadout config, relative to this file.
 loadout_file = "loadout.toml"
 # The command RLBot runs to start the bot. The bot binary finds its libraries in libs/ next to it.
+# It runs model.pt in this directory. To run another model, add its path to both run commands, e.g.
+# "./buta_ppo_bot models/old.pt". Copies of this file with their own agent_id, name and model put several versions
+# in the RLBot GUI.
 run_command = "./buta_ppo_bot"
 # The command RLBot runs to start the bot on Linux.
 run_command_linux = "./buta_ppo_bot"

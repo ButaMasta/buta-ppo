@@ -4,6 +4,7 @@
 #include <torch/torch.h>
 #include <vector>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <tuple>
 
@@ -24,6 +25,20 @@ struct ActorCriticConfig {
     std::vector<int64_t> critic_layers;
 
     bool use_layer_norm;
+
+    bool operator==(const ActorCriticConfig&) const = default;
+};
+
+/**
+ * @brief What a saved model stores besides its weights: everything needed to rebuild the network and the obs builder
+ * it was trained with, so a model file runs on its own (e.g. in the RLBot bot) without repeating the training config.
+ */
+struct ModelConfig {
+    ActorCriticConfig network;
+    int64_t max_players_per_team;
+    int64_t ticks_per_step;
+
+    bool operator==(const ModelConfig&) const = default;
 };
 
 /**
@@ -90,7 +105,9 @@ public:
      * different network config (layer sizes, layer norm, obs or action size) fails here instead of loading silently.
      * Values are copied into the existing tensors, which keep their devices and addresses.
      *
-     * @param path The file to load, as written by `torch::save` of an `ActorCritic`.
+     * The `ModelConfig` stored by `save_model` is skipped, so this also loads models saved before configs were stored.
+     *
+     * @param path The file to load, as written by `save_model` or `torch::save` of an `ActorCritic`.
      * @throws std::runtime_error If the file can't be read or doesn't match, naming the first mismatch.
      */
     void load_weights(const std::string& path);
@@ -157,5 +174,28 @@ public:
 
 // Wrap class in torch module.
 TORCH_MODULE(ActorCritic);
+
+/**
+ * @brief Saves a model's weights along with its `ModelConfig`.
+ *
+ * @param model The network to save.
+ * @param config The config `model` was built and trained with.
+ * @param path The file to write.
+ */
+void save_model(const ActorCritic& model, const ModelConfig& config, const std::string& path);
+
+/**
+ * @brief Reads the `ModelConfig` stored in a model file, without loading the weights.
+ *
+ * @param path A file written by `save_model`.
+ * @return The stored config, or nullopt for a model saved before configs were stored.
+ * @throws std::runtime_error If the file can't be read, or its config is incomplete or from a newer version.
+ */
+[[nodiscard]] std::optional<ModelConfig> read_model_config(const std::string& path);
+
+/**
+ * @brief Describes a `ModelConfig` on one line, for logs and error messages.
+ */
+[[nodiscard]] std::string describe_model_config(const ModelConfig& config);
 
 } // namespace buta_ppo::rl 

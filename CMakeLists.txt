@@ -45,10 +45,10 @@ if(BUILD_RUST_BRIDGE)
     set(RUST_TARGET_DIR ${RUST_BRIDGE_DIR}/target/release)
     set(RUST_LIB ${RUST_TARGET_DIR}/librust_bridge.so)
 
-    # Create a custom target that always runs `cargo build --release`.
-    # The bridge's build script needs LibTorch too, so pass it the configured path.
+    # Create a custom target that always runs `cargo build --release`. That builds only the bridge library, not the
+    # RLBot bot package in the same Cargo workspace, so it's a no-op unless the Rust code changed.
     add_custom_target(cargo_build ALL
-        COMMAND ${CMAKE_COMMAND} -E env LIBTORCH=${LIBTORCH_DIR} cargo build --release
+        COMMAND cargo build --release
         WORKING_DIRECTORY ${RUST_BRIDGE_DIR}
         BYPRODUCTS ${RUST_LIB}
         COMMENT "Compiling Rust FFI cdylib via Cargo..."
@@ -109,7 +109,9 @@ if(BUILD_RUST_BRIDGE)
 
 endif()
 
-# Bot target.
+# Bot target. It runs inference on the CPU, so it links only LibTorch's CPU libraries, and finds them next to itself in
+# the bot's libs/ directory (deploy.py copies them there). That keeps the packaged bot runnable from any location and on
+# machines without LibTorch or a GPU.
 add_library(buta_ppo_bot SHARED
     src/bot_api.cpp
     src/action/default_action.cpp
@@ -121,14 +123,21 @@ target_include_directories(buta_ppo_bot PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+target_include_directories(buta_ppo_bot SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
 
 target_link_libraries(buta_ppo_bot PRIVATE
-    ${TORCH_LIBRARIES}
+    ${LIBTORCH_DIR}/lib/libtorch_cpu.so
+    ${LIBTORCH_DIR}/lib/libc10.so
 )
 
-# Release
+set_target_properties(buta_ppo_bot PROPERTIES
+    BUILD_WITH_INSTALL_RPATH ON
+    INSTALL_RPATH "$ORIGIN"
+)
+
+# Release. No -march=native, so the bot runs on other CPUs too.
 target_compile_options(buta_ppo_bot PRIVATE 
-    -Wall -Wextra -O3 -march=native -pthread
+    -Wall -Wextra -O3 -pthread
 )
 # Debug
 # target_compile_options(buta_ppo_bot PRIVATE 

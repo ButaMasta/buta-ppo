@@ -11,6 +11,11 @@ namespace buta_ppo::rl {
 
 namespace {
 
+// The sub-archive of a model file that holds its `ModelConfig`, next to the network's weights.
+constexpr const char* CONFIG_KEY = "buta_config";
+// Raised when the stored fields change, so an older build refuses a config it can't read instead of misreading it.
+constexpr int64_t CONFIG_FORMAT_VERSION = 1;
+
 // Applies negative penalty to invalid actions to make their softmax probs near zero.
 // NOTE: action_masks is of float type during rollout so the cast is necessary.
 torch::Tensor mask_logits(const torch::Tensor& logits, const torch::Tensor& action_masks) {
@@ -118,6 +123,7 @@ void match_archive(torch::nn::Module& module, torch::serialize::InputArchive& ar
 
     // The same shapes for every tensor here doesn't rule out the file having more, e.g. an extra final layer.
     for (const std::string& key : archive.keys()) {
+        if (prefix.empty() && key == CONFIG_KEY) continue;
         if (std::find(expected.begin(), expected.end(), key) == expected.end()) {
             throw std::runtime_error("the file has '" + prefix + key + "', which the network doesn't");
         }
@@ -331,6 +337,84 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluat
     torch::Tensor entropy = -p_log_p.sum(-1);
 
     return { log_probs, entropy, values };
+}
+
+void save_model(const ActorCritic& model, const ModelConfig& config, const std::string& path) {
+    // What `torch::save` writes, plus the config as a sub-archive.
+    torch::serialize::OutputArchive archive;
+    model->save(archive);
+
+    torch::serialize::OutputArchive config_archive(archive.compilation_unit());
+    config_archive.write("format_version", c10::IValue(CONFIG_FORMAT_VERSION));
+    config_archive.write("obs_size", c10::IValue(config.network.obs_size));
+    config_archive.write("action_size", c10::IValue(config.network.action_size));
+    config_archive.write("shared_layers", c10::IValue(config.network.shared_layers));
+    config_archive.write("actor_layers", c10::IValue(config.network.actor_layers));
+    config_archive.write("critic_layers", c10::IValue(config.network.critic_layers));
+    config_archive.write("use_layer_norm", c10::IValue(config.network.use_layer_norm));
+    config_archive.write("max_players_per_team", c10::IValue(config.max_players_per_team));
+    config_archive.write("ticks_per_step", c10::IValue(config.ticks_per_step));
+    archive.write(CONFIG_KEY, config_archive);
+
+    archive.save_to(path);
+}
+
+std::optional<ModelConfig> read_model_config(const std::string& path) {
+    torch::serialize::InputArchive archive;
+    try {
+        archive.load_from(path, torch::kCPU);
+    } catch (const c10::Error& e) {
+        throw std::runtime_error("could not read " + path + ": " + e.what_without_backtrace());
+    }
+
+    torch::serialize::InputArchive config_archive;
+    if (!archive.try_read(CONFIG_KEY, config_archive)) {
+        return std::nullopt;
+    }
+
+    const auto read = [&](const std::string& key) {
+        c10::IValue value;
+        if (!config_archive.try_read(key, value)) {
+            throw std::runtime_error(path + " has an incomplete model config, missing '" + key + "'");
+        }
+        return value;
+    };
+
+    const int64_t version = read("format_version").toInt();
+    if (version > CONFIG_FORMAT_VERSION) {
+        throw std::runtime_error(path + " was saved by a newer version of buta-ppo (model config version " +
+                                 std::to_string(version) + ", this build reads up to " +
+                                 std::to_string(CONFIG_FORMAT_VERSION) + ")");
+    }
+
+    ModelConfig config;
+    config.network.obs_size = read("obs_size").toInt();
+    config.network.action_size = read("action_size").toInt();
+    config.network.shared_layers = read("shared_layers").toIntVector();
+    config.network.actor_layers = read("actor_layers").toIntVector();
+    config.network.critic_layers = read("critic_layers").toIntVector();
+    config.network.use_layer_norm = read("use_layer_norm").toBool();
+    config.max_players_per_team = read("max_players_per_team").toInt();
+    config.ticks_per_step = read("ticks_per_step").toInt();
+    return config;
+}
+
+std::string describe_model_config(const ModelConfig& config) {
+    const auto sizes = [](const std::vector<int64_t>& layers) {
+        std::string out = "{";
+        for (size_t i = 0; i < layers.size(); i++) {
+            out += (i > 0 ? ", " : "") + std::to_string(layers[i]);
+        }
+        return out + "}";
+    };
+    return "obs_size " + std::to_string(config.network.obs_size) +
+           ", action_size " + std::to_string(config.network.action_size) +
+           ", shared_layers " + sizes(config.network.shared_layers) +
+           ", actor_layers " + sizes(config.network.actor_layers) +
+           ", critic_layers " + sizes(config.network.critic_layers) +
+           ", use_layer_norm " + (config.network.use_layer_norm ? "true" : "false") +
+           ", max_players_per_team " + std::to_string(config.max_players_per_team) +
+           ", ticks_per_step " + std::to_string(config.ticks_per_step);
 }
 
 } // namespace buta_ppo::rl 

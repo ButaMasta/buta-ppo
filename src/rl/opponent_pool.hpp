@@ -44,10 +44,10 @@ public:
 
     /**
      * @param config The PFSP config.
-     * @param ac_config The network config of the learner, with its obs and action sizes filled in.
+     * @param model_config The learner's model config, with its obs and action sizes filled in. Saved with each snapshot.
      * @param seed Seed for sampling.
      */
-    OpponentPool(const PFSPConfig& config, const ActorCriticConfig& ac_config, uint32_t seed = std::random_device{}());
+    OpponentPool(const PFSPConfig& config, const ModelConfig& model_config, uint32_t seed = std::random_device{}());
 
     /**
      * @brief Loads the pool saved in `dir`, and keeps the pool saved there from then on.
@@ -107,7 +107,7 @@ private:
     static constexpr double EVICT_MIN_GAMES = 20.0;
 
     PFSPConfig config_;
-    ActorCriticConfig ac_config_;
+    ModelConfig model_config_;
     std::vector<Snapshot> snapshots_; // Oldest first.
     std::mt19937 rng_;
     std::filesystem::path dir_; // Empty for an in-memory pool.

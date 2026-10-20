@@ -5,64 +5,67 @@
 #include "rl/actor_critic.hpp"
 
 #include <torch/torch.h>
-#include <ATen/cuda/CUDAContext.h>
 #include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include <iostream>
 
 extern "C" {
 
-// Must match the max_players_per_team the checkpoint was trained with.
-static constexpr size_t MAX_PLAYERS_PER_TEAM = 1;
-
 struct BotContext {
+    // Read from the model file, so the obs builder and network match what it was trained with.
+    buta_ppo::rl::ModelConfig config;
     std::unique_ptr<buta_ppo::obs::DefaultObs> obs_builder;
     std::unique_ptr<buta_ppo::action::DefaultAction> action_parser;
     buta_ppo::rl::ActorCritic model{nullptr};
-    torch::Device device{torch::kCPU};
     // Roster the current slot shuffle was built from.
     std::vector<buta_ppo::env::AgentMeta> agents;
 };
 
 void* bot_api_init(const char* checkpoint_path) {
-    BotContext* ctx = new BotContext();
-    
-    ctx->obs_builder = std::make_unique<buta_ppo::obs::DefaultObs>(MAX_PLAYERS_PER_TEAM, 8);
-    ctx->action_parser = std::make_unique<buta_ppo::action::DefaultAction>();
-
-    buta_ppo::rl::ActorCriticConfig config;
-    config.obs_size = static_cast<int64_t>(ctx->obs_builder->get_obs_size());
-    config.action_size = static_cast<int64_t>(ctx->action_parser->get_action_space_size());
-    config.shared_layers = {1280, 1280, 1024 };
-    config.actor_layers = {768, 512 };
-    config.critic_layers = {1024, 768 };
-    config.use_layer_norm = true;
-    
-    ctx->model = buta_ppo::rl::ActorCritic(config);
-    
-    if (torch::cuda::is_available()) {
-        ctx->device = torch::Device(torch::kCUDA);
-        cudaDeviceProp* properties = at::cuda::getDeviceProperties(ctx->device.index());
-        std::cout << "[buta_ppo_bot] Device: GPU (CUDA - " 
-                << properties->name << ")\n";
-    } else {
-        ctx->device = torch::Device(torch::kCPU);
-        std::cout << "[buta_ppo_bot] Device: CPU\n";
-    }
-    ctx->model->to(ctx->device);
+    auto ctx = std::make_unique<BotContext>();
 
     try {
+        const std::optional<buta_ppo::rl::ModelConfig> config = buta_ppo::rl::read_model_config(checkpoint_path);
+        if (!config) {
+            throw std::runtime_error(std::string(checkpoint_path) + " has no stored model config, since it was saved "
+                                     "before models stored one. Re-save it first by running training with its "
+                                     "checkpoint as the latest and 0 updates (see Deploying to RLBot in the README)");
+        }
+        ctx->config = *config;
+
+        ctx->obs_builder = std::make_unique<buta_ppo::obs::DefaultObs>(
+            static_cast<size_t>(config->max_players_per_team), static_cast<uint8_t>(config->ticks_per_step));
+        ctx->action_parser = std::make_unique<buta_ppo::action::DefaultAction>();
+
+        // The model stores its settings but not the obs and action code, which this build compiled in.
+        const auto obs_size = static_cast<int64_t>(ctx->obs_builder->get_obs_size());
+        const auto action_size = static_cast<int64_t>(ctx->action_parser->get_action_space_size());
+        if (obs_size != config->network.obs_size || action_size != config->network.action_size) {
+            throw std::runtime_error("the model was trained with obs_size " + std::to_string(config->network.obs_size) +
+                                     " and action_size " + std::to_string(config->network.action_size) +
+                                     ", but this build's obs builder and action parser give " +
+                                     std::to_string(obs_size) + " and " + std::to_string(action_size) +
+                                     ". The obs or action code changed since the model was trained");
+        }
+
+        // Inference runs on the CPU, on this thread only. A decision takes about 1-2 ms, while LibTorch's default
+        // thread pool competes with the game for every core and can stall a decision past the 8.33 ms between game
+        // ticks when the CPU is busy.
+        torch::set_num_threads(1);
+        ctx->model = buta_ppo::rl::ActorCritic(config->network);
         ctx->model->load_weights(checkpoint_path);
-    } catch (const std::runtime_error& e) {
-        std::cerr << "[buta_ppo_bot] Could not load the model: " << e.what() << "\n"
-                  << "The settings in bot_api.cpp must match the config the checkpoint was trained with "
-                  << "(see Deploying to RLBot in the README)." << std::endl;
-        delete ctx;
+    } catch (const std::exception& e) {
+        std::cerr << "[buta_ppo_bot] Could not load the model: " << e.what() << std::endl;
         return nullptr;
     }
 
+    std::cout << "[buta_ppo_bot] Loaded " << checkpoint_path << ": "
+              << buta_ppo::rl::describe_model_config(ctx->config) << "\n";
     ctx->model->eval();
-    return ctx;
+    return ctx.release();
 }
 
 buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi::ArenaState* state, uint32_t car_idx, bool new_kickoff) {
@@ -103,13 +106,13 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
             obs_buffer.data(), 
             {1, static_cast<int64_t>(obs_size)}, 
             torch::kFloat32
-        ).to(ctx->device);
+        );
 
         auto mask_tensor = torch::from_blob(
             mask_buffer.data(), 
             {1, static_cast<int64_t>(action_size)}, 
             torch::kFloat32
-        ).to(ctx->device);
+        );
 
         // Evaluate policy logits.
         torch::Tensor logits = ctx->model->forward_actor(obs_tensor);
@@ -133,7 +136,7 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
         return controls;
 
     } catch (const c10::Error& e) {
-        std::cerr << "\n[LibTorch CUDA/Tensor Error] " << e.what() << "\n" << std::endl;
+        std::cerr << "\n[LibTorch Error] " << e.what() << "\n" << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "\n[C++ Standard Exception] " << e.what() << "\n" << std::endl;
     } catch (...) {
@@ -143,8 +146,12 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
     return buta_ppo::ffi::CarControls{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false, false, false};
 }
 
-uint32_t bot_api_max_players_per_team() {
-    return static_cast<uint32_t>(MAX_PLAYERS_PER_TEAM);
+uint32_t bot_api_max_players_per_team(void* ctx_ptr) {
+    return static_cast<uint32_t>(static_cast<BotContext*>(ctx_ptr)->config.max_players_per_team);
+}
+
+uint32_t bot_api_tick_skip(void* ctx_ptr) {
+    return static_cast<uint32_t>(static_cast<BotContext*>(ctx_ptr)->config.ticks_per_step);
 }
 
 void bot_api_free(void* ctx_ptr) {
