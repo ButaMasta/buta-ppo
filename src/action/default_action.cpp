@@ -134,6 +134,10 @@ void DefaultAction::get_action_mask(const ffi::CarState& car_state, float* out_m
         bool valid = car_state.is_on_ground ? ground_mask_[i] : air_mask_[i];
 
         if (!has_boost && boost_mask_[i]) valid = false;
+
+        // Jumps stay valid without boost on purpose. Jump actions tie throttle to boost, so with no boost the
+        // jump + boost actions are the only jumps with throttle, and an empty tank makes them plain jump + throttle.
+        // The turtled case allows jumps too, since a jump press while turtled triggers RocketSim's auto-flip.
         if (can_jump && jump_mask_[i]) valid = true;
 
         out_mask[i] = valid ? 1.0f : 0.0f;
