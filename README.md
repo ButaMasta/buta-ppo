@@ -4,11 +4,11 @@ buta-ppo is a C++ reinforcement learning framework implementing Proximal Policy 
 
 My main goal with this framework was to make use seamless and speeds respectable. Comparing against my own experience with [GigaLearn](https://github.com/ZealanL/GigaLearnCPP-Leak) I can confidently say it's at least twice as fast. As for training stability and quality though I cannot say as this project is so new I have not extensively tested it.
 
-For reference, the demo configuration in `src/main.cpp` (1v1, 253 envs, a ~6M parameter network, PFSP enabled) trains at roughly 300k steps per second on an i5-14600K with an RTX 5070.
+For reference, the demo configuration in `src/main.cpp` (1v1, 500 envs, a ~6M parameter network, PFSP enabled, CPU pinning) trains at about 530k steps per second with a fresh policy, and about 480k once the bot begin to properly interact with the ball, on an i5-14600K with an RTX 5070. Steps here are agent steps: each learner car's step counts once, so a 1v1 env step is two steps, or one when a PFSP opponent drives the other car. The console's `Total SPS` and TensorBoard's `Performance/Total_SPS` count the same way.
 
 ## Features
 
-* **PPO:** GAE advantages, clipped surrogate objective, entropy bonus, per-batch advantage normalization, and global gradient clipping.
+* **PPO:** GAE advantages, clipped surrogate objective, entropy bonus, advantage normalization over the whole rollout, and global gradient clipping.
 * **Pipelined Rollout:** Environments are split into two groups. While worker threads step one group's physics, the main thread runs inference for the other, so the CPU and GPU stay busy at the same time.
 * **CUDA Graphs:** Rollout inference and the entire training minibatch step (forward, loss, backward, gradient clipping, optimizer step) are captured once and replayed, removing kernel launch overhead. Training runs under bf16 autocast, and rollout inference uses TF32 matmuls.
 * **Zero Mid-Step Allocations:** Observations, action masks, rewards, and actions live in persistent, pinned buffers allocated before training starts.
@@ -435,7 +435,7 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Policy/` | Approx KL, clip fraction, normalized entropy |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
-| `Performance/` | Total and rollout steps per second, and `Rollout_Physics_Wait`, the fraction of the rollout spent waiting on physics (see [Finding the Rollout Bottleneck](#finding-the-rollout-bottleneck)). `Env_Step_Microseconds` is the worker time per env step, and `Touch_Ticks_Per_Env_Step` and `Repredictions_Per_Env_Step` count the ball touches and full ball predictions that drive it, so a drop in SPS can be told apart from a bot that plays the ball more |
+| `Performance/` | Total and rollout steps per second, counted in learner agent steps and not including the time spent writing logs and checkpoints, and `Rollout_Physics_Wait`, the fraction of the rollout spent waiting on physics (see [Finding the Rollout Bottleneck](#finding-the-rollout-bottleneck)). `Env_Step_Microseconds` is the worker time per env step, and `Touch_Ticks_Per_Env_Step` and `Repredictions_Per_Env_Step` count the ball touches and full ball predictions that drive it, so a drop in SPS can be told apart from a bot that plays the ball more |
 
 Rewards are averaged over learner agent steps, so PFSP opponents are left out. A reward that itself returns opposite values to the two teams (for example −1 to the team that conceded) averages to about 0 in `Reward_Components/` during self-play, since both teams are learners. Making it zero-sum with `opp_scale` instead keeps `Reward_Components/` meaningful, since it is logged before the options. `Reward_Magnitude/` doesn't cancel either way. The absolute value is taken per step, matching what PPO trains on, so a reward that flips sign within one step counts as their sum.
 
