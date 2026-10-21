@@ -2,9 +2,9 @@
 
 buta-ppo is a C++ reinforcement learning framework implementing Proximal Policy Optimization (PPO) for training Rocket League bots. Built using LibTorch and [RocketSim](https://crates.io/crates/rocketsim).
 
-My main goal with this framework was to make use seamless and speeds respectable. Comparing against my own experience with [GigaLearn](https://github.com/ZealanL/GigaLearnCPP-Leak) I can confidently say it's at least twice as fast. As for training stability and quality though I cannot say as this project is so new I have not extensively tested it.
+My main goal with this framework was to make use seamless and speeds respectable. Comparing against my own experience with [GigaLearn](https://github.com/ZealanL/GigaLearnCPP-Leak) I can confidently say it's at least four times as fast. As for training stability and quality though I cannot say as this project is so new I have not extensively tested it though there are some bots which have surpassed nexto level utilizing this framework already.
 
-For reference, the demo configuration in `src/main.cpp` (1v1, 500 envs, a ~6M parameter network, PFSP enabled, CPU pinning) trains at about 530k steps per second with a fresh policy, and about 480k once the bot begin to properly interact with the ball, on an i5-14600K with an RTX 5070. Steps here are agent steps: each learner car's step counts once, so a 1v1 env step is two steps, or one when a PFSP opponent drives the other car. The console's `Total SPS` and TensorBoard's `Performance/Total_SPS` count the same way.
+For reference, the demo configuration in `src/main.cpp` (1v1, 500 envs, a ~6M parameter network, PFSP enabled, CPU pinning) trains at about 530k steps per second with a fresh policy, and about 480k once the bot begins to properly interact with the ball, on an i5-14600K with an RTX 5070. Steps here are agent steps: each learner car's step counts once, so a 1v1 env step is two steps, or one when a PFSP opponent drives the other car. The console's `Total SPS` and TensorBoard's `Performance/Total_SPS` count the same way.
 
 ## Features
 
