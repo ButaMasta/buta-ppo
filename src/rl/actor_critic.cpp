@@ -313,6 +313,11 @@ torch::Tensor ActorCriticImpl::sample_action(torch::Tensor obs, torch::Tensor ac
     return sample_masked(mask_logits(forward_actor(obs), action_masks));
 }
 
+torch::Tensor ActorCriticImpl::best_action(torch::Tensor obs, torch::Tensor action_masks) {
+    torch::NoGradGuard no_grad;
+    return mask_logits(forward_actor(obs), action_masks).argmax(-1);
+}
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> ActorCriticImpl::evaluate_actions(
     torch::Tensor obs,
     torch::Tensor actions,

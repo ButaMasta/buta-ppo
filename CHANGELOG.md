@@ -78,6 +78,14 @@
     - With the demo network, a decision took about 0.6 ms, and at most 2.5 ms, on an i5-14600K with every core kept busy, against 0.5 ms (at most 5.5 ms) for the old GPU bot. LibTorch's default multi-threaded CPU inference went past the 8.33 ms between game ticks on every decision under the same load, so the bot uses a single thread. The first decision no longer takes about 130 ms while CUDA starts up.
     - The bot's C++ library is no longer built with `-march=native`, so it runs on other CPUs. The machine running the bot needs a glibc at least as new as the build machine's.
     - Non-breaking. Rerun `deploy.py` to repackage an existing bot.
+19. Added external bots: bots from outside the framework that drive a whole team in the visualizer, starting with Nexto, the RLGym community bot, included with permission from its author (see `THIRD_PARTY_NOTICES.md`).
+    - `RunnerConfig::render_external_bots` takes `{bot, team}` pairs, e.g. `{{create_nexto_bot("src/external/nexto/nexto-model.pt"), ffi::Team::Orange}}` from `src/external/bots.hpp`. Teams not listed play the policy. Render only for now: listing one outside render mode stops at startup with an error.
+    - Nexto plays as the RLBot botpack version does: its own observations and action table, its decision timing (a decision every 8 ticks, taking effect 6 ticks after the state it was made from), and its scripted speedflip kickoff. It plays through the 3 second frozen countdown before each kickoff as it would in game, each car keeps its own decision timing, and bots keep their state across goals like a bot staying in a match. A tick-by-tick replay of its packets through the original Python bot gives the same controls, within 1e-8. `NextoOptions` sets how random it plays (`beta`) and its kickoff behavior.
+    - Its network is rebuilt in C++ from the original model's weights and runs on the GPU by default (`NextoOptions::device`), at about 0.24 ms per decision. TF32 is off for Nexto's own matmuls, since it changed 0.4% of its choices.
+    - `ticks_per_step` doesn't have to match Nexto's 8. Other bots can be added through `src/external/external_bot.hpp`.
+    - Non-breaking.
+20. The visualizer now plays the policy's most likely action, as the RLBot bot does, so it shows how the bot plays in a match. `RunnerConfig::render_best_action = false` samples actions like training, as before.
+    - Non-breaking, but the visualizer plays differently from before by default.
 
 ### Releases
 #### 0.2.0

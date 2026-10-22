@@ -158,6 +158,15 @@ public:
     torch::Tensor sample_action(torch::Tensor obs, torch::Tensor action_masks);
 
     /**
+     * @brief The most likely valid actions, without running the critic. How the bot plays outside training.
+     *
+     * @param obs The batched obs tensor.
+     * @param action_masks The float mask tensor indicating valid env actions.
+     * @return The best actions.
+     */
+    torch::Tensor best_action(torch::Tensor obs, torch::Tensor action_masks);
+
+    /**
      * @brief Evaluates historical actions to compute log probs and policy entropy during back prop.
      * 
      * @param obs The batched obs tensor.

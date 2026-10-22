@@ -7,6 +7,7 @@
 #include "reward/reward_manager.hpp"
 #include "metric/metric_manager.hpp"
 #include "rl/pfsp.hpp"
+#include "external/external_bot.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -216,7 +217,8 @@ public:
         size_t max_players_per_team = 4, 
         bool render = false,
         const rl::PFSPConfig& pfsp_cfg = {},
-        const std::vector<int>& worker_cpus = {}
+        const std::vector<int>& worker_cpus = {},
+        const std::vector<external::ExternalSide>& external_sides = {}
     );
 
     ~VecEnv();

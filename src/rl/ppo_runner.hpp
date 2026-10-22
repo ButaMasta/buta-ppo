@@ -9,6 +9,7 @@
 #include "reward/reward_manager.hpp"
 #include "metric/metric_manager.hpp"
 #include "env/episode_limits.hpp"
+#include "external/external_bot.hpp"
 
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -80,6 +81,14 @@ struct MatchDistribution {
 struct RunnerConfig {
     std::string bot_name = "default";
     bool render = false;
+
+    // Render only: external bots (see `src/external/bots.hpp`) that drive a whole team instead of the policy, e.g.
+    // `{{create_nexto_bot("src/external/nexto/nexto-model.pt"), ffi::Team::Orange}}`. Teams not listed play the policy.
+    std::vector<external::ExternalSide> render_external_bots = {};
+
+    // Render only: the policy plays its most likely action, as the deployed bot does, instead of sampling like in
+    // training.
+    bool render_best_action = true;
 
     // Instead of training, measures thread counts, CPU pinning and env counts on this machine and prints the fastest
     // as config values to paste in. It runs this config's match layouts and network with fresh weights, under a light

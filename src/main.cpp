@@ -3,6 +3,7 @@
 #include "state/setters.hpp"
 #include "reward/rewards.hpp"
 #include "metric/metrics.hpp"
+#include "external/bots.hpp" // IWYU pragma: keep
 
 #include <iostream>
 #include <csignal>
@@ -16,6 +17,7 @@ using namespace buta_ppo::env;
 using namespace buta_ppo::state;
 using namespace buta_ppo::reward;
 using namespace buta_ppo::metric;
+using namespace buta_ppo::external;
 
 std::atomic<bool> g_stop_training{false};
 
@@ -45,6 +47,12 @@ int main() {
 
     config.bot_name = "default";
     config.render = false;
+    // Render only: the policy plays its most likely action, as the deployed bot does. False samples like in training.
+    config.render_best_action = true;
+    // Render only: external bots that drive a team instead of the policy (see src/external/bots.hpp).
+    // auto nexto = create_nexto_bot("src/external/nexto/nexto-model.pt");
+    // config.render_external_bots = {{nexto, ffi::Team::Orange},
+    //                                {nexto, ffi::Team::Blue}};
 
     // Instead of training, measures thread counts, CPU pinning and env counts for this config, then prints the fastest
     // as the num_threads, num_envs, main_thread_cpus and worker_cpus lines below. See "Benchmarking Your Hardware".

@@ -23,7 +23,8 @@ RocketSimEnv::RocketSimEnv(
     int ticks_per_step, const EpisodeLimits& limits, size_t max_players_per_team,
     uint32_t seed, 
     bool render,
-    std::optional<ffi::Team> opponent_team
+    std::optional<ffi::Team> opponent_team,
+    const std::vector<external::ExternalSide>& external_sides
 ) : opponent_team_(opponent_team),
     setters_(setters),
     rng_(seed),
@@ -66,6 +67,28 @@ RocketSimEnv::RocketSimEnv(
         add_agent(team);
     }
 
+    // Hand the external bots' teams to their controllers.
+    for (const external::ExternalSide& side : external_sides) {
+        if (!side.bot) {
+            throw std::invalid_argument("RocketSimEnv: an external side has no bot.");
+        }
+
+        ExternalGroup group;
+        group.bot = side.bot;
+        for (size_t i = 0; i < agents_.size(); i++) {
+            if (agents_[i].team != side.team) continue;
+            if (controllers_[i]) {
+                throw std::invalid_argument("RocketSimEnv: two external bots were given the same team.");
+            }
+            controllers_[i] = side.bot->make_controller(agents_[i].car_id);
+            group.agents.push_back(i);
+        }
+        group.deciding.reserve(group.agents.size());
+        group.obs.resize(group.agents.size() * side.bot->obs_size(agents_.size()));
+        group.decisions.resize(group.agents.size() * side.bot->decision_size());
+        external_groups_.push_back(std::move(group));
+    }
+
     // Initial shuffle of indices.
     obs_builder_.team_indices_rand(agents_);
 
@@ -92,6 +115,7 @@ uint32_t RocketSimEnv::add_agent(ffi::Team team) {
     action_mask_buffer_.resize(agents_.size() * action_space_size_, 0.0f);
     reward_buffer_.resize(agents_.size(), 0.0f);
     agent_x_inverted_.resize(agents_.size(), false);
+    controllers_.resize(agents_.size());
 
     return car_id;
 }
@@ -105,6 +129,9 @@ ResetResult RocketSimEnv::reset() {
     metric_manager_.reset(arena_state_);
     obs_builder_.reset();
     obs_builder_.team_indices_rand(agents_);
+    if (!external_groups_.empty()) {
+        start_external_episode();
+    }
 
     for (size_t i = 0; i < agents_.size(); i++) {
         float* agent_obs_ptr = obs_buffer_.data() + (i * single_obs_size_);
@@ -120,6 +147,9 @@ ResetResult RocketSimEnv::reset() {
 
 StepResult RocketSimEnv::step(const int* actions) {
     for (size_t i = 0; i < agents_.size(); i++) {
+        // External bots set their controls every tick.
+        if (controllers_[i]) continue;
+
         ffi::CarControls controls;
         if (heavy_workload_) [[unlikely]] {
             controls = chaser_controls(arena_state_.cars[agents_[i].car_id]);
@@ -146,6 +176,10 @@ StepResult RocketSimEnv::step(const int* actions) {
     bool blue_scored = false;
 
     for (int i = 0; i < ticks_per_step_; i++) {
+        if (!external_groups_.empty()) {
+            run_external_packet(true);
+        }
+
         ffi::step_arena(arena_);
         ffi::get_arena_state(arena_, arena_state_);
 
@@ -166,6 +200,7 @@ StepResult RocketSimEnv::step(const int* actions) {
         if (std::any_of(std::begin(arena_state_.events.car_hit_ball), std::end(arena_state_.events.car_hit_ball), [](bool v) { return v; })) {
             ticks_since_last_touch_ = 0;
             ++touch_ticks_;
+            kickoff_pause_ = false;
         } else {
             ++ticks_since_last_touch_;
         }
@@ -233,6 +268,79 @@ ffi::CarControls RocketSimEnv::chaser_controls(const ffi::CarState& car) const {
     controls.handbrake = std::abs(angle) > 1.6f;
     controls.jump = car.is_on_ground && dist < 300.0f && ball[2] > 180.0f;
     return controls;
+}
+
+void RocketSimEnv::start_external_episode() {
+    // A kickoff state: the ball resting at center field.
+    const ffi::PhysState& ball = arena_state_.ball.phys;
+    const bool kickoff = ball.pos[0] == 0.0f && ball.pos[1] == 0.0f
+                      && ball.vel[0] == 0.0f && ball.vel[1] == 0.0f && ball.vel[2] == 0.0f;
+
+    // Frozen packets aren't paced in render: nothing moves, and the visualizer shows nothing until play starts.
+    kickoff_pause_ = false;
+
+    // Each bot joins its first match at its own arbitrary tick, like a bot process starting up, which sets the phase of
+    // any tick cycle it keeps. So bots in the same match don't decide on the same ticks.
+    if (!external_started_) {
+        std::uniform_int_distribution<int> join_tick(0, JOIN_WINDOW_TICKS - 1);
+        join_ticks_.assign(agents_.size(), 0);
+        for (size_t a = 0; a < agents_.size(); a++) {
+            if (controllers_[a]) join_ticks_[a] = join_tick(rng_);
+        }
+        for (int i = 0; i < JOIN_WINDOW_TICKS; i++) {
+            run_external_packet(false);
+            for (int& ticks : join_ticks_) {
+                if (ticks > 0) ticks--;
+            }
+        }
+        join_ticks_.clear();
+        external_started_ = true;
+    }
+
+    // In game, bots keep getting packets through the countdown before a kickoff, with every car frozen. It's a whole
+    // number of 8-tick cycles, so the bots' phases carry through it.
+    if (kickoff) {
+        for (int i = 0; i < KICKOFF_COUNTDOWN_TICKS; i++) {
+            run_external_packet(false);
+        }
+    }
+    // "Go": the kickoff pause lasts until the first touch.
+    kickoff_pause_ = kickoff;
+}
+
+void RocketSimEnv::run_external_packet(bool apply_controls) {
+    const external::GameInfo info{ kickoff_pause_ };
+    for (size_t a = 0; a < agents_.size(); a++) {
+        if (external_joined(a)) controllers_[a]->observe(arena_state_, info);
+    }
+    decide_external();
+    for (size_t a = 0; a < agents_.size(); a++) {
+        if (!external_joined(a)) continue;
+        const ffi::CarControls controls = controllers_[a]->tick(arena_state_);
+        if (apply_controls) {
+            ffi::set_car_controls(arena_, agents_[a].car_id, controls);
+        }
+    }
+}
+
+void RocketSimEnv::decide_external() {
+    for (ExternalGroup& group : external_groups_) {
+        group.deciding.clear();
+        for (const size_t agent : group.agents) {
+            if (external_joined(agent) && controllers_[agent]->wants_decision()) group.deciding.push_back(agent);
+        }
+        if (group.deciding.empty()) continue;
+
+        const size_t obs_size = group.bot->obs_size(agents_.size());
+        const size_t decision_size = group.bot->decision_size();
+        for (size_t k = 0; k < group.deciding.size(); k++) {
+            controllers_[group.deciding[k]]->build_obs(arena_state_, group.obs.data() + k * obs_size);
+        }
+        group.bot->infer(group.obs.data(), group.deciding.size(), agents_.size(), group.decisions.data());
+        for (size_t k = 0; k < group.deciding.size(); k++) {
+            controllers_[group.deciding[k]]->set_decision(group.decisions.data() + k * decision_size, rng_);
+        }
+    }
 }
 
 ffi::CarControls RocketSimEnv::decode_action(size_t action_idx) {

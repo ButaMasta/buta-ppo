@@ -30,9 +30,14 @@ VecEnv::VecEnv(
     size_t max_players_per_team, 
     bool render,
     const rl::PFSPConfig& pfsp_cfg,
-    const std::vector<int>& worker_cpus
+    const std::vector<int>& worker_cpus,
+    const std::vector<external::ExternalSide>& external_sides
 ) {
     num_envs_ = num_envs;
+
+    if (!external_sides.empty() && !render) {
+        throw std::invalid_argument("External bots are only supported in render mode for now.");
+    }
 
     // Rendering runs a single env, which is always self-play.
     const bool pfsp = pfsp_cfg.enabled() && !render;
@@ -91,7 +96,8 @@ VecEnv::VecEnv(
                 max_players_per_team, 
                 std::random_device{}(), 
                 render,
-                opponent_team
+                opponent_team,
+                external_sides
             ));
 
             env_agent_counts_[env_idx] = agents_in_layout;

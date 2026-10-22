@@ -60,6 +60,8 @@ if(BUILD_RUST_BRIDGE)
         src/action/default_action.cpp
         src/env/rocketsim_env.cpp
         src/env/vec_env.cpp
+        src/external/nexto/nexto_bot.cpp
+        src/external/nexto/nexto_net.cpp
         src/obs/default_obs.cpp
         src/metric/metric_manager.cpp
         src/metric/in_air_ratio.cpp

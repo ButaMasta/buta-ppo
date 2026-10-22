@@ -8,7 +8,9 @@
 #include "action/default_action.hpp"
 #include "state/state_setter.hpp"
 #include "metric/metric_manager.hpp"
+#include "external/external_bot.hpp"
 
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -107,6 +109,55 @@ private:
     bool heavy_workload_ = false; // Benchmark only, see `set_heavy_workload`.
 
     /**
+     * @brief An external bot and the agents it drives, with scratch for batching their inference.
+     */
+    struct ExternalGroup {
+        std::shared_ptr<external::ExternalBot> bot;
+        std::vector<size_t> agents;
+        std::vector<size_t> deciding; // The agents deciding this step.
+        std::vector<float> obs;
+        std::vector<float> decisions;
+    };
+    std::vector<ExternalGroup> external_groups_;
+    // Per agent. Agents with a controller are driven by an external bot and ignore the policy's actions.
+    std::vector<std::unique_ptr<external::ExternalController>> controllers_;
+
+    // The kickoff countdown, 3 seconds in game.
+    static constexpr int KICKOFF_COUNTDOWN_TICKS = 360;
+    // The frozen ticks before the first episode, within which each external bot joins at its own random tick.
+    static constexpr int JOIN_WINDOW_TICKS = 120;
+    bool kickoff_pause_ = false;     // RLBot's `is_kickoff_pause`, for the external bots.
+    bool external_started_ = false;  // Whether the external bots have played an episode yet.
+    // Per agent: packets an external bot still waits before it joins and starts getting them. Only before the first episode.
+    std::vector<int> join_ticks_;
+
+    /**
+     * @brief Plays the external bots through what they'd get before the episode's first tick in game: the frozen
+     * countdown if it's a kickoff, and before the first episode, frozen ticks in which each joins at its own random tick.
+     */
+    void start_external_episode();
+
+    /**
+     * @brief Gives every joined external controller the current packet, decides for those that want it, and gets their
+     * controls.
+     *
+     * @param apply_controls Whether to set the controls on the cars. Off while the cars are frozen.
+     */
+    void run_external_packet(bool apply_controls);
+
+    /**
+     * @brief Whether the agent is driven by an external bot that has joined the match.
+     */
+    [[nodiscard]] bool external_joined(size_t agent) const {
+        return controllers_[agent] && (join_ticks_.empty() || join_ticks_[agent] == 0);
+    }
+
+    /**
+     * @brief Gets a decision for every external controller that wants one, batched per bot.
+     */
+    void decide_external();
+
+    /**
      * @brief Controls for a scripted car that chases the ball, used by the benchmark's heavy workload.
      */
     [[nodiscard]] ffi::CarControls chaser_controls(const ffi::CarState& car) const;
@@ -130,7 +181,8 @@ public:
         size_t max_players_per_team = 3,
         uint32_t seed = std::random_device{}(),
         bool render = false,
-        std::optional<ffi::Team> opponent_team = std::nullopt
+        std::optional<ffi::Team> opponent_team = std::nullopt,
+        const std::vector<external::ExternalSide>& external_sides = {}
     );
 
     /**

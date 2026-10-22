@@ -279,7 +279,8 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.max_players_per_team,
         config_.render,
         config_.pfsp_cfg,
-        config_.worker_cpus
+        config_.worker_cpus,
+        config_.render_external_bots
     );
 
     total_agents_ = vec_env_->get_total_agents();
@@ -1041,7 +1042,9 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
         step_obs_gpu_.copy_(current_obs, true);
         step_masks_gpu_.copy_(current_masks, true);
 
-        auto [actions_gpu, log_probs_gpu, values_gpu] = actor_critic_->get_action_and_value(step_obs_gpu_, step_masks_gpu_);
+        const torch::Tensor actions_gpu = config_.render_best_action
+            ? actor_critic_->best_action(step_obs_gpu_, step_masks_gpu_)
+            : actor_critic_->sample_action(step_obs_gpu_, step_masks_gpu_);
 
         actions_cpu_.copy_(actions_gpu, false);
         
