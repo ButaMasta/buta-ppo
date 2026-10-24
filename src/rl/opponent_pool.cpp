@@ -1,5 +1,6 @@
 // buta-ppo/src/rl/opponent_pool.cpp
 #include "opponent_pool.hpp"
+#include "util/file_utils.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -35,16 +36,6 @@ bool parse_snapshot_name(const fs::path& path, int64_t& steps) {
     const char* last = stem.data() + stem.size();
     const auto [ptr, ec] = std::from_chars(first, last, steps);
     return ec == std::errc{} && ptr == last && first != last;
-}
-
-// Writes a text file via a temp file and rename, so an interrupted write never leaves a partial file.
-void write_text_file(const fs::path& path, const std::string& text) {
-    const fs::path tmp = path.string() + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::trunc);
-        out << text;
-    }
-    fs::rename(tmp, path);
 }
 
 std::string join_sizes(const std::vector<int64_t>& sizes) {
@@ -96,7 +87,7 @@ void OpponentPool::open(const fs::path& dir, int64_t max_steps) {
         }
     }
     fs::create_directories(dir_);
-    write_text_file(dir_ / META_FILE, meta);
+    util::write_text_file(dir_ / META_FILE, meta);
 
     // Win records by snapshot steps.
     std::unordered_map<int64_t, std::pair<double, double>> records;
@@ -157,7 +148,7 @@ void OpponentPool::save_state() const {
     for (const Snapshot& snapshot : snapshots_) {
         out << snapshot.steps << " " << snapshot.wins << " " << snapshot.games << "\n";
     }
-    write_text_file(dir_ / STATE_FILE, out.str());
+    util::write_text_file(dir_ / STATE_FILE, out.str());
 }
 
 OpponentPool::Snapshot OpponentPool::make_snapshot(int64_t steps, const ActorCritic& net) {

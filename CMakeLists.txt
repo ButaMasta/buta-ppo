@@ -69,6 +69,8 @@ if(BUILD_RUST_BRIDGE)
         src/reward/event_goal.cpp
         src/reward/touch_ball.cpp
         src/reward/velocity_to_ball.cpp
+        src/rl/rating.cpp
+        src/rl/eval_ledger.cpp
         src/rl/rollout_buffer.cpp
         src/rl/actor_critic.cpp
         src/rl/optimizers.cpp
