@@ -4,7 +4,6 @@
 #include "rocketsim_env.hpp"
 #include "vec_env.hpp"
 #include "rl/ppo_runner.hpp"
-#include "util/thread_affinity.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -32,7 +31,7 @@ VecEnv::VecEnv(
     const rl::PFSPConfig& pfsp_cfg,
     const std::vector<int>& worker_cpus,
     const std::vector<external::ExternalSide>& external_sides
-) {
+) : pool_(num_threads, worker_cpus) {
     num_envs_ = num_envs;
 
     if (!external_sides.empty() && !render) {
@@ -194,135 +193,79 @@ VecEnv::VecEnv(
         }
     }
 
-    // Create thread pool. Workers given CPUs all share them, so the OS still balances the workers across them.
-    for (size_t i = 0; i < num_threads; i++) {
-        workers_.emplace_back(&VecEnv::worker_loop, this, i);
-        if (!worker_cpus.empty() && !util::pin_thread(workers_.back().native_handle(), worker_cpus)) {
-            std::cerr << "[WARN] Could not pin worker thread " << i << " to worker_cpus. It runs unpinned.\n";
-        }
-    }
+    reset_task_ = [this](size_t i) {
+        const auto& result = envs_[i]->reset();
+        write_obs_and_masks(i, result.observations, result.action_masks);
+    };
+    step_task_ = [this](size_t i) { step_env(i); };
 }
 
-VecEnv::~VecEnv() {
-    {
-        std::lock_guard<std::mutex> lock(start_mutex_);
-        terminate_pool_ = true;
-    }
-    cv_start_.notify_all();
+// Defined here, where RocketSimEnv is a complete type.
+VecEnv::~VecEnv() = default;
 
-    for (auto& worker : workers_) {
-        if (worker.joinable()) {
-            worker.join();
+void VecEnv::step_env(size_t env_idx) {
+    const auto env_start = std::chrono::steady_clock::now();
+    const size_t agent_offset = env_agent_offsets_[env_idx];
+    const size_t num_agents = env_agent_counts_[env_idx];
+    const uint32_t* rows = agent_rows_.data() + agent_offset;
+
+    // Gather the env's actions from its agents' rows.
+    int* env_actions_ptr = env_actions_.data() + agent_offset;
+    for (size_t a = 0; a < num_agents; ++a) {
+        env_actions_ptr[a] = current_actions_ptr_[rows[a]];
+    }
+    StepResult result = envs_[env_idx]->step(env_actions_ptr);
+
+    // Rewards and the final obs live in the env's buffers, which its reset overwrites, so copy them first.
+    const float term_val = result.is_terminated ? 1.0f : 0.0f;
+    const float trunc_val = result.is_truncated ? 1.0f : 0.0f;
+    float* rewards = batched_rewards_.data_ptr<float>();
+    float* terminated = batched_terminated_.data_ptr<float>();
+    float* truncated = batched_truncated_.data_ptr<float>();
+    for (size_t a = 0; a < num_agents; ++a) {
+        rewards[rows[a]] = result.rewards[a];
+        terminated[rows[a]] = term_val;
+        truncated[rows[a]] = trunc_val;
+    }
+
+    if (result.is_terminated) {
+        env_episode_counts_[env_idx].goals++;
+    } else if (result.is_truncated && result.no_touch_truncated) {
+        env_episode_counts_[env_idx].no_touch_truncations++;
+    } else if (result.is_truncated) {
+        env_episode_counts_[env_idx].time_limit_truncations++;
+    }
+
+    // A PFSP match's goal is a win when the learner's team, the one the past version doesn't control, scored.
+    if (result.is_terminated && env_opponent_team_[env_idx]) {
+        const bool learner_is_blue = *env_opponent_team_[env_idx] == ffi::Team::Orange;
+        if (result.blue_scored == learner_is_blue) {
+            env_outcomes_[env_idx].wins++;
+        } else {
+            env_outcomes_[env_idx].losses++;
         }
     }
-}
 
-void VecEnv::worker_loop(size_t /*worker_id*/) {
-    int local_batch_count = 0; // Track this worker's batch count.
+    if (result.is_terminated || result.is_truncated) {
 
-    while (!terminate_pool_) {
-        // Wait for main thread.
-        {
-            std::unique_lock<std::mutex> lock(start_mutex_);
-            cv_start_.wait(lock, [this, &local_batch_count] {
-                return (batch_count_ > local_batch_count) || terminate_pool_;
-            });
-        }
-
-        if (terminate_pool_) break;
-
-        local_batch_count = batch_count_;
-
-        switch (current_worker_state_) {
-        case WorkerState::RESET: {
-            // Claim envs until all are taken. Relaxed is enough: the batch_count_/pending_tasks_ handshake
-            // orders an env's writes by one worker before its next use by another.
-            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < batch_env_end_;
-                 i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
-                const auto& result = envs_[i]->reset();
-                write_obs_and_masks(i, result.observations, result.action_masks);
+        // Route the final obs buffer to terminal obs.
+        if (result.is_truncated) {
+            float* terminal_obs = batched_terminal_obs_.data_ptr<float>();
+            for (size_t a = 0; a < num_agents; ++a) {
+                std::memcpy(terminal_obs + rows[a] * single_obs_size_,
+                            result.observations.data() + a * single_obs_size_,
+                            single_obs_size_ * sizeof(float));
             }
-            break;
-        }
-        case WorkerState::STEP: {
-            // Claim envs until all are taken (see RESET).
-            for (size_t i = next_env_.fetch_add(1, std::memory_order_relaxed); i < batch_env_end_;
-                 i = next_env_.fetch_add(1, std::memory_order_relaxed)) {
-                const auto env_start = std::chrono::steady_clock::now();
-                const size_t agent_offset = env_agent_offsets_[i];
-                const size_t num_agents = env_agent_counts_[i];
-                const uint32_t* rows = agent_rows_.data() + agent_offset;
-
-                // Gather the env's actions from its agents' rows.
-                int* env_actions_ptr = env_actions_.data() + agent_offset;
-                for (size_t a = 0; a < num_agents; ++a) {
-                    env_actions_ptr[a] = current_actions_ptr_[rows[a]];
-                }
-                StepResult result = envs_[i]->step(env_actions_ptr);
-
-                // Rewards and the final obs live in the env's buffers, which its reset overwrites, so copy them first.
-                const float term_val = result.is_terminated ? 1.0f : 0.0f;
-                const float trunc_val = result.is_truncated ? 1.0f : 0.0f;
-                float* rewards = batched_rewards_.data_ptr<float>();
-                float* terminated = batched_terminated_.data_ptr<float>();
-                float* truncated = batched_truncated_.data_ptr<float>();
-                for (size_t a = 0; a < num_agents; ++a) {
-                    rewards[rows[a]] = result.rewards[a];
-                    terminated[rows[a]] = term_val;
-                    truncated[rows[a]] = trunc_val;
-                }
-
-                if (result.is_terminated) {
-                    env_episode_counts_[i].goals++;
-                } else if (result.is_truncated && result.no_touch_truncated) {
-                    env_episode_counts_[i].no_touch_truncations++;
-                } else if (result.is_truncated) {
-                    env_episode_counts_[i].time_limit_truncations++;
-                }
-
-                // A PFSP match's goal is a win when the learner's team, the one the past version doesn't control, scored.
-                if (result.is_terminated && env_opponent_team_[i]) {
-                    const bool learner_is_blue = *env_opponent_team_[i] == ffi::Team::Orange;
-                    if (result.blue_scored == learner_is_blue) {
-                        env_outcomes_[i].wins++;
-                    } else {
-                        env_outcomes_[i].losses++;
-                    }
-                }
-
-                if (result.is_terminated || result.is_truncated) {
-
-                    // Route the final obs buffer to terminal obs.
-                    if (result.is_truncated) {
-                        float* terminal_obs = batched_terminal_obs_.data_ptr<float>();
-                        for (size_t a = 0; a < num_agents; ++a) {
-                            std::memcpy(terminal_obs + rows[a] * single_obs_size_,
-                                        result.observations.data() + a * single_obs_size_,
-                                        single_obs_size_ * sizeof(float));
-                        }
-                    }
-
-                    const auto& reset_res = envs_[i]->reset();
-                    write_obs_and_masks(i, reset_res.observations, reset_res.action_masks);
-                } else {
-                    write_obs_and_masks(i, result.observations, result.action_masks);
-                }
-                EnvCostCounts& cost = env_cost_counts_[i];
-                cost.env_steps++;
-                cost.step_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - env_start).count();
-            }
-            break;
-        }
-        default:
-            break;
         }
 
-        // If this was the last thread then thread operations are complete.
-        if (--pending_tasks_ == 0) {
-            std::lock_guard<std::mutex> lock(done_mutex_);
-            cv_done_.notify_one();
-        }
+        const auto& reset_res = envs_[env_idx]->reset();
+        write_obs_and_masks(env_idx, reset_res.observations, reset_res.action_masks);
+    } else {
+        write_obs_and_masks(env_idx, result.observations, result.action_masks);
     }
+    EnvCostCounts& cost = env_cost_counts_[env_idx];
+    cost.env_steps++;
+    cost.step_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - env_start).count();
 }
 
 void VecEnv::write_obs_and_masks(size_t env_idx, const std::vector<float>& obs, const std::vector<float>& masks) {
@@ -338,26 +281,14 @@ void VecEnv::write_obs_and_masks(size_t env_idx, const std::vector<float>& obs, 
     }
 }
 
-void VecEnv::dispatch(WorkerState state, const int* batched_actions, size_t env_begin, size_t env_end) {
-    {
-        std::lock_guard<std::mutex> lock(start_mutex_);
-        current_actions_ptr_ = batched_actions;
-        current_worker_state_ = state;
-        next_env_ = env_begin;
-        batch_env_end_ = env_end;
-        pending_tasks_ = workers_.size();
-        batch_count_++; // New batch work is ready.
-    }
-    cv_start_.notify_all();
+void VecEnv::dispatch(const util::WorkerPool::Task& task, const int* batched_actions, size_t env_begin, size_t env_end) {
+    // Published to the workers by the pool's dispatch.
+    current_actions_ptr_ = batched_actions;
+    pool_.dispatch(task, env_begin, env_end);
 }
 
 void VecEnv::wait_for_workers() {
-    {
-        std::unique_lock<std::mutex> lock(done_mutex_);
-        cv_done_.wait(lock, [this] { return pending_tasks_ == 0; });
-    }
-
-    current_worker_state_ = WorkerState::IDLE;
+    pool_.wait();
     current_actions_ptr_ = nullptr;
 }
 
@@ -378,7 +309,7 @@ BatchedResetResult VecEnv::reset() {
     if (group_in_flight_) {
         throw std::logic_error("VecEnv::reset called while an env group is still stepping.");
     }
-    dispatch(WorkerState::RESET, nullptr, 0, num_envs_);
+    dispatch(reset_task_, nullptr, 0, num_envs_);
     wait_for_workers();
     return { batched_obs_, batched_action_masks_ };
 }
@@ -387,7 +318,7 @@ BatchedStepResult VecEnv::step(const int* batched_actions) {
     if (group_in_flight_) {
         throw std::logic_error("VecEnv::step called while an env group is still stepping.");
     }
-    dispatch(WorkerState::STEP, batched_actions, 0, num_envs_);
+    dispatch(step_task_, batched_actions, 0, num_envs_);
     wait_for_workers();
     return { batched_obs_, batched_action_masks_, batched_rewards_, batched_terminated_, batched_truncated_, batched_terminal_obs_ };
 }
@@ -397,7 +328,7 @@ void VecEnv::step_async(size_t group, const int* batched_actions) {
         throw std::logic_error("VecEnv::step_async called while another env group is still stepping.");
     }
     const EnvGroup& g = groups_.at(group);
-    dispatch(WorkerState::STEP, batched_actions, g.env_begin, g.env_end);
+    dispatch(step_task_, batched_actions, g.env_begin, g.env_end);
     group_in_flight_ = true;
     in_flight_group_ = group;
 }

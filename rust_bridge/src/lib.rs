@@ -534,6 +534,9 @@ pub extern "C" fn rs_arena_set_ball_state_ball_sim(arena_ptr: *mut BallSimArena,
     let mut curr_ball: BallSimBallState = *arena.get_ball_state();
     curr_ball.phys = BallSimPhysState::from(ball_state.phys);
     arena.set_ball_state(curr_ball);
+    // Every call is a reprediction, a jump from wherever the last prediction ended. ball_sim asks planning use to drop
+    // the contacts cached there, so the new prediction matches a fresh arena's instead of depending on the last one.
+    arena.clear_persistent_manifolds();
 }
 
 /// Set a car's state, phys and flags/amounts.
@@ -585,4 +588,15 @@ pub extern "C" fn rs_arena_reset_to_random_kickoff(
     let arena: &mut Arena = unsafe { &mut *arena_ptr };
     let rng_seed: Option<u64> = if use_seed { Some(seed) } else { None };
     arena.reset_to_random_kickoff(rng_seed);
+}
+
+/// Restarts the arena's random number generator, which picks where demolished cars respawn (and the kickoff, when
+/// `rs_arena_reset_to_random_kickoff` gets no seed). A new arena seeds it randomly.
+#[unsafe(no_mangle)]
+pub extern "C" fn rs_arena_seed_rng(arena_ptr: *mut Arena, seed: u64) {
+    if arena_ptr.is_null() {
+        return;
+    }
+    let arena: &mut Arena = unsafe { &mut *arena_ptr };
+    arena.rng.seed(seed);
 }

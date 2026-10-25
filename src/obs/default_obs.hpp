@@ -104,6 +104,11 @@ public:
     void set_min_repred_interval(uint32_t interval) { min_repred_interval_ = interval; }
 
     /**
+     * @brief Restarts the random number generator from `seed`, as if the obs builder had just been built with it.
+     */
+    void reseed(uint32_t seed) { rng_.seed(seed); }
+
+    /**
      * @brief Full ball repredictions since the last call, then clears the count.
      */
     [[nodiscard]] uint64_t take_repredictions() { return std::exchange(repredictions_, 0); }

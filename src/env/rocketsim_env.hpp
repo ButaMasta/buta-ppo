@@ -218,6 +218,16 @@ public:
     void set_heavy_workload(bool enabled);
 
     /**
+     * @brief Restarts the env's random number generators from `seed`, so the episodes after the next reset play out
+     * the same every time given the same actions. Evaluation uses it to replay the same games on the same envs.
+     */
+    void reseed(uint32_t seed) {
+        rng_.seed(seed);
+        obs_builder_.reseed(seed);
+        ffi::seed_arena_rng(arena_, seed);
+    }
+
+    /**
      * @brief Ball touch ticks and full ball repredictions since the last call, then clears them.
      */
     [[nodiscard]] BallCostCounts take_ball_cost_counts() {

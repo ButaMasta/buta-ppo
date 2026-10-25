@@ -60,6 +60,7 @@ if(BUILD_RUST_BRIDGE)
         src/action/default_action.cpp
         src/env/rocketsim_env.cpp
         src/env/vec_env.cpp
+        src/env/eval_vec_env.cpp
         src/external/nexto/nexto_bot.cpp
         src/external/nexto/nexto_net.cpp
         src/obs/default_obs.cpp
@@ -80,6 +81,8 @@ if(BUILD_RUST_BRIDGE)
         src/rl/opponent_pool.cpp
         src/state/default_kickoff.cpp
         src/state/random_state.cpp
+        src/state/eval_kickoff.cpp
+        src/util/worker_pool.cpp
     )
 
     # Expose include/ directory.

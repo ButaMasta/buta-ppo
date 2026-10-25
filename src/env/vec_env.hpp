@@ -8,6 +8,7 @@
 #include "metric/metric_manager.hpp"
 #include "rl/pfsp.hpp"
 #include "external/external_bot.hpp"
+#include "util/worker_pool.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,10 +17,6 @@
 #include <vector>
 #include <memory>
 #include <optional>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <atomic>
 
 #include <torch/torch.h>
 
@@ -146,47 +143,32 @@ private:
     torch::Tensor batched_terminal_obs_;
 
 
-    std::vector<std::thread> workers_;
-    std::atomic<bool> terminate_pool_{false};
-    std::atomic<int> pending_tasks_{0};
-
-    // Identifier for what batch number is expected of all workers.
-    std::atomic<int> batch_count_{0};
-
-    // Index of the next env to be claimed by a worker in the current batch. Set to the batch's first env.
-    std::atomic<size_t> next_env_{0};
-    // One past the last env of the current batch. Written by the main thread before each batch.
-    size_t batch_env_end_ = 0;
-
     // Env groups for pipelined stepping. Two groups when there are at least 2 envs, otherwise one.
     std::vector<EnvGroup> groups_;
     bool group_in_flight_ = false;
     size_t in_flight_group_ = 0;
 
-    std::mutex start_mutex_;
-    std::condition_variable cv_start_;
-
-    std::mutex done_mutex_;
-    std::condition_variable cv_done_;
-
+    // The batched actions of the step being run. Written by the main thread before each step batch.
     const int* current_actions_ptr_ = nullptr;
-    enum class WorkerState { IDLE, RESET, STEP };
-    WorkerState current_worker_state_ = WorkerState::IDLE;
+
+    // The workers' tasks, built once so dispatching a batch doesn't allocate.
+    util::WorkerPool::Task reset_task_;
+    util::WorkerPool::Task step_task_;
+
+    // Last, so the workers are stopped before anything they use is destroyed.
+    util::WorkerPool pool_;
 
     /**
-     * @brief The multi-threaded method that all threads spawned run.
-     * 
-     * Each batch, workers claim envs one at a time from a shared counter until all are taken,
-     * so faster or earlier-woken threads take on more of the work.
+     * @brief Steps one env with its actions from the current batched actions and writes its results to its rows.
      *
-     * @param worker_id The ID of this thread.
+     * Run by the workers. Resets the env when its episode ended.
      */
-    void worker_loop(size_t worker_id);
+    void step_env(size_t env_idx);
 
     /**
-     * @brief Wakes the workers to process envs [env_begin, env_end) in the given state. Returns immediately.
+     * @brief Wakes the workers to run `task` on envs [env_begin, env_end). Returns immediately.
      */
-    void dispatch(WorkerState state, const int* batched_actions, size_t env_begin, size_t env_end);
+    void dispatch(const util::WorkerPool::Task& task, const int* batched_actions, size_t env_begin, size_t env_end);
 
     /**
      * @brief Blocks until the workers have finished the dispatched batch.

@@ -110,6 +110,7 @@ extern "C" {
     void rs_arena_set_ball_state_ball_sim(rs_arena* ball_sim_arena_ptr, rs_ball_sim_ball_state ball_state);
     void rs_arena_set_car_state(rs_arena* arena_ptr, uint32_t car_idx, rs_car_state car_state);
     void rs_arena_reset_to_random_kickoff(rs_arena* arena_ptr, uint64_t seed, bool use_seed);
+    void rs_arena_seed_rng(rs_arena* arena_ptr, uint64_t seed);
 }
 
 namespace buta_ppo::ffi {
@@ -229,6 +230,13 @@ inline void set_car_state(const ArenaPtr& arena, uint32_t car_idx, const CarStat
 inline void reset_to_random_kickoff(const ArenaPtr& arena, uint64_t seed = 0, bool use_seed = false) {
     if (arena) {
         rs_arena_reset_to_random_kickoff(arena.get(), seed, use_seed);
+    }
+}
+
+// Seeds the arena's random number generator, which picks demolished cars' respawn spots. New arenas seed it randomly.
+inline void seed_arena_rng(const ArenaPtr& arena, uint64_t seed) {
+    if (arena) {
+        rs_arena_seed_rng(arena.get(), seed);
     }
 }
 
