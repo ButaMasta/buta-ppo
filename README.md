@@ -16,7 +16,7 @@ For reference, the demo configuration in `src/main.cpp` (1v1, 500 envs, a ~6M pa
 * **PFSP:** Prioritized fictitious self-play pits a fraction of the environments against past versions of the learner, chosen by the learner's win rate against them.
 * **Observations & Actions:** Team-relative observations with X-axis mirroring, ball prediction, and shuffled car slots. A 90-action discrete lookup table with action masking based on the car's state.
 * **Rust FFI Bridge:** Physics runs in RocketSim through a lightweight C ABI exported from Rust.
-* **Skill Tracking:** Periodic evaluation games against fixed past versions of the bot give a Bradley–Terry Elo rating per team size, so you can see whether the bot is actually getting better.
+* **Skill Tracking:** Periodic evaluation games against fixed past versions of the bot and against Nexto, the RLGym community bot, give a Bradley–Terry Elo rating per team size on a fixed scale (Nexto = 1500), so you can see whether the bot is actually getting better, and how far it is from Nexto.
 * **Telemetry & Checkpoints:** TensorBoard logging with custom per-tick metrics, automatic resume from the latest checkpoint, and a persistent PFSP opponent pool.
 * **RLBot Deployment:** A Rust RLBot v5 bot binary that runs trained checkpoints in real matches.
 
@@ -29,7 +29,7 @@ Each update runs through the following stages:
 3. **Advantages:** `RolloutBuffer` stores every step on the GPU, then computes GAE advantages and returns. Truncated episodes are bootstrapped with the critic's estimate of the final state.
 4. **Training:** `PPOTrainer` shuffles the rollout into minibatches and replays the captured training graph for each one.
 5. **Checkpointing:** When training ends or is interrupted, the model and optimizer state are saved, and they are loaded automatically on the next start.
-6. **Evaluation:** Every `steps_per_eval` steps, training pauses while the learner plays a fixed set of games against past versions of itself, and its rating is logged (see [Evaluation](#evaluation)).
+6. **Evaluation:** Every `steps_per_eval` steps, training pauses while the learner plays a fixed set of games against past versions of itself and against Nexto, and its rating is logged (see [Evaluation](#evaluation)).
 
 ## Directory Structure
 
@@ -45,7 +45,7 @@ buta-ppo/
 ├── src/
 │   ├── action/              # Discrete action table and action masks
 │   ├── env/                 # Single environment and the vectorized env pool
-│   ├── external/            # Bots from outside the framework (Nexto) that can drive a team in the visualizer
+│   ├── external/            # Bots from outside the framework (Nexto) that drive a team in the visualizer and in evaluation
 │   ├── metric/              # Metric functions and the metric manager
 │   ├── obs/                 # Observation builder and ball prediction
 │   ├── reward/              # Reward functions and the reward manager
@@ -323,15 +323,35 @@ Only goals count toward win rates. Truncated episodes are ignored.
 
 ### Evaluation
 
-Evaluation tracks how good the bot is over training, which rewards and losses can't show. Every `steps_per_eval` steps, training pauses for a few seconds while the learner plays fixed past versions of itself (the anchors), and it gets an Elo rating per team size in TensorBoard.
+Evaluation tracks how good the bot is over training, which rewards and losses can't show. Every `steps_per_eval` steps, training pauses for a few seconds while the learner plays fixed past versions of itself (the anchors) and Nexto, the RLGym community bot, and it gets an Elo rating per team size in TensorBoard. The ratings are on Nexto's scale: Nexto playing its best action is 1500 Elo in every team size, so a rating means the same in every run and for every bot built with the framework.
 
 ```cpp
 config.eval_cfg.steps_per_eval = 50'000'000;   // 0 turns evaluation off.
 ```
 
-**The games.** Each start state in a fixed bank of kickoffs is played once from each side against each anchor, from the kickoff to the first goal. Every car in a kickoff is moved by up to 2.5 uu and turned by up to 0.01 rad, so the bank holds many different games instead of the 5 standard kickoffs. Both sides play their most likely action, as the RLBot bot does. A game with no goal by `game_cap_seconds` is a draw. The same bank is played every time, and the same models always give the same results, so a change in rating comes from the learner and not from luck.
+**The games.** Each start state in a fixed bank of kickoffs is played once from each side against each anchor and against Nexto, from the kickoff to the first goal. Every car in a kickoff is moved by up to 2.5 uu and turned by up to 0.01 rad, so the bank holds many different games instead of the 5 standard kickoffs. Both sides play their most likely action, as the RLBot bot does. A game with no goal by `game_cap_seconds` is a draw. The same bank is played every time, and the same models always give the same results, so a change in rating comes from the learner and not from luck.
 
-**The ratings.** The learner's results are fitted with the Bradley–Terry model, in which the chance of beating a player depends only on the difference in rating, shown on the Elo scale: 400 points is 10:1 odds, 200 points about 3:1. Draws count as half a win. The first evaluation makes the current learner the first anchor, the reference at 0 Elo in every team size, so ratings measure progress since evaluation started. Each team size is rated on its own scale, so a 1v1 rating can't be compared with a 3v3 one.
+**The ratings.** The learner's results are fitted with the Bradley–Terry model, in which the chance of beating a player depends only on the difference in rating, shown on the Elo scale: 400 points is 10:1 odds, 200 points about 3:1. Draws count as half a win. Nexto at its best is the fixed reference, 1500 Elo in every team size it plays (1v1 to 3v3). Each team size is rated on its own scale, so a 1v1 rating can't be compared with a 3v3 one: 1500 means Nexto's level in that mode. With `nexto = false`, and in team sizes Nexto doesn't play (4v4), the first evaluation instead makes the current learner the first anchor, the reference at 0 Elo, so ratings measure progress since evaluation started.
+
+**Nexto and the ladder.** Most bots are far weaker than Nexto for a long time, and games a bot loses every time say nothing about how far behind it is. So evaluation also has weaker versions of Nexto, the ladder: Nexto playing more randomly, set by its `beta` (1 plays its best action, 0.5 samples from its policy, 0 picks uniformly at random), at 13 rungs from 1 down to 0. Each rung's rating was measured once from Nexto-vs-Nexto games against the rungs above it, and ships with the framework in `src/external/nexto/nexto_ladder.txt`:
+
+| `beta` | 1v1 | 2v2 | 3v3 |
+|---|---|---|---|
+| 1 | 1500 | 1500 | 1500 |
+| 0.75 | 1457 ± 11 | 1397 ± 11 | 1307 ± 13 |
+| 0.5 | 1422 ± 10 | 1294 ± 11 | 1160 ± 13 |
+| 0.375 | 1369 ± 13 | 1177 ± 14 | 1034 ± 16 |
+| 0.25 | 1247 ± 14 | 987 ± 16 | 774 ± 18 |
+| 0.2 | 1190 ± 16 | 860 ± 18 | 585 ± 21 |
+| 0.15 | 1042 ± 17 | 668 ± 20 | 338 ± 23 |
+| 0.125 | 926 ± 19 | 524 ± 21 | 164 ± 25 |
+| 0.1 | 791 ± 20 | 337 ± 23 | -47 ± 26 |
+| 0.075 | 561 ± 23 | 94 ± 25 | -320 ± 29 |
+| 0.05 | 206 ± 27 | -260 ± 29 | -648 ± 31 |
+| 0.025 | -224 ± 32 | -582 ± 32 | -930 ± 34 |
+| 0 | -286 ± 33 | -648 ± 32 | -990 ± 34 |
+
+Each evaluation, the learner plays one rung per team size, the one closest to its own rating, which says the most about it. The first evaluation of a run finds that rung with a short search over the ladder, a few rounds of Nexto games, so it takes longer than the rest. Nexto plays as in the RLBot botpack, with its own decision timing, its scripted kickoff, the countdown before the kickoff, and each car joining the match at its own moment; its games repeat exactly like the anchors'. Nexto's games are as fast as the anchors', since many of them are played at once: about 1.5 to 3 s per evaluation, longer against weak rungs, whose games last longer.
 
 **The anchors.** The learner becomes an anchor once its score (draws count half) against the newest anchor, over all team sizes, reaches `promote_win_rate`. An anchor's rating is the one the learner had when it was promoted, and never changes, so earlier points on the curve never move. Games against an anchor the learner is far ahead of say little, so an anchor isn't played while the learner's predicted score against it, from their ratings, is above `retire_win_rate`. It's played again if the learner falls back. The newest anchor is always played.
 
@@ -348,12 +368,19 @@ config.eval_cfg.steps_per_eval = 50'000'000;   // 0 turns evaluation off.
 | `promote_win_rate` | `0.7` | The learner's score against the newest anchor that makes it an anchor. |
 | `retire_win_rate` | `0.85` | Anchors the learner is predicted to score above this against aren't played. Must be above `promote_win_rate`. `1` plays every anchor, up to `active_anchors`. |
 | `virtual_draws` | `1` | Draws added against every anchor when fitting, which keeps a rating finite after a perfect record. At least 1. |
+| `nexto` | `true` | Rate on Nexto's scale, playing a Nexto rung per team size each evaluation. `false` rates against the first anchor at 0. |
+| `nexto_model_path` | `"src/external/nexto/nexto-model.pt"` | Nexto's model. |
+| `nexto_ladder_path` | `"src/external/nexto/nexto_ladder.txt"` | The ladder's ratings, measured for the default `pos_jitter`, `yaw_jitter`, and `game_cap_seconds`. |
 
-Changing the bank, the jitter, `game_cap_seconds`, `virtual_draws`, `ticks_per_step`, `max_players_per_team`, or the network shape makes old ratings incomparable, so evaluation starts over with a new reference (see [Checkpoints & the PFSP Pool](#checkpoints--the-pfsp-pool)). The other options only change which games are played and can be changed at any time.
+Changing the bank, the jitter, `game_cap_seconds`, `virtual_draws`, `ticks_per_step`, `max_players_per_team`, the network shape, or `nexto` makes old ratings incomparable, so evaluation starts over (see [Checkpoints & the PFSP Pool](#checkpoints--the-pfsp-pool)). The other options only change which games are played and can be changed at any time.
 
-**Reading the curve.** Each point has an error bar, `Skill/<N>vN_Elo_Std_Error`: about ±30 Elo with one anchor played and ±20 to 25 with two, for the default bank. Differences smaller than about two error bars are noise. Swings much larger than that are real changes in how the bot plays. Early in training most games are draws, since neither bot can score, and draws count half, so early ratings stay close together even when the bot is clearly improving.
+The ladder's ratings depend on the kickoff jitter and `game_cap_seconds`. With other values than the defaults, the ladder is measured again once at startup, which takes about 90 s and is announced on the console, and saved as `checkpoints/nexto_ladder.txt` for every later run with the same values. That measurement uses fewer games than the shipped one, so its ratings are less precise, about ±30 Elo near Nexto and up to ±130 at the bottom. `RunnerConfig::calibrate_nexto_ladder = true` regenerates the shipped file instead of training, which takes about 20 minutes and is only needed after changing Nexto's model, the rungs, or the kickoff setter.
 
-**The cost.** An evaluation took about 3 s with two anchors played and three team sizes on an i5-14600K with an RTX 5070, about 3% of training time at the default interval. `Performance/Eval_Time` logs it. The time grows with the anchors played, the team sizes, and `bank_size`, and the evaluation lasts until its slowest game ends. The evaluation games run on their own worker threads, on `worker_cpus` like training.
+**Reading the curve.** Each point has an error bar, `Skill/<N>vN_Elo_Std_Error`: about ±20 to 25 Elo with one anchor and a Nexto rung played, for the default bank. It doesn't include the error of the rung's own rating (the `±` in the table), which shifts every rating made against that rung alike, so ratings against the same rung compare more precisely than their distance to Nexto. Differences smaller than about two error bars are noise. Swings much larger than that are real changes in how the bot plays. Early in training most games are draws, since neither bot can score, and draws count half, so early ratings stay close together even when the bot is clearly improving.
+
+**The Nexto gap.** `Skill/<N>vN_Nexto_Gap` is the learner's rating from its Nexto games alone minus its rating from its snapshot games alone, in Elo, with its own error bar, `<N>vN_Nexto_Gap_Std_Error`. It checks that the two kinds of opponents agree on the learner's level, which the Elo curve, fitted to both at once, can't show. Near zero, within about two error bars, they agree. Persistently negative means the learner does worse against Nexto than its snapshots say, for example by beating its past versions through habits they share, so its distance to Nexto is overstated; persistently positive means the opposite, for example by exploiting the weak rungs' random play. Look at the trend over many evaluations, not single points. It's logged once both were played, from a run's second evaluation on.
+
+**The cost.** On an i5-14600K with an RTX 5070 and three team sizes, an evaluation took about 4.5 s with one anchor and a Nexto rung played, and the first one of a run, which places the learner on the ladder, about 11 s. Each extra anchor adds about 1.3 s. That's about 4% of training time at the default interval. `Performance/Eval_Time` logs it. The time grows with the anchors played, the team sizes, and `bank_size`, and each phase (the anchors' games, then Nexto's) lasts until its slowest game ends. The evaluation games run on their own worker threads, on `worker_cpus` like training. Evaluation keeps every game it can play built for the whole run, about 2 MiB of RAM each: about 3.6 GB with the defaults, plus 1.2 GB for Nexto's games, and Nexto's network and CUDA graphs take about 550 MiB of GPU memory.
 
 ## Extending the Framework
 
@@ -444,16 +471,17 @@ checkpoints/
 │   ├── <steps>.pt      # Snapshots, loadable and deployable like any model.pt
 │   ├── state.txt       # Win records
 │   └── meta.txt        # Network shape the pool was saved with
-└── <bot_name>_eval/    # Evaluation anchors and results
-    ├── snapshot_<steps>.pt  # Anchors, loadable and deployable like any model.pt
-    ├── results.txt     # The learner's wins, losses, and draws against each anchor, per evaluation and team size
-    ├── ratings.txt     # The learner's rating and its standard error, per evaluation and team size (× 173.7 for Elo)
-    └── meta.txt        # The settings the ratings depend on
+├── <bot_name>_eval/    # Evaluation anchors and results
+│   ├── snapshot_<steps>.pt  # Anchors, loadable and deployable like any model.pt
+│   ├── results.txt     # The learner's wins, losses, and draws against each anchor and Nexto rung, per evaluation and team size
+│   ├── ratings.txt     # The learner's rating and its standard error, per evaluation and team size (× 173.7 for Elo)
+│   └── meta.txt        # The settings the ratings depend on
+└── nexto_ladder.txt    # Only with non-default kickoff jitter or game cap: the Nexto ladder measured for them
 ```
 
 Checkpoints are written to a temporary directory and renamed when complete, so an interrupted save never produces a broken checkpoint. If the optimizer state can't be loaded (for example after switching optimizer presets), training continues with a fresh optimizer.
 
-To roll back, delete the checkpoint directories newer than the one you want. On startup, pool snapshots, evaluation anchors, and evaluation results newer than the resumed checkpoint are deleted automatically. If the network shape changed, the old pool is moved aside to `<bot_name>_pool.stale-<time>` and a fresh pool is started. The evaluation directory is moved aside the same way, to `<bot_name>_eval.stale-<time>`, when a setting its ratings depend on changed (see [Evaluation](#evaluation)), and the next evaluation makes the learner the new reference. TensorBoard logs are appended, not rolled back, so move the old event file out of `logs/` if you want clean curves.
+To roll back, delete the checkpoint directories newer than the one you want. On startup, pool snapshots, evaluation anchors, and evaluation results newer than the resumed checkpoint are deleted automatically. If the network shape changed, the old pool is moved aside to `<bot_name>_pool.stale-<time>` and a fresh pool is started. The evaluation directory is moved aside the same way, to `<bot_name>_eval.stale-<time>`, when a setting its ratings depend on changed (see [Evaluation](#evaluation)), and the next evaluation places the learner on Nexto's ladder again (or, without Nexto, makes it the new reference). TensorBoard logs are appended, not rolled back, so move the old event file out of `logs/` if you want clean curves.
 
 ## Telemetry
 
@@ -478,7 +506,7 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Policy/` | Approx KL, clip fraction, normalized entropy |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
-| `Skill/` | Logged at each evaluation, per team size: `<N>vN_Elo` and its standard error `<N>vN_Elo_Std_Error`, `<N>vN_Score` (wins plus half the draws over all games played), `<N>vN_Draw_Rate`, and `<N>vN_Mean_Game_Seconds`, plus `Active_Anchors`, the anchors played. The console prints the same after the update it ran in |
+| `Skill/` | Logged at each evaluation, per team size: `<N>vN_Elo` and its standard error `<N>vN_Elo_Std_Error`, `<N>vN_Score` (wins plus half the draws), `<N>vN_Draw_Rate`, and `<N>vN_Mean_Game_Seconds`, over the games against the snapshot anchors (none on a run's first evaluation with Nexto, which plays only Nexto); with Nexto, `<N>vN_Nexto_Beta`, the rung played (where the placement search ended on the first evaluation), `<N>vN_Nexto_Score`, the score against it, and `<N>vN_Nexto_Gap` and `<N>vN_Nexto_Gap_Std_Error` (see [Evaluation](#evaluation)); plus `Active_Anchors`, the anchors played. The console prints the same after the update it ran in, and the Nexto rungs played with their results |
 | `Performance/` | Total and rollout steps per second, counted in learner agent steps and not including the time spent writing logs and checkpoints, and `Rollout_Physics_Wait`, the fraction of the rollout spent waiting on physics (see [Finding the Rollout Bottleneck](#finding-the-rollout-bottleneck)). `Env_Step_Microseconds` is the worker time per env step, and `Touch_Ticks_Per_Env_Step` and `Repredictions_Per_Env_Step` count the ball touches and full ball predictions that drive it, so a drop in SPS can be told apart from a bot that plays the ball more. `Eval_Time` is the length of each evaluation, which isn't counted in the steps per second |
 
 Rewards are averaged over learner agent steps, so PFSP opponents are left out. A reward that itself returns opposite values to the two teams (for example −1 to the team that conceded) averages to about 0 in `Reward_Components/` during self-play, since both teams are learners. Making it zero-sum with `opp_scale` instead keeps `Reward_Components/` meaningful, since it is logged before the options. `Reward_Magnitude/` doesn't cancel either way. The absolute value is taken per step, matching what PPO trains on, so a reward that flips sign within one step counts as their sum.
@@ -518,7 +546,7 @@ config.render_external_bots = {{nexto, ffi::Team::Orange}};  // Your bot plays b
 
 List both teams for Nexto against itself. Nexto plays as the RLBot botpack version does, with its own observations, actions, decision timing, and scripted kickoff, and it plays through the 3 second countdown before each kickoff as it would in game (the visualizer doesn't wait for it). It runs on the GPU by default; `create_nexto_bot(path, {.device = torch::kCPU})` runs it on the CPU. Its options also set how random it plays (`beta`: `1`, the default, picks the best action, and `0.5` samples from its policy) and its kickoff behavior; see `NextoOptions` in `src/external/nexto/nexto_bot.hpp`.
 
-External bots only work in the visualizer for now. Other bots can be added through the interface in `src/external/external_bot.hpp`. Nexto is included under the MIT License with permission from its author; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Nexto also plays in evaluation (see [Evaluation](#evaluation)); training against it isn't supported. Other bots can be added through the interface in `src/external/external_bot.hpp`. Nexto is included under the MIT License with permission from its author; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Deploying to RLBot
 

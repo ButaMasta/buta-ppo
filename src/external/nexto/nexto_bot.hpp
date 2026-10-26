@@ -35,6 +35,8 @@
 #include <random>
 #include <string>
 #include <type_traits>
+#include <utility>
+#include <map>
 
 namespace buta_ppo::external {
 
@@ -84,10 +86,19 @@ using Action = std::array<float, ACTION_SIZE>;
  *
  * Runs `nexto::NextoNet`, built from the TorchScript file's weights, on the options' device. On CUDA, obs and logits
  * pass through pinned staging buffers and the network runs on its own stream, never the default one.
+ *
+ * `with_options` makes Nexto with other options (e.g. another beta) on the same network. In evaluation, the cars of
+ * every such bot are batched together, through CUDA graphs on CUDA (see `make_batch_runner`).
  */
 class NextoBot final : public ExternalBot {
 public:
     NextoBot(const std::string& model_path, const NextoOptions& options);
+
+    /**
+     * @brief Nexto with other options, sharing this one's network. The network's options (`device`, `torchscript`)
+     * stay this one's.
+     */
+    [[nodiscard]] std::shared_ptr<NextoBot> with_options(const NextoOptions& options) const;
 
     [[nodiscard]] std::string name() const override { return "Nexto"; }
     [[nodiscard]] size_t obs_size(size_t num_cars) const override {
@@ -99,17 +110,39 @@ public:
     void infer(const float* obs, size_t count, size_t num_cars, float* decisions) override;
     [[nodiscard]] std::unique_ptr<ExternalController> make_controller(uint32_t car_id) const override;
 
-private:
-    NextoOptions options_;
-    torch::jit::Module model_; // The TorchScript file: the weights' source, and the `torchscript` reference.
-    nexto::NextoNet net_;
-    std::mutex model_mutex_; // Serializes `infer` across env workers.
+    [[nodiscard]] const void* model() const override { return model_.get(); }
 
-    // CUDA only. Staging buffers grow to the largest batch seen.
-    std::optional<c10::cuda::CUDAStream> stream_;
-    torch::Tensor host_obs_;     // Pinned.
-    torch::Tensor device_obs_;
-    torch::Tensor host_logits_;  // Pinned.
+    /**
+     * @brief On CUDA, runs the network through CUDA graphs: per car count, one per power-of-2 batch up to the largest,
+     * each uploading the obs, running the network (captured without TF32, like `infer`) and downloading the logits.
+     * Batches are padded up to their graph's size, and each car count has its own stream so they run at the same time.
+     * Otherwise `infer`.
+     */
+    [[nodiscard]] std::unique_ptr<ExternalBatchRunner> make_batch_runner(const std::map<size_t, size_t>& max_batch) override;
+
+    [[nodiscard]] const NextoOptions& options() const { return options_; }
+
+private:
+    // The network and its inference, shared by every NextoBot made `with_options`.
+    struct Model {
+        torch::Device device = torch::kCPU;
+        bool torchscript = false;
+        torch::jit::Module module; // The TorchScript file: the weights' source, and the `torchscript` reference.
+        nexto::NextoNet net;
+        std::mutex mutex; // Serializes `infer` across env workers.
+
+        // CUDA only. Staging buffers grow to the largest batch seen.
+        std::optional<c10::cuda::CUDAStream> stream;
+        torch::Tensor host_obs;    // Pinned.
+        torch::Tensor device_obs;
+        torch::Tensor host_logits; // Pinned.
+    };
+    class GraphRunner;
+
+    std::shared_ptr<Model> model_;
+    NextoOptions options_;
+
+    NextoBot(std::shared_ptr<Model> model, const NextoOptions& options) : model_(std::move(model)), options_(options) {}
 
     [[nodiscard]] torch::Tensor run_torchscript(const torch::Tensor& query, const torch::Tensor& entities);
     [[nodiscard]] torch::Tensor run_cuda(const float* obs, int64_t count, int64_t entities);
@@ -131,6 +164,12 @@ public:
     void build_obs(const ffi::ArenaState& state, float* out) const override;
     void set_decision(const float* decision, std::mt19937& rng) override;
     [[nodiscard]] ffi::CarControls tick(const ffi::ArenaState& state) override;
+
+    // An action is first used at the 7th tick after the packet it was chosen from (see the class comment).
+    [[nodiscard]] int decision_delay() const override { return nexto::TICK_SKIP - 2; }
+    void request_decision() override;
+    // One decision per tick cycle.
+    [[nodiscard]] int decision_interval() const override { return nexto::TICK_SKIP; }
 
     // For checks against the Python bot.
     [[nodiscard]] size_t last_action_index() const { return last_action_index_; }
@@ -156,6 +195,12 @@ private:
 
     size_t last_action_index_ = 0;
     float last_beta_ = 0.0f;
+
+    // A decision asked for but not yet set (`request_decision`): the beta of its packet, and whether a scripted kickoff
+    // has replaced the action since, which a decision set right away would have been replaced by too.
+    bool pending_ = false;
+    float pending_beta_ = 0.0f;
+    bool pending_overwritten_ = false;
 
     /**
      * @brief rlgym_compat's `on_ground`: wheel contact, or at most 6 ticks since the last contact.

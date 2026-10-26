@@ -6,6 +6,7 @@
 #include "env/vec_env.hpp"
 #include "util/thread_affinity.hpp"
 #include "util/cpu_topology.hpp"
+#include "util/file_utils.hpp"
 
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
@@ -119,6 +120,9 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
     if (config_.benchmark && config_.render) {
         throw std::invalid_argument("benchmark and render can't both be set.");
     }
+    if (config_.calibrate_nexto_ladder && (config_.benchmark || config_.render)) {
+        throw std::invalid_argument("calibrate_nexto_ladder can't be set with benchmark or render.");
+    }
 
     // A benchmark runner's config was already checked by the benchmark that made it.
     if (!benchmark_child_) {
@@ -162,8 +166,8 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
         }
     }
 
-    // The benchmark builds a runner for each config it measures instead.
-    if (config_.benchmark && !benchmark_child_) {
+    // The benchmark builds a runner for each config it measures instead. A ladder calibration only needs the threads.
+    if ((config_.benchmark && !benchmark_child_) || config_.calibrate_nexto_ladder) {
         return;
     }
 
@@ -1096,6 +1100,28 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
     }
 }
 
+void PPORunner::run_ladder_calibration() {
+    const EvalConfig& eval = config_.eval_cfg;
+    const NextoLadderSettings settings{eval.nexto_model_path, eval.pos_jitter, eval.yaw_jitter, eval.game_cap_seconds};
+    NextoLadder::Calibration calibration;
+    calibration.bank_size = 512;
+    calibration.bank_seed = eval.bank_seed;
+    calibration.rungs_above = 2;
+    calibration.num_threads = config_.num_threads;
+    calibration.worker_cpus = config_.worker_cpus;
+    calibration.max_players_per_team = config_.max_players_per_team;
+    calibration.ticks_per_step = config_.ticks_per_step;
+    calibration.virtual_draws = eval.virtual_draws;
+
+    external::NextoOptions options;
+    options.device = device_;
+    const auto nexto = std::make_shared<external::NextoBot>(eval.nexto_model_path, options);
+    std::cout << "Calibrating the Nexto ladder: " << calibration.bank_size << " kickoffs per team size and pairing.\n";
+    const std::string text = NextoLadder::calibrate(settings, calibration, nexto);
+    util::write_text_file(eval.nexto_ladder_path, text);
+    std::cout << "Wrote the Nexto ladder to " << eval.nexto_ladder_path << "\n";
+}
+
 void PPORunner::run_evaluation() {
     const EvalResult result = gauntlet_->run(global_step_, actor_critic_);
     if (!result.played) {
@@ -1108,19 +1134,45 @@ void PPORunner::run_evaluation() {
         const double games = size.wins + size.losses + size.draws;
         logger_->add_scalar("Skill/" + mode + "_Elo", global_step_, size.elo);
         logger_->add_scalar("Skill/" + mode + "_Elo_Std_Error", global_step_, size.elo_std_error);
-        logger_->add_scalar("Skill/" + mode + "_Score", global_step_, (size.wins + size.draws * 0.5f) / games);
-        logger_->add_scalar("Skill/" + mode + "_Draw_Rate", global_step_, size.draws / games);
-        logger_->add_scalar("Skill/" + mode + "_Mean_Game_Seconds", global_step_, size.mean_game_seconds);
+        // Against the snapshot anchors, which a run's first evaluation with Nexto doesn't play.
+        if (games > 0) {
+            logger_->add_scalar("Skill/" + mode + "_Score", global_step_, (size.wins + size.draws * 0.5f) / games);
+            logger_->add_scalar("Skill/" + mode + "_Draw_Rate", global_step_, size.draws / games);
+            logger_->add_scalar("Skill/" + mode + "_Mean_Game_Seconds", global_step_, size.mean_game_seconds);
+        }
+        if (size.nexto_beta) {
+            logger_->add_scalar("Skill/" + mode + "_Nexto_Beta", global_step_, *size.nexto_beta);
+            logger_->add_scalar("Skill/" + mode + "_Nexto_Score", global_step_, size.nexto_score);
+        }
+        if (size.nexto_gap_elo) {
+            logger_->add_scalar("Skill/" + mode + "_Nexto_Gap", global_step_, *size.nexto_gap_elo);
+            logger_->add_scalar("Skill/" + mode + "_Nexto_Gap_Std_Error", global_step_, size.nexto_gap_std_error);
+        }
         std::cout << " | Eval " << mode << ":     " << std::fixed << std::setprecision(1) << size.elo << " +- "
-                  << size.elo_std_error << " Elo (W " << size.wins << " L " << size.losses << " D " << size.draws
-                  << ")" << std::defaultfloat << "\n";
+                  << size.elo_std_error << " Elo";
+        if (games > 0) {
+            std::cout << " (W " << size.wins << " L " << size.losses << " D " << size.draws << ")";
+        }
+        if (size.nexto_gap_elo) {
+            std::cout << ", Nexto gap " << *size.nexto_gap_elo << " +- " << size.nexto_gap_std_error;
+        }
+        std::cout << std::defaultfloat << "\n";
     }
     logger_->add_scalar("Skill/Active_Anchors", global_step_, static_cast<float>(result.anchors_played.size()));
     std::cout << " | Eval Played: ";
     for (size_t i = 0; i < result.anchors_played.size(); i++) {
         std::cout << (i == 0 ? "" : ", ") << result.anchors_played[i];
     }
-    std::cout << "\n";
+    std::cout << (result.anchors_played.empty() ? "none" : "") << "\n";
+    if (!result.nexto_played.empty()) {
+        std::cout << " | Eval Nexto:  ";
+        for (size_t i = 0; i < result.nexto_played.size(); i++) {
+            const EvalNextoResult& n = result.nexto_played[i];
+            std::cout << (i == 0 ? "" : ", ") << n.team_size << "v" << n.team_size << " beta " << n.beta << " (W "
+                      << n.wins << " L " << n.losses << " D " << n.draws << ")";
+        }
+        std::cout << "\n";
+    }
     logger_->add_scalar("Performance/Eval_Time", global_step_, static_cast<float>(result.seconds));
     std::cout << " | Eval Time:   " << std::fixed << std::setprecision(2) << result.seconds << "s"
               << (result.promoted ? ", the learner is now an anchor" : "") << std::defaultfloat << "\n";
@@ -1129,6 +1181,10 @@ void PPORunner::run_evaluation() {
 void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
     if (config_.benchmark) {
         run_benchmark(stop_flag);
+        return;
+    }
+    if (config_.calibrate_nexto_ladder) {
+        run_ladder_calibration();
         return;
     }
 

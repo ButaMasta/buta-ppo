@@ -3,7 +3,10 @@
 
 #include "actor_critic.hpp"
 #include "eval_ledger.hpp"
+#include "nexto_ladder.hpp"
+#include "rating.hpp"
 #include "env/eval_vec_env.hpp"
+#include "external/nexto/nexto_bot.hpp"
 
 #include <torch/torch.h>
 
@@ -24,6 +27,11 @@ namespace buta_ppo::rl {
  * Every `steps_per_eval` lifetime steps, training pauses and the learner plays every active anchor from a fixed bank
  * of jittered kickoffs, each start state once from each side, with both sides playing their most likely action.
  * Results go to `<checkpoint dir>/<bot name>_eval/`.
+ *
+ * With `nexto` (the default), ratings are on a fixed scale: Nexto, the RLBot botpack bot, playing its best action is
+ * 1500 Elo in every team size it plays (1v1 to 3v3). Each evaluation the learner also plays, per team size, the rung
+ * of a ladder of weaker Nexto (more random play, see `NextoLadder`) closest to its level, found by a short search the
+ * first time. Team sizes above 3 keep the first anchor as their reference, at 0.
  */
 struct EvalConfig {
     // Lifetime steps between evaluations. 0 turns evaluation off.
@@ -54,6 +62,14 @@ struct EvalConfig {
     // Draws added against every anchor when fitting a rating, which keeps it finite after a perfect record.
     int virtual_draws = 1;
 
+    // Nexto as the fixed reference (see above). Its games add about 2 s per evaluation, and the first evaluation of a
+    // run places the learner on the ladder (a few rounds of those).
+    bool nexto = true;
+    std::string nexto_model_path = "src/external/nexto/nexto-model.pt";
+    // The ladder's ratings, calibrated for the default kickoff jitter and game cap. With other values the ladder is
+    // calibrated once at startup (about 90 s) and saved as `<checkpoint dir>/nexto_ladder.txt`.
+    std::string nexto_ladder_path = "src/external/nexto/nexto_ladder.txt";
+
     [[nodiscard]] bool enabled() const { return steps_per_eval > 0; }
 };
 
@@ -64,19 +80,41 @@ struct EvalSizeResult {
     size_t team_size = 0;
     double elo = 0.0;
     double elo_std_error = 0.0;
+    // Against the snapshot anchors only, so they mean the same with Nexto on or off. None on a run's first evaluation
+    // with Nexto, which plays only Nexto.
     int wins = 0;
     int losses = 0;
     int draws = 0;
     double mean_game_seconds = 0.0;
+    // The last Nexto rung played in this team size (where a placement search ended), and the learner's score against it.
+    std::optional<float> nexto_beta{};
+    double nexto_score = 0.0;
+    // The learner's rating from the Nexto games alone minus its rating from the snapshot games alone, in Elo, and its
+    // standard error: whether the fixed reference agrees with the snapshot chain. Only when both were played.
+    std::optional<double> nexto_gap_elo{};
+    double nexto_gap_std_error = 0.0;
+};
+
+/**
+ * @brief The learner's results against one Nexto rung in one team size.
+ */
+struct EvalNextoResult {
+    size_t team_size = 0;
+    float beta = 1.0f;
+    int wins = 0;
+    int losses = 0;
+    int draws = 0;
+    int64_t ticks = 0; // The games' physics ticks, summed.
 };
 
 /**
  * @brief The results of one `Gauntlet::run`, for logging.
  */
 struct EvalResult {
-    bool played = false;   // False when there was no anchor yet, so the learner only became the first one.
+    bool played = false;   // False when there was nothing to play yet, so the learner only became the first anchor.
     bool promoted = false; // Whether the learner became an anchor.
     std::vector<int64_t> anchors_played; // Lifetime steps of the anchors played, oldest first.
+    std::vector<EvalNextoResult> nexto_played; // In the order played.
     std::vector<EvalSizeResult> sizes;
     double seconds = 0.0;
 };
@@ -84,9 +122,12 @@ struct EvalResult {
 /**
  * @brief Runs evaluation gauntlets and keeps their anchors and results.
  *
- * Anchors are past learners, saved as `snapshot_<steps>.pt` model files next to the ledger. The first one is the
- * reference, rated 0 in every team size; every later anchor's ratings are the learner's fitted ratings at the
- * evaluation that promoted it, and never change.
+ * Anchors are past learners, saved as `snapshot_<steps>.pt` model files next to the ledger. Every anchor's ratings
+ * are the learner's fitted ratings at the evaluation that promoted it, and never change. Without Nexto, the first
+ * anchor is the reference, rated 0 in every team size. With Nexto, the learner's ratings in 1v1 to 3v3 are fitted
+ * against the Nexto rungs it played too, at their ladder ratings.
+ *
+ * Games are played in two phases: the snapshot anchors' games, then the Nexto games, which play in lockstep.
  */
 class Gauntlet {
 public:
@@ -113,7 +154,7 @@ public:
      */
     EvalResult run(int64_t learner_steps, ActorCritic learner);
 
-    // Whether there's no anchor yet, so the next `run` only makes the learner the first one.
+    // Whether there's no anchor yet, so the next `run` makes the learner the first one.
     [[nodiscard]] bool empty() const { return anchors_.empty(); }
 
 private:
@@ -137,6 +178,15 @@ private:
 
     EvalLedger ledger_;
     std::filesystem::path dir_;
+
+    // Nexto: every rung (strongest first), all on one network, the ladder's ratings, and the team sizes Nexto plays.
+    // Its games follow the snapshot games: team size (of `nexto_sizes_`), bank state, side, at `nexto_begin_`.
+    std::vector<std::shared_ptr<external::NextoBot>> rungs_;
+    NextoLadder ladder_;
+    std::vector<size_t> nexto_sizes_;
+    size_t nexto_begin_ = 0;
+    size_t num_threads_ = 1;
+    std::vector<int> worker_cpus_;
 
     // Compact inference buffers, sized for every row of the evaluation envs. Each step, the rows of the games still
     // running are gathered to the front: the learner's rows, then each slot's.
@@ -162,6 +212,13 @@ private:
     void select_active();
     // Saves the learner as an anchor.
     void promote(int64_t steps, const ActorCritic& learner);
+    // Plays games [begin, end) to the end: the learner on its rows, slot s's anchor on the rows of slot s's games.
+    // Only the running games' rows go through the networks.
+    void play_games(size_t begin, size_t end, size_t real_slots, ActorCritic& learner);
+    // The Nexto phase: per Nexto team size, the rung nearest the learner's rating, or a binary search over the ladder
+    // when it has none yet. Adds each rung's results to the ledger and to `rated` (per team size, for the fit).
+    void play_nexto(int64_t learner_steps, ActorCritic& learner, std::vector<std::vector<AnchorResult>>& rated,
+                    EvalResult& result);
 
 };
 

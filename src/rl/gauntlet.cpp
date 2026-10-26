@@ -13,6 +13,7 @@
 #include <iostream>
 #include <chrono>
 #include <numbers>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -44,7 +45,8 @@ std::string join_sizes(const std::vector<int64_t>& sizes) {
 
 Gauntlet::Gauntlet(const EvalConfig& config, const ModelConfig& model_config, std::vector<size_t> team_sizes,
                    size_t num_threads, const std::vector<int>& worker_cpus, torch::Device device)
-    : config_(config), model_config_(model_config), team_sizes_(std::move(team_sizes)), device_(device) {
+    : config_(config), model_config_(model_config), team_sizes_(std::move(team_sizes)), device_(device),
+      num_threads_(num_threads), worker_cpus_(worker_cpus) {
 
     if (team_sizes_.empty() || config_.bank_size == 0 || config_.active_anchors == 0 || config_.game_cap_seconds <= 0.0f || 
         config_.promote_win_rate <= 0.0f || config_.promote_win_rate > 1.0f || config_.virtual_draws < 1) {
@@ -65,6 +67,38 @@ Gauntlet::Gauntlet(const EvalConfig& config, const ModelConfig& model_config, st
                     env::EvalGame game;
                     game.team_size = team_sizes_[size_idx];
                     game.anchor_slot = slot;
+                    game.learner_team = side == 0 ? ffi::Team::Blue : ffi::Team::Orange;
+                    game.setter = state::create_eval_kickoff_setter(config_.bank_seed, static_cast<uint32_t>(state), config_.pos_jitter, config_.yaw_jitter);
+                    game.seed = static_cast<uint32_t>((size_idx * config_.bank_size + state) * 2 + side);
+                    games.push_back(std::move(game));
+                }
+            }
+        }
+    }
+
+    // Then the Nexto games, against rung 0 until a run picks each size's rung. Same start states and seeds as the
+    // snapshot games of the same size, state and side.
+    nexto_begin_ = games.size();
+    if (config_.nexto) {
+        for (const size_t size : team_sizes_) {
+            if (size <= NextoLadder::MAX_TEAM_SIZE) nexto_sizes_.push_back(size);
+        }
+    }
+    if (!nexto_sizes_.empty()) {
+        external::NextoOptions options;
+        options.device = device_;
+        auto nexto = std::make_shared<external::NextoBot>(config_.nexto_model_path, options);
+        for (const float beta : NextoLadder::betas()) {
+            options.beta = beta;
+            rungs_.push_back(nexto->with_options(options));
+        }
+        for (const size_t size : nexto_sizes_) {
+            const size_t size_idx = static_cast<size_t>(std::find(team_sizes_.begin(), team_sizes_.end(), size) - team_sizes_.begin());
+            for (size_t state = 0; state < config_.bank_size; state++) {
+                for (size_t side = 0; side < 2; side++) {
+                    env::EvalGame game;
+                    game.team_size = size;
+                    game.opponent_bot = rungs_.front();
                     game.learner_team = side == 0 ? ffi::Team::Blue : ffi::Team::Orange;
                     game.setter = state::create_eval_kickoff_setter(config_.bank_seed, static_cast<uint32_t>(state), config_.pos_jitter, config_.yaw_jitter);
                     game.seed = static_cast<uint32_t>((size_idx * config_.bank_size + state) * 2 + side);
@@ -117,7 +151,15 @@ fs::path Gauntlet::anchor_path(int64_t steps) const {
 
 std::string Gauntlet::meta_text() const {
     const ActorCriticConfig& network = model_config_.network;
-    return "reference first_snapshot\n"
+    std::string reference = "reference first_snapshot\n";
+    if (!nexto_sizes_.empty()) {
+        std::ostringstream nexto;
+        nexto << "reference " << NextoLadder::rung_id(1.0f) << " " << NextoLadder::REFERENCE_ELO << " team_sizes"
+              << join_sizes(std::vector<int64_t>(nexto_sizes_.begin(), nexto_sizes_.end())) << "\n"
+              << "nexto_ladder " << std::hex << ladder_.hash() << "\n";
+        reference = nexto.str();
+    }
+    return reference +
            "bank_seed " + std::to_string(config_.bank_seed) + "\n" +
            "bank_size " + std::to_string(config_.bank_size) + "\n" +
            "pos_jitter " + std::to_string(config_.pos_jitter) + "\n" +
@@ -137,6 +179,29 @@ std::string Gauntlet::meta_text() const {
 void Gauntlet::open(const fs::path& dir, int64_t max_steps) {
     dir_ = dir;
     anchors_.clear();
+
+    // The ladder comes first: its ratings are part of the ledger's settings. A calibrated one is kept next to the
+    // ledger's directory, so it outlives a ledger moved aside and every bot shares it.
+    if (!nexto_sizes_.empty()) {
+        NextoLadder::Calibration calibration;
+        calibration.bank_size = config_.bank_size;
+        calibration.bank_seed = config_.bank_seed;
+        calibration.num_threads = num_threads_;
+        calibration.worker_cpus = worker_cpus_;
+        calibration.max_players_per_team = static_cast<size_t>(model_config_.max_players_per_team);
+        calibration.ticks_per_step = static_cast<int>(model_config_.ticks_per_step);
+        calibration.virtual_draws = config_.virtual_draws;
+        const NextoLadderSettings settings{config_.nexto_model_path, config_.pos_jitter, config_.yaw_jitter, config_.game_cap_seconds};
+        ladder_.open(settings, config_.nexto_ladder_path, dir_.parent_path() / "nexto_ladder.txt", calibration, rungs_.front());
+        std::cout << "Evaluation Reference: Nexto at 1500 Elo in";
+        for (const size_t size : nexto_sizes_) std::cout << " " << size << "v" << size;
+        std::cout << " (ladder from " << ladder_.source().string() << ")";
+        for (const size_t size : team_sizes_) {
+            if (size > NextoLadder::MAX_TEAM_SIZE) std::cout << "; " << size << "v" << size << " rated against the first anchor, at 0";
+        }
+        std::cout << "\n";
+    }
+
     // Moves a ledger saved with other settings aside, anchor files and all, and drops rows past max_steps.
     ledger_.open(dir_, meta_text(), max_steps);
 
@@ -216,7 +281,7 @@ void Gauntlet::select_active() {
 EvalResult Gauntlet::run(int64_t learner_steps, ActorCritic learner) {
     const auto start = std::chrono::steady_clock::now();
     EvalResult result;
-    if (anchors_.empty()) {
+    if (anchors_.empty() && nexto_sizes_.empty()) {
         // The first anchor is the reference, rated 0 in every team size. Its file is saved before the ledger, so an
         // interrupted save leaves an orphan file that `open` deletes, never a rating without its anchor.
         for (const size_t size : team_sizes_) {
@@ -230,13 +295,142 @@ EvalResult Gauntlet::run(int64_t learner_steps, ActorCritic learner) {
         return result;
     }
 
+    // The learner's results per team size: against the snapshot anchors, and the rated ones for the fit (the snapshot
+    // anchors, then the Nexto rungs).
+    struct Tally {
+        int wins = 0;
+        int losses = 0;
+        int draws = 0;
+        int64_t ticks = 0;
+    };
+    std::vector<Tally> snapshot_totals(team_sizes_.size());
+    std::vector<std::vector<AnchorResult>> rated(team_sizes_.size());
+    const auto& outcomes = env_->outcomes();
+    const auto& game_ticks = env_->game_ticks();
+    const auto count_game = [&](Tally& t, size_t game) {
+        if (outcomes[game] == env::GameOutcome::Win) {
+            t.wins++;
+        } else if (outcomes[game] == env::GameOutcome::Loss) {
+            t.losses++;
+        } else {
+            t.draws++;
+        }
+        t.ticks += game_ticks[game];
+    };
 
-    // The anchors to play this time, loaded into the first slots. Only those slots' games are played: a prefix.
-    select_active();
-    result.anchors_played = active_;
-    const size_t real_slots = active_.size();
+    // Against the newest anchor, over all team sizes, for promotion.
+    int newest_wins = 0;
+    int newest_losses = 0;
+    int newest_draws = 0;
+
+    if (!anchors_.empty()) {
+        // The anchors to play this time, loaded into the first slots. Only those slots' games are played: a prefix.
+        select_active();
+        result.anchors_played = active_;
+        const size_t real_slots = active_.size();
+        const size_t games_per_slot = team_sizes_.size() * config_.bank_size * 2;
+        play_games(0, real_slots * games_per_slot, real_slots, learner);
+
+        // The learner's results per real slot and team size.
+        std::vector<std::vector<Tally>> tally(real_slots, std::vector<Tally>(team_sizes_.size()));
+        for (size_t game = 0; game < env_->played_games(); game++) {
+            const size_t slot = game / games_per_slot;
+            const size_t size_idx = (game % games_per_slot) / (config_.bank_size * 2);
+            count_game(tally[slot][size_idx], game);
+        }
+
+        // Every result goes into the ledger. Each team size is rated against the anchors that have a frozen rating in it.
+        for (size_t size_idx = 0; size_idx < team_sizes_.size(); size_idx++) {
+            const int size = static_cast<int>(team_sizes_[size_idx]);
+            for (size_t slot = 0; slot < real_slots; slot++) {
+                const int64_t anchor_steps = active_[slot];
+                const Tally& t = tally[slot][size_idx];
+                ledger_.add_result({learner_steps, size, anchor_id(anchor_steps), t.wins, t.losses, t.draws});
+                snapshot_totals[size_idx].wins += t.wins;
+                snapshot_totals[size_idx].losses += t.losses;
+                snapshot_totals[size_idx].draws += t.draws;
+                snapshot_totals[size_idx].ticks += t.ticks;
+                if (const auto anchor_rating = ledger_.find_rating(anchor_steps, size)) {
+                    rated[size_idx].push_back({anchor_rating->rating, t.wins, t.losses, t.draws});
+                }
+                if (slot == real_slots - 1) {
+                    newest_wins += t.wins;
+                    newest_losses += t.losses;
+                    newest_draws += t.draws;
+                }
+            }
+        }
+    }
+
+    // Per team size, the rated snapshot anchors; the Nexto rungs follow them in `rated`.
+    std::vector<size_t> snapshot_rated(team_sizes_.size());
+    for (size_t size_idx = 0; size_idx < team_sizes_.size(); size_idx++) snapshot_rated[size_idx] = rated[size_idx].size();
+    if (!nexto_sizes_.empty()) {
+        play_nexto(learner_steps, learner, rated, result);
+    }
+
+    constexpr double ELO_PER_RATING = 400.0 / std::numbers::ln10;
+    for (size_t size_idx = 0; size_idx < team_sizes_.size(); size_idx++) {
+        const int size = static_cast<int>(team_sizes_[size_idx]);
+        EvalSizeResult& size_result = result.sizes.emplace_back();
+        size_result.team_size = team_sizes_[size_idx];
+        const Tally& t = snapshot_totals[size_idx];
+        size_result.wins = t.wins;
+        size_result.losses = t.losses;
+        size_result.draws = t.draws;
+        const int games = t.wins + t.losses + t.draws;
+        size_result.mean_game_seconds = games > 0 ? static_cast<double>(t.ticks) / 120.0 / games : 0.0;
+
+        RatingFit fit{0.0, 0.0}; // The reference's rating, used when no anchor is rated in this size.
+        if (!rated[size_idx].empty()) {
+            // From the learner's latest rating, or the first rated opponent's for its first.
+            double start_rating = rated[size_idx].front().rating;
+            for (const EvalLedger::Rating& row : ledger_.ratings()) {
+                if (size == row.team_size) {
+                    start_rating = row.rating;
+                }
+            }
+            fit = fit_learner_rating(rated[size_idx], start_rating, config_.virtual_draws);
+        }
+        ledger_.add_rating({learner_steps, size, fit.rating, fit.std_error});
+        size_result.elo = fit.rating * ELO_PER_RATING;
+        size_result.elo_std_error = fit.std_error * ELO_PER_RATING;
+
+        // The last rung played in this size, which is in `nexto_played` once, and the score against it.
+        for (const EvalNextoResult& n : result.nexto_played) {
+            if (n.team_size != team_sizes_[size_idx]) continue;
+            size_result.nexto_beta = n.beta;
+            size_result.nexto_score = (n.wins + 0.5 * n.draws) / (n.wins + n.losses + n.draws);
+        }
+
+        // Each kind of opponent fitted alone. The combined fit leans toward whichever has more games, so it would hide
+        // part of a disagreement between them.
+        const auto split = rated[size_idx].begin() + static_cast<std::ptrdiff_t>(snapshot_rated[size_idx]);
+        if (split != rated[size_idx].begin() && split != rated[size_idx].end()) {
+            const RatingFit snapshots = fit_learner_rating({rated[size_idx].begin(), split}, fit.rating, config_.virtual_draws);
+            const RatingFit nexto = fit_learner_rating({split, rated[size_idx].end()}, fit.rating, config_.virtual_draws);
+            size_result.nexto_gap_elo = (nexto.rating - snapshots.rating) * ELO_PER_RATING;
+            size_result.nexto_gap_std_error = std::hypot(snapshots.std_error, nexto.std_error) * ELO_PER_RATING;
+        }
+    }
+
+    // The first learner becomes the first anchor. Later ones once they pass the newest anchor.
+    if (anchors_.empty()) {
+        promote(learner_steps, learner);
+        result.promoted = true;
+    } else if (((newest_wins + newest_draws * 0.5) / (newest_wins + newest_losses + newest_draws)) >= config_.promote_win_rate) {
+        promote(learner_steps, learner);
+        result.promoted = true;
+    }
+
+    ledger_.save();
+    result.played = true;
+    result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    return result;
+}
+
+void Gauntlet::play_games(size_t begin, size_t end, size_t real_slots, ActorCritic& learner) {
     const size_t games_per_slot = team_sizes_.size() * config_.bank_size * 2;
-    const size_t played = real_slots * games_per_slot;
 
     // Only the rows of games still running go through the networks. Most games end long before the slowest, so
     // finished games' rows would be most of the work. The running games shrink the same way every time the same games
@@ -251,12 +445,12 @@ EvalResult Gauntlet::run(int64_t learner_steps, ActorCritic learner) {
         const auto add = [&](env::RowRange rows) {
             for (size_t k = 0; k < rows.count; k++) row_index_[n++] = rows.begin + k;
         };
-        for (size_t game = 0; game < played; game++) {
+        for (size_t game = begin; game < end; game++) {
             if (outcomes[game] == env::GameOutcome::Unfinished) add(env_->game_learner_rows(game));
         }
         segments[1] = n;
         for (size_t slot = 0; slot < real_slots; slot++) {
-            for (size_t game = slot * games_per_slot; game < (slot + 1) * games_per_slot; game++) {
+            for (size_t game = std::max(begin, slot * games_per_slot); game < std::min(end, (slot + 1) * games_per_slot); game++) {
                 if (outcomes[game] == env::GameOutcome::Unfinished) add(env_->game_anchor_rows(game));
             }
             segments[slot + 2] = n;
@@ -267,15 +461,16 @@ EvalResult Gauntlet::run(int64_t learner_steps, ActorCritic learner) {
     // rows, bring the actions back, scatter them to their rows, step the envs. The uploads don't block the CPU; the
     // copy back to `actions_cpu_` does, so the actions are ready, and the staging buffers free, before the next step.
     torch::NoGradGuard no_grad;
-    const auto infer = [&](ActorCritic& net, size_t begin, size_t end) {
-        const auto first = static_cast<int64_t>(begin);
-        const auto count = static_cast<int64_t>(end - begin);
+    const auto infer = [&](ActorCritic& net, size_t first_row, size_t end_row) {
+        const auto first = static_cast<int64_t>(first_row);
+        const auto count = static_cast<int64_t>(end_row - first_row);
+        if (count == 0) return;
         actions_gpu_.narrow(0, first, count).copy_(
             net->best_action(obs_gpu_.narrow(0, first, count), masks_gpu_.narrow(0, first, count)));
     };
     const size_t obs_size = env_->get_single_obs_size();
     const size_t action_size = env_->get_action_space_size();
-    env_->reset(played);
+    env_->reset(begin, end);
     while (!env_->all_done()) {
         if (env_->games_left() != gathered_for) {
             gather_running_rows();
@@ -291,107 +486,112 @@ EvalResult Gauntlet::run(int64_t learner_steps, ActorCritic learner) {
             std::memcpy(masks_staging + i * action_size, masks + row_index_[i] * action_size, action_size * sizeof(float));
         }
         const auto count = static_cast<int64_t>(rows);
-        obs_gpu_.narrow(0, 0, count).copy_(obs_staging_.narrow(0, 0, count), true);
-        masks_gpu_.narrow(0, 0, count).copy_(masks_staging_.narrow(0, 0, count), true);
+        if (count > 0) {
+            obs_gpu_.narrow(0, 0, count).copy_(obs_staging_.narrow(0, 0, count), true);
+            masks_gpu_.narrow(0, 0, count).copy_(masks_staging_.narrow(0, 0, count), true);
 
-        infer(learner, segments[0], segments[1]);
-        for (size_t slot = 0; slot < real_slots; slot++) {
-            infer(slots_[slot], segments[slot + 1], segments[slot + 2]);
-        }
-        actions_cpu_.narrow(0, 0, count).copy_(actions_gpu_.narrow(0, 0, count));
+            infer(learner, segments[0], segments[1]);
+            for (size_t slot = 0; slot < real_slots; slot++) {
+                infer(slots_[slot], segments[slot + 1], segments[slot + 2]);
+            }
+            actions_cpu_.narrow(0, 0, count).copy_(actions_gpu_.narrow(0, 0, count));
 
-        const int* actions = actions_cpu_.data_ptr<int>();
-        for (size_t i = 0; i < rows; i++) {
-            step_actions_[row_index_[i]] = actions[i];
+            const int* actions = actions_cpu_.data_ptr<int>();
+            for (size_t i = 0; i < rows; i++) {
+                step_actions_[row_index_[i]] = actions[i];
+            }
         }
         env_->step(step_actions_.data());
     }
+}
 
-    // The learner's results per real slot and team size.
-    struct Tally {
-        int wins = 0;
-        int losses = 0;
-        int draws = 0;
-        int64_t ticks = 0;
+void Gauntlet::play_nexto(int64_t learner_steps, ActorCritic& learner, std::vector<std::vector<AnchorResult>>& rated,
+                          EvalResult& result) {
+    const size_t num_rungs = rungs_.size();
+    const size_t games_per_size = config_.bank_size * 2;
+    const size_t nexto_end = nexto_begin_ + nexto_sizes_.size() * games_per_size;
+
+    // Per Nexto team size: the rung to play next, and while placing, the rungs [lo, hi] the learner's level is in.
+    struct Search {
+        size_t rung = 0;
+        bool placing = false;
+        size_t lo = 0;
+        size_t hi = 0;
+        std::vector<uint8_t> played; // Per rung, this run.
     };
-    std::vector<std::vector<Tally>> tally(real_slots, std::vector<Tally>(team_sizes_.size()));
-
-    const auto& outcomes = env_->outcomes();
-    const auto& game_ticks = env_->game_ticks();
-    for (size_t game = 0; game < env_->played_games(); game++) {
-        const size_t slot = game / games_per_slot;
-        const size_t size_idx = (game % games_per_slot) / (config_.bank_size * 2);
-
-        Tally& t = tally[slot][size_idx];
-        if (outcomes[game] == env::GameOutcome::Win) {
-            t.wins++;
-        } else if (outcomes[game] == env::GameOutcome::Loss) {
-            t.losses++;
-        } else {
-            t.draws++;
+    std::vector<Search> search(nexto_sizes_.size());
+    for (size_t n = 0; n < nexto_sizes_.size(); n++) {
+        const size_t size = nexto_sizes_[n];
+        Search& s = search[n];
+        s.played.assign(num_rungs, 0);
+        // The learner's latest rating in this size: the last row with it, since rows are in time order.
+        const EvalLedger::Rating* latest = nullptr;
+        for (const EvalLedger::Rating& row : ledger_.ratings()) {
+            if (row.team_size == static_cast<int>(size)) latest = &row;
         }
-        t.ticks += game_ticks[game];
-
-    }
-
-    // Every result goes into the ledger. Each team size is rated against the anchors that have a frozen rating in it.
-    constexpr double ELO_PER_RATING = 400.0 / std::numbers::ln10;
-    int newest_wins = 0;   // Against the newest anchor, over all team sizes, for promotion.
-    int newest_losses = 0;
-    int newest_draws = 0;
-
-    for (size_t size_idx = 0; size_idx < team_sizes_.size(); size_idx++) {
-        const int size = static_cast<int>(team_sizes_[size_idx]);
-        EvalSizeResult& size_result = result.sizes.emplace_back();
-        size_result.team_size = team_sizes_[size_idx];
-
-        std::vector<AnchorResult> rated;
-        int64_t ticks = 0;
-        for (size_t slot = 0; slot < real_slots; slot++) {
-            const int64_t anchor_steps = active_[slot];
-            const Tally& t = tally[slot][size_idx];
-            ledger_.add_result({learner_steps, size, anchor_id(anchor_steps), t.wins, t.losses, t.draws});
-            size_result.wins += t.wins;
-            size_result.losses += t.losses;
-            size_result.draws += t.draws;
-            ticks += t.ticks;
-            if (const auto anchor_rating = ledger_.find_rating(anchor_steps, size)) {
-                rated.push_back({anchor_rating->rating, t.wins, t.losses, t.draws});
-            }
-            if (slot == real_slots - 1) {
-                newest_wins += t.wins;
-                newest_losses += t.losses;
-                newest_draws += t.draws;
-            }
-        }
-        const int games = size_result.wins + size_result.losses + size_result.draws;
-        size_result.mean_game_seconds = static_cast<double>(ticks) / 120.0 / games;
-
-        RatingFit fit{0.0, 0.0}; // The reference's rating, used when no anchor is rated in this size.
-        if (!rated.empty()) {
-            double start_rating = 0.0;
-            for (const EvalLedger::Rating& row : ledger_.ratings()) {
-                if (size == row.team_size) {
-                    start_rating = row.rating;
+        if (latest) {
+            // The rung closest to it: the most informative games.
+            for (size_t r = 1; r < num_rungs; r++) {
+                if (std::abs(ladder_.rating(r, size) - latest->rating) < std::abs(ladder_.rating(s.rung, size) - latest->rating)) {
+                    s.rung = r;
                 }
             }
-            fit = fit_learner_rating(rated, start_rating, config_.virtual_draws);
+        } else {
+            // No rating yet: a binary search over the ladder, which takes a few rounds.
+            s.placing = true;
+            s.lo = 0;
+            s.hi = num_rungs - 1;
+            s.rung = (s.lo + s.hi) / 2;
         }
-        ledger_.add_rating({learner_steps, size, fit.rating, fit.std_error});
-        size_result.elo = fit.rating * ELO_PER_RATING;
-        size_result.elo_std_error = fit.std_error * ELO_PER_RATING;
-
     }
 
-    if (((newest_wins + newest_draws * 0.5) / (newest_wins + newest_losses + newest_draws)) >= config_.promote_win_rate) {
-        promote(learner_steps, learner);
-        result.promoted = true;
-    }
+    for (;;) {
+        for (size_t n = 0; n < nexto_sizes_.size(); n++) {
+            for (size_t g = 0; g < games_per_size; g++) {
+                env_->set_external_bot(nexto_begin_ + n * games_per_size + g, false, rungs_[search[n].rung]);
+            }
+        }
+        play_games(nexto_begin_, nexto_end, 0, learner);
 
-    ledger_.save();
-    result.played = true;
-    result.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    return result;
+        bool placing = false;
+        for (size_t n = 0; n < nexto_sizes_.size(); n++) {
+            Search& s = search[n];
+            const size_t size = nexto_sizes_[n];
+            const size_t size_idx = static_cast<size_t>(std::find(team_sizes_.begin(), team_sizes_.end(), size) - team_sizes_.begin());
+            EvalNextoResult r{.team_size = size, .beta = NextoLadder::betas()[s.rung]};
+            for (size_t g = 0; g < games_per_size; g++) {
+                const size_t game = nexto_begin_ + n * games_per_size + g;
+                const env::GameOutcome outcome = env_->outcomes()[game];
+                r.wins += outcome == env::GameOutcome::Win;
+                r.losses += outcome == env::GameOutcome::Loss;
+                r.draws += outcome == env::GameOutcome::Draw;
+                r.ticks += env_->game_ticks()[game];
+            }
+            // A size whose search ended replays its rung while others search: the same games, counted once.
+            if (!s.played[s.rung]) {
+                s.played[s.rung] = 1;
+                ledger_.add_result({learner_steps, static_cast<int>(size), NextoLadder::rung_id(r.beta), r.wins, r.losses, r.draws});
+                rated[size_idx].push_back({ladder_.rating(s.rung, size), r.wins, r.losses, r.draws});
+                result.nexto_played.push_back(r);
+            }
+
+            if (!s.placing) continue;
+            // At least even with this rung: the learner's level is at or above it, so search the stronger rungs.
+            const bool at_least_even = r.wins + 0.5 * r.draws >= 0.5 * (r.wins + r.losses + r.draws);
+            if (at_least_even) {
+                if (s.rung == 0) s.placing = false; else s.hi = s.rung - 1;
+            } else {
+                s.lo = s.rung + 1;
+            }
+            if (s.placing && s.lo <= s.hi) {
+                s.rung = (s.lo + s.hi) / 2;
+            } else {
+                s.placing = false;
+            }
+            placing |= s.placing;
+        }
+        if (!placing) break;
+    }
 }
 
 void Gauntlet::promote(int64_t steps, const ActorCritic& learner) {

@@ -117,8 +117,22 @@ private:
         std::vector<size_t> deciding; // The agents deciding this step.
         std::vector<float> obs;
         std::vector<float> decisions;
+        // Lockstep play: decisions asked for and not set yet, whose obs and decisions are the first in `obs` and
+        // `decisions`, and the most a lockstep call can ask for.
+        size_t pending = 0;
+        size_t max_pending = 0;
     };
     std::vector<ExternalGroup> external_groups_;
+
+    // Lockstep play: every decision asked for and not set yet, in the order asked, which is the order they're set in.
+    struct PendingDecision {
+        size_t group;
+        size_t agent;
+        size_t slot; // In its group's buffers.
+    };
+    std::vector<PendingDecision> pending_;
+    // Most packets a lockstep call plays: the external controllers' shortest `decision_delay`, at least 1.
+    int lockstep_window_ = 1;
     // Per agent. Agents with a controller are driven by an external bot and ignore the policy's actions.
     std::vector<std::unique_ptr<external::ExternalController>> controllers_;
 
@@ -131,11 +145,28 @@ private:
     // Per agent: packets an external bot still waits before it joins and starts getting them. Only before the first episode.
     std::vector<int> join_ticks_;
 
+    // The frozen packets the external bots get before the episode's first tick, set up by `begin_frozen_packets`.
+    int frozen_packets_left_ = 0;
+    int join_packets_left_ = 0; // Of those, the first ones are the join window.
+    bool frozen_kickoff_ = false;
+
     /**
      * @brief Plays the external bots through what they'd get before the episode's first tick in game: the frozen
      * countdown if it's a kickoff, and before the first episode, frozen ticks in which each joins at its own random tick.
      */
     void start_external_episode();
+
+    /**
+     * @brief Sets up the frozen packets `start_external_episode` plays: draws the join ticks before the first
+     * episode, and counts the join window and, at a kickoff, the countdown.
+     */
+    void begin_frozen_packets();
+
+    /**
+     * @brief Bookkeeping after each frozen packet: the join window's countdown to each bot's join, and "go" (the
+     * kickoff pause starts) after the last one.
+     */
+    void end_frozen_packet();
 
     /**
      * @brief Gives every joined external controller the current packet, decides for those that want it, and gets their
@@ -146,6 +177,32 @@ private:
     void run_external_packet(bool apply_controls);
 
     /**
+     * @brief Gets a decision for every external controller that wants one, batched per bot.
+     */
+    void decide_external();
+
+    /**
+     * @brief Lockstep play's first half of a packet: gives every joined controller the packet, and asks for the
+     * decisions of those that want one, building their obs into their group's buffers.
+     */
+    void request_external_decisions();
+
+    /**
+     * @brief Sets every pending decision, from the groups' decisions, in the order they were asked for.
+     */
+    void set_pending_decisions();
+
+    /**
+     * @brief Gets every joined controller's controls for the packet, setting them on the cars if `apply_controls`.
+     */
+    void tick_external(bool apply_controls);
+
+    /**
+     * @brief Sets the lockstep window from the controllers, and sizes the groups' buffers for a window's decisions.
+     */
+    void size_lockstep_buffers();
+
+    /**
      * @brief Whether the agent is driven by an external bot that has joined the match.
      */
     [[nodiscard]] bool external_joined(size_t agent) const {
@@ -153,9 +210,43 @@ private:
     }
 
     /**
-     * @brief Gets a decision for every external controller that wants one, batched per bot.
+     * @brief What a step has seen so far, tick by tick.
      */
-    void decide_external();
+    struct StepProgress {
+        int ticks_elapsed = 0;
+        bool terminated = false;
+        bool truncated = false;
+        bool no_touch_truncated = false;
+        bool blue_scored = false;
+    };
+    StepProgress lockstep_progress_; // The step `lockstep_ticks` is playing.
+    int lockstep_tick_ = 0;
+
+    /**
+     * @brief Sets the policy agents' controls from their actions. External agents set their own.
+     */
+    void apply_actions(const int* actions);
+
+    /**
+     * @brief Puts the arena in a new episode's start state and resets the episode's counters and managers.
+     */
+    void reset_episode_state();
+
+    /**
+     * @brief Steps the arena one tick, after the controls are set: rewards, metrics, touches, and whether the episode
+     * ended on this tick, recorded in `progress`. Returns true when it ended.
+     */
+    bool advance_tick(int tick, StepProgress& progress);
+
+    /**
+     * @brief Builds every agent's obs and action mask from the current state.
+     */
+    void build_all_obs();
+
+    /**
+     * @brief Ends a step: applies the reward options and builds the obs.
+     */
+    [[nodiscard]] StepResult finish_step(const StepProgress& progress);
 
     /**
      * @brief Controls for a scripted car that chases the ball, used by the benchmark's heavy workload.
@@ -207,6 +298,52 @@ public:
      * @return The result of the step.
      */
     [[nodiscard]] StepResult step(const int* actions);
+
+    /**
+     * @brief One external bot's decisions asked for during lockstep play and not set yet.
+     */
+    struct ExternalBatch {
+        external::ExternalBot* bot = nullptr;
+        size_t num_cars = 0;       // In the match, for the bot's obs and inference.
+        size_t count = 0;          // Decisions asked for. Their obs are back to back in `obs`.
+        const float* obs = nullptr;
+        float* decisions = nullptr; // Where the caller writes their `count` decisions, in the same order.
+    };
+
+    /**
+     * @brief Lockstep play, for evaluation: the external bots don't run their own inference, so a caller can batch it
+     * across envs. Between lockstep calls, the caller reads `external_batch` for each group, the decisions the bots
+     * asked for during the last call, and writes them; the next call sets them and carries on. A call plays at most
+     * `lockstep_window` packets, the bots' shortest `decision_delay`, so many packets' inference runs at once
+     * (`lockstep_packets` says how many the next call can play). Decisions are asked for after a packet's tick, so one
+     * asked for during a call is set at most `lockstep_window` - 1 packets late, within the delay. Games play out
+     * exactly as with `reset` and `step`, which run inference at every packet themselves.
+     *
+     * `lockstep_reset` starts an episode like `reset`, except every external bot gets a fresh controller that joins
+     * the match anew (at a tick drawn from the env's random number generator), so with `reseed` before it, every
+     * game is the same. It returns the frozen packets to play before the first step (the join window, and the
+     * countdown at a kickoff), played by `lockstep_frozen` calls; the one that plays the last returns the reset's
+     * result. Then each step is a `lockstep_begin_step` and `lockstep_ticks` calls until one returns the step's result.
+     */
+    [[nodiscard]] int lockstep_reset();
+    [[nodiscard]] std::optional<ResetResult> lockstep_frozen(int packets);
+    void lockstep_begin_step(const int* actions);
+    [[nodiscard]] std::optional<StepResult> lockstep_ticks(int ticks);
+    [[nodiscard]] int lockstep_window() const { return lockstep_window_; }
+    // The most packets the next lockstep call can play: 1 in the join window, since a bot that just joined uses its
+    // first decision right away, then `lockstep_window`.
+    [[nodiscard]] int lockstep_packets() const { return join_packets_left_ > 0 ? 1 : lockstep_window_; }
+    // The most decisions an external group can ask for in one lockstep call.
+    [[nodiscard]] size_t lockstep_max_decisions(size_t group) const { return external_groups_.at(group).max_pending; }
+
+    [[nodiscard]] size_t num_external_groups() const { return external_groups_.size(); }
+    [[nodiscard]] ExternalBatch external_batch(size_t group);
+
+    /**
+     * @brief Hands an external group's cars to another bot with the same obs and decision sizes, e.g. the same network
+     * with other options. It takes over at the next `lockstep_reset`, which gives its cars fresh controllers.
+     */
+    void set_external_bot(size_t group, std::shared_ptr<external::ExternalBot> bot);
 
     /**
      * @brief Switches the env to the benchmark's heavy workload, or back.

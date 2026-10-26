@@ -7,6 +7,8 @@
 #include "nexto_bot.hpp"
 
 #include <ATen/Context.h>
+#include <ATen/cuda/CUDAEvent.h>
+#include <ATen/cuda/CUDAGraph.h>
 #include <c10/cuda/CUDAGuard.h>
 
 #include <algorithm>
@@ -273,7 +275,8 @@ const std::array<Action, NUM_ACTIONS>& action_table() {
 
 using namespace nexto;
 
-NextoBot::NextoBot(const std::string& model_path, const NextoOptions& options) : options_(options) {
+NextoBot::NextoBot(const std::string& model_path, const NextoOptions& options)
+    : model_(std::make_shared<Model>()), options_(options) {
     if (!(options_.beta >= -1.0f && options_.beta <= 1.0f)) {
         throw std::invalid_argument("Nexto beta must be in [-1, 1].");
     }
@@ -286,18 +289,21 @@ NextoBot::NextoBot(const std::string& model_path, const NextoOptions& options) :
     if (!std::filesystem::exists(model_path)) {
         throw std::invalid_argument("Nexto model not found at '" + model_path + "'.");
     }
+    Model& m = *model_;
+    m.device = options_.device;
+    m.torchscript = options_.torchscript;
     try {
-        model_ = torch::jit::load(model_path, torch::kCPU);
+        m.module = torch::jit::load(model_path, torch::kCPU);
     } catch (const c10::Error& e) {
         throw std::runtime_error("Couldn't load the Nexto model from '" + model_path + "': " + e.what_without_backtrace());
     }
-    model_.eval();
+    m.module.eval();
 
-    net_->load_from_torchscript(model_);
-    net_->eval();
-    net_->to(options_.device);
-    if (options_.device.is_cuda()) {
-        stream_ = c10::cuda::getStreamFromPool(false, options_.device.index());
+    m.net->load_from_torchscript(m.module);
+    m.net->eval();
+    m.net->to(m.device);
+    if (m.device.is_cuda()) {
+        m.stream = c10::cuda::getStreamFromPool(false, m.device.index());
     }
 
     // Check the model's output on a 1v1 obs.
@@ -306,21 +312,31 @@ NextoBot::NextoBot(const std::string& model_path, const NextoOptions& options) :
     infer(obs.data(), 1, 2, logits.data());
 }
 
+std::shared_ptr<NextoBot> NextoBot::with_options(const NextoOptions& options) const {
+    if (!(options.beta >= -1.0f && options.beta <= 1.0f)) {
+        throw std::invalid_argument("Nexto beta must be in [-1, 1].");
+    }
+    NextoOptions shared = options;
+    shared.device = model_->device;
+    shared.torchscript = model_->torchscript;
+    return std::shared_ptr<NextoBot>(new NextoBot(model_, shared));
+}
+
 void NextoBot::infer(const float* obs, size_t count, size_t num_cars, float* decisions) {
-    const std::lock_guard<std::mutex> lock(model_mutex_);
+    const std::lock_guard<std::mutex> lock(model_->mutex);
     const torch::InferenceMode inference_guard;
 
     const auto n = static_cast<int64_t>(count);
     const auto entities = static_cast<int64_t>(num_entities(num_cars));
 
     torch::Tensor logits;
-    if (options_.device.is_cuda()) {
+    if (model_->device.is_cuda()) {
         logits = run_cuda(obs, n, entities);
     } else {
         const torch::Tensor all = torch::from_blob(const_cast<float*>(obs), {n, static_cast<int64_t>(obs_size(num_cars))});
         const torch::Tensor query = all.narrow(1, 0, QUERY_SIZE).reshape({n, 1, QUERY_SIZE});
         const torch::Tensor entity = all.narrow(1, QUERY_SIZE, entities * ENTITY_SIZE).reshape({n, entities, ENTITY_SIZE});
-        logits = (options_.torchscript ? run_torchscript(query, entity) : net_->forward(query, entity)).contiguous();
+        logits = (model_->torchscript ? run_torchscript(query, entity) : model_->net->forward(query, entity)).contiguous();
     }
 
     if (logits.dim() != 2 || logits.size(0) != n || logits.size(1) != static_cast<int64_t>(NUM_ACTIONS)) {
@@ -333,25 +349,26 @@ void NextoBot::infer(const float* obs, size_t count, size_t num_cars, float* dec
 torch::Tensor NextoBot::run_torchscript(const torch::Tensor& query, const torch::Tensor& entities) {
     // The mask is added to the attention scores. bot.py never pads, so it's all zeros.
     const torch::Tensor mask = torch::zeros({query.size(0), entities.size(1)});
-    const auto out = model_.forward({c10::ivalue::Tuple::create({query, entities, mask})}).toTuple();
+    const auto out = model_->module.forward({c10::ivalue::Tuple::create({query, entities, mask})}).toTuple();
     return out->elements().at(0).toTensor();
 }
 
 torch::Tensor NextoBot::run_cuda(const float* obs, int64_t count, int64_t entities) {
+    Model& m = *model_;
     const int64_t obs_floats = static_cast<int64_t>(QUERY_SIZE) + entities * static_cast<int64_t>(ENTITY_SIZE);
     const int64_t floats = count * obs_floats;
     const int64_t logit_floats = count * static_cast<int64_t>(NUM_ACTIONS);
-    const c10::cuda::CUDAStreamGuard stream_guard(*stream_);
-    if (!host_obs_.defined() || host_obs_.numel() < floats) {
-        host_obs_ = torch::empty({floats}, torch::TensorOptions().pinned_memory(true));
-        device_obs_ = torch::empty({floats}, torch::TensorOptions().device(options_.device));
+    const c10::cuda::CUDAStreamGuard stream_guard(*m.stream);
+    if (!m.host_obs.defined() || m.host_obs.numel() < floats) {
+        m.host_obs = torch::empty({floats}, torch::TensorOptions().pinned_memory(true));
+        m.device_obs = torch::empty({floats}, torch::TensorOptions().device(m.device));
     }
-    if (!host_logits_.defined() || host_logits_.numel() < logit_floats) {
-        host_logits_ = torch::empty({logit_floats}, torch::TensorOptions().pinned_memory(true));
+    if (!m.host_logits.defined() || m.host_logits.numel() < logit_floats) {
+        m.host_logits = torch::empty({logit_floats}, torch::TensorOptions().pinned_memory(true));
     }
 
-    std::memcpy(host_obs_.data_ptr<float>(), obs, static_cast<size_t>(floats) * sizeof(float));
-    const torch::Tensor all = device_obs_.narrow(0, 0, floats).copy_(host_obs_.narrow(0, 0, floats), true).view({count, obs_floats});
+    std::memcpy(m.host_obs.data_ptr<float>(), obs, static_cast<size_t>(floats) * sizeof(float));
+    const torch::Tensor all = m.device_obs.narrow(0, 0, floats).copy_(m.host_obs.narrow(0, 0, floats), true).view({count, obs_floats});
     const torch::Tensor query = all.narrow(1, 0, QUERY_SIZE).reshape({count, 1, QUERY_SIZE});
     const torch::Tensor entity = all.narrow(1, QUERY_SIZE, entities * ENTITY_SIZE).reshape({count, entities, ENTITY_SIZE});
 
@@ -364,10 +381,137 @@ torch::Tensor NextoBot::run_cuda(const float* obs, int64_t count, int64_t entiti
         ~Tf32Off() { at::globalContext().setAllowTF32CuBLAS(was); }
     } tf32_off;
 
-    const torch::Tensor logits = host_logits_.narrow(0, 0, logit_floats).view({count, static_cast<int64_t>(NUM_ACTIONS)});
-    logits.copy_(net_->forward(query, entity), true);
-    stream_->synchronize();
+    const torch::Tensor logits = m.host_logits.narrow(0, 0, logit_floats).view({count, static_cast<int64_t>(NUM_ACTIONS)});
+    logits.copy_(m.net->forward(query, entity), true);
+    m.stream->synchronize();
     return logits;
+}
+
+/**
+ * @brief Nexto's network as CUDA graphs, for evaluation: see `make_batch_runner`.
+ */
+class NextoBot::GraphRunner final : public ExternalBatchRunner {
+public:
+    GraphRunner(std::shared_ptr<Model> model, const std::map<size_t, size_t>& max_batch) : model_(std::move(model)) {
+        Model& m = *model_;
+        const torch::InferenceMode inference_guard;
+        // Captured without TF32, like `infer`. The flag is process-wide; this runs before evaluation plays.
+        const bool tf32 = at::globalContext().allowTF32CuBLAS();
+        at::globalContext().setAllowTF32CuBLAS(false);
+        try {
+            for (const auto& [num_cars, most] : max_batch) {
+                if (most == 0) continue;
+                Shape& s = shapes_.try_emplace(num_cars, c10::cuda::getStreamFromPool(false, m.device.index())).first->second;
+                capture(s, num_cars, most);
+            }
+        } catch (...) {
+            at::globalContext().setAllowTF32CuBLAS(tf32);
+            throw;
+        }
+        at::globalContext().setAllowTF32CuBLAS(tf32);
+    }
+
+    [[nodiscard]] float* obs(size_t num_cars) override { return shapes_.at(num_cars).host_obs.data_ptr<float>(); }
+
+    void launch(size_t num_cars, size_t count) override {
+        Shape& s = shapes_.at(num_cars);
+        // Replay launches on the current stream.
+        const c10::cuda::CUDAStreamGuard stream_guard(s.stream);
+        if (count <= s.batches.back()) {
+            size_t k = 0;
+            while (s.batches[k] < count) k++;
+            s.graphs[k]->replay();
+            return;
+        }
+        // Larger batches run as chunks of the largest graph, one after another.
+        const size_t chunks = (count + s.batches.back() - 1) / s.batches.back();
+        s.graphs.back()->replay();
+        for (size_t c = 1; c < chunks; c++) s.chunk_graphs[c - 1]->replay();
+    }
+
+    [[nodiscard]] const float* wait(size_t num_cars) override {
+        Shape& s = shapes_.at(num_cars);
+        s.stream.synchronize();
+        return s.host_logits.data_ptr<float>();
+    }
+
+private:
+    // The largest graph's batch. Larger batches run in chunks, which keeps the graphs' GPU memory bounded.
+    static constexpr size_t MAX_GRAPH_BATCH = 1024;
+
+    struct Shape {
+        explicit Shape(c10::cuda::CUDAStream stream) : stream(stream) {}
+        c10::cuda::CUDAStream stream;
+        at::cuda::MempoolId_t pool{}; // Its own: car counts replay at the same time. Shared by its graphs, which don't.
+        torch::Tensor host_obs;    // Pinned.
+        torch::Tensor device_obs;
+        torch::Tensor host_logits; // Pinned.
+        std::vector<size_t> batches; // Each graph's batch size, ascending, all from the start of the buffers.
+        std::vector<std::unique_ptr<at::cuda::CUDAGraph>> graphs;
+        // The largest batch again, for each later chunk of the buffers.
+        std::vector<std::unique_ptr<at::cuda::CUDAGraph>> chunk_graphs;
+    };
+    std::shared_ptr<Model> model_;
+    std::map<size_t, Shape> shapes_;
+
+    void capture(Shape& s, size_t num_cars, size_t most) {
+        Model& m = *model_;
+        const auto entities = static_cast<int64_t>(num_entities(num_cars));
+        const int64_t obs_floats = static_cast<int64_t>(QUERY_SIZE) + entities * static_cast<int64_t>(ENTITY_SIZE);
+        size_t top = 1;
+        while (top < most && top < MAX_GRAPH_BATCH) top *= 2;
+        const size_t chunks = (most + top - 1) / top;
+        const auto rows = static_cast<int64_t>(chunks * top);
+        const auto pinned = torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(true);
+        s.host_obs = torch::zeros({rows * obs_floats}, pinned);
+        s.device_obs = torch::zeros({rows * obs_floats}, torch::TensorOptions().device(m.device));
+        s.host_logits = torch::zeros({rows * static_cast<int64_t>(NUM_ACTIONS)}, pinned);
+        s.pool = at::cuda::graph_pool_handle();
+
+        // Capture runs on the shape's stream, after any work already queued on the current one.
+        {
+            at::cuda::CUDAEvent ready;
+            ready.record(at::cuda::getCurrentCUDAStream());
+            ready.block(s.stream);
+        }
+        const c10::cuda::CUDAStreamGuard stream_guard(s.stream);
+        // Uploads `n` obs from row `first`, runs the network on them and downloads their logits to the same rows.
+        const auto capture_one = [&](int64_t first, int64_t n) {
+            const auto body = [&] {
+                const torch::Tensor all = s.device_obs.narrow(0, first * obs_floats, n * obs_floats)
+                                              .copy_(s.host_obs.narrow(0, first * obs_floats, n * obs_floats), true)
+                                              .view({n, obs_floats});
+                const torch::Tensor query = all.narrow(1, 0, QUERY_SIZE).reshape({n, 1, QUERY_SIZE});
+                const torch::Tensor entity = all.narrow(1, QUERY_SIZE, entities * ENTITY_SIZE).reshape({n, entities, ENTITY_SIZE});
+                s.host_logits.narrow(0, first * static_cast<int64_t>(NUM_ACTIONS), n * static_cast<int64_t>(NUM_ACTIONS))
+                    .view({n, static_cast<int64_t>(NUM_ACTIONS)})
+                    .copy_(m.net->forward(query, entity), true);
+            };
+            // Warmup runs lazy initialization (e.g. cuBLAS workspaces) outside of capture.
+            for (int i = 0; i < 3; i++) body();
+            s.stream.synchronize();
+
+            auto graph = std::make_unique<at::cuda::CUDAGraph>();
+            graph->capture_begin(s.pool);
+            body();
+            graph->capture_end();
+            return graph;
+        };
+        for (size_t batch = 1; batch <= top; batch *= 2) {
+            s.batches.push_back(batch);
+            s.graphs.push_back(capture_one(0, static_cast<int64_t>(batch)));
+        }
+        for (size_t c = 1; c < chunks; c++) {
+            s.chunk_graphs.push_back(capture_one(static_cast<int64_t>(c * top), static_cast<int64_t>(top)));
+        }
+    }
+};
+
+std::unique_ptr<ExternalBatchRunner> NextoBot::make_batch_runner(const std::map<size_t, size_t>& max_batch) {
+    if (!model_->device.is_cuda()) {
+        return ExternalBot::make_batch_runner(max_batch);
+    }
+    return std::make_unique<GraphRunner>(model_, max_batch);
 }
 
 std::unique_ptr<ExternalController> NextoBot::make_controller(uint32_t car_id) const {
@@ -503,7 +647,24 @@ void NextoController::build_obs(const ffi::ArenaState& state, float* out) const 
     }
 }
 
+void NextoController::request_decision() {
+    pending_beta_ = (options_.stochastic_kickoffs && info_.kickoff_pause) ? 0.5f : options_.beta;
+    pending_ = true;
+    pending_overwritten_ = false;
+    update_action_ = false;
+}
+
 void NextoController::set_decision(const float* decision, std::mt19937& rng) {
+    if (pending_) {
+        // Set late: as if set at its packet, before everything since.
+        last_beta_ = pending_beta_;
+        last_action_index_ = pick_action(decision, pending_beta_, rng);
+        if (!pending_overwritten_) {
+            action_ = action_table()[last_action_index_];
+        }
+        pending_ = false;
+        return;
+    }
     float beta = options_.beta;
     if (options_.stochastic_kickoffs && info_.kickoff_pause) {
         beta = 0.5f;
@@ -545,6 +706,7 @@ void NextoController::maybe_do_kickoff(const ffi::ArenaState& state) {
         && state.ball.phys.pos[1] == 0.0f) {
         action_ = KICKOFF_ACTIONS[static_cast<size_t>(kickoff_index_)];
         controls_ = to_controls(action_);
+        if (pending_) pending_overwritten_ = true;
     }
 }
 

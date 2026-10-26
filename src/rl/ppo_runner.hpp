@@ -97,6 +97,12 @@ struct RunnerConfig {
     // touching it), since a bot's speed swings between the two as it learns. Nothing is loaded, saved, or logged.
     bool benchmark = false;
 
+    // Instead of training, regenerates the Nexto ladder (`eval_cfg.nexto_ladder_path`) from a large calibration: 512
+    // kickoffs per team size and pairing of rungs, each rung against the two above it, which takes about 20 minutes.
+    // Only needed after changing Nexto's model, the ladder's rungs or the eval kickoff setter. Other kickoff jitter or
+    // game cap settings than the shipped ladder's are calibrated by themselves at startup.
+    bool calibrate_nexto_ladder = false;
+
     std::vector<MatchDistribution> match_distributions = {
         {1, 1, 1.0f}
     };
@@ -531,6 +537,11 @@ private:
      * @param stop_flag Stops the benchmark early, printing what was measured so far.
      */
     void run_benchmark(const std::atomic<bool>& stop_flag);
+
+    /**
+     * @brief Regenerates the shipped Nexto ladder (see `RunnerConfig::calibrate_nexto_ladder`).
+     */
+    void run_ladder_calibration();
 
     /**
      * @brief Timing of one benchmark sample.
