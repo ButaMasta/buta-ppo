@@ -10,5 +10,6 @@ namespace buta_ppo::reward {
 std::unique_ptr<RewardFunction> create_touch_ball_reward();
 std::unique_ptr<RewardFunction> create_velocity_to_ball_reward();
 std::unique_ptr<RewardFunction> create_goal_reward();
+std::unique_ptr<RewardFunction> create_velocity_ball_to_goal_reward();
 
 } // namespace buta_ppo::reward 

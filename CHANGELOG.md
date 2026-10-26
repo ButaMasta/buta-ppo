@@ -86,6 +86,22 @@
     - Non-breaking.
 20. The visualizer now plays the policy's most likely action, as the RLBot bot does, so it shows how the bot plays in a match. `RunnerConfig::render_best_action = false` samples actions like training, as before.
     - Non-breaking, but the visualizer plays differently from before by default.
+21. Added evaluation, which tracks the bot's skill over training. Every `RunnerConfig::eval_cfg.steps_per_eval` steps (default 50M), training pauses for a few seconds while the learner plays fixed past versions of itself, the anchors, and TensorBoard gets a Bradley–Terry Elo rating per team size under `Skill/`.
+    - The games: a fixed bank of kickoffs, each car moved by up to 2.5 uu and turned by up to 0.01 rad, each played once from each side against each anchor, from the kickoff to the first goal or `game_cap_seconds` (a draw). Both sides play their most likely action. The same models always give the same results.
+    - The first evaluation makes the learner the reference anchor at 0 Elo. A later learner becomes an anchor once it scores `promote_win_rate` (0.7) against the newest one, over all team sizes. Anchor ratings never change, so earlier points on the curve never move. An anchor the learner is predicted to score above `retire_win_rate` (0.85) against isn't played until the learner falls back, and the newest one is always played.
+    - Each team size has its own rating. `eval_cfg.team_sizes` defaults to every even layout in `match_distributions`.
+    - Anchors, every result, and every rating are kept in `checkpoints/<bot_name>_eval/`, rolled back with the checkpoints like the PFSP pool. Changing a setting the ratings depend on moves the directory aside to `<bot_name>_eval.stale-<time>`, and evaluation starts over with a new reference.
+    - An evaluation took about 3 s with two anchors played and three team sizes on an i5-14600K with an RTX 5070, about 3% of training time at the default interval. `Performance/Eval_Time` logs it, and it isn't counted in the steps per second. The evaluation games run on their own worker threads, on `worker_cpus` like training.
+    - Non-breaking, but on by default: a run without an evaluation directory makes its current learner the reference at the start of training. `eval_cfg.steps_per_eval = 0` turns evaluation off.
+22. Small simulation changes that came with evaluation.
+    - The ball prediction in the observations now clears the prediction sim's cached contacts on every reprediction, as the ball_sim crate recommends when one sim is reused for predictions, so a prediction no longer depends on where the previous one ended. On 57,600 recorded steps it gave the same predictions as before, bit for bit, so existing bots are unaffected.
+    - `ffi::seed_arena_rng` seeds the RocketSim arena's random number generator, which picks where a demolished car respawns. Evaluation uses it so its games repeat exactly. Training still seeds it randomly.
+    - The env worker threads now run in `util::WorkerPool` (`src/util/worker_pool.hpp`), shared by training and evaluation. Training speed is unchanged.
+    - Non-breaking.
+23. Added a `VelocityBallToGoal` team reward and updated the demo config in `main.cpp`.
+    - `create_velocity_ball_to_goal_reward()` (`src/reward/velocity_ball_to_goal.cpp`) gives each team the ball's velocity toward the back of the opponent's net, divided by the ball's max speed of 6000, so from −1 to 1 per tick. Every player on the team receives it.
+    - The demo config now trains 1v1, 2v2, and 3v3 (45%, 30%, and 25% of the envs) with `max_players_per_team = 3`, adds `VelocityBallToGoal` with a weight of 0.5, and raises `Goal` from 10 to 50. These are still demo values, not tuned.
+    - Non-breaking: only the demo values changed, so configs of your own are unaffected. A run started from the old demo config can't resume with the new one, since `max_players_per_team` changes the observation size.
 
 ### Releases
 #### 0.2.0

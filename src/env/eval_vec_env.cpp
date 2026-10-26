@@ -84,19 +84,24 @@ EvalVecEnv::EvalVecEnv(
 
     // Learner rows first, in game order.
     size_t next_row = 0;
+    learner_rows_before_.reserve(envs_.size() + 1);
     for (size_t i = 0; i < envs_.size(); i++) {
+        learner_rows_before_.push_back(next_row);
         for (size_t a = 0; a < env_agent_counts_[i]; a++) {
             if (is_learner(i, a)) agent_rows_[env_agent_offsets_[i] + a] = static_cast<uint32_t>(next_row++);
         }
     }
+    learner_rows_before_.push_back(next_row);
     learner_agents_ = next_row;
 
     // Then each anchor slot's rows, in game order within the slot.
     anchor_rows_.resize(num_anchor_slots);
+    anchor_row_begin_.resize(envs_.size());
     for (size_t slot = 0; slot < num_anchor_slots; slot++) {
         anchor_rows_[slot].begin = next_row;
         for (size_t i = 0; i < envs_.size(); i++) {
             if (games[i].anchor_slot != slot) continue;
+            anchor_row_begin_[i] = next_row;
             for (size_t a = 0; a < env_agent_counts_[i]; a++) {
                 if (!is_learner(i, a)) agent_rows_[env_agent_offsets_[i] + a] = static_cast<uint32_t>(next_row++);
             }
@@ -124,13 +129,18 @@ EvalVecEnv::EvalVecEnv(
 // Defined here, where RocketSimEnv is a complete type.
 EvalVecEnv::~EvalVecEnv() = default;
 
-void EvalVecEnv::reset() {
+void EvalVecEnv::reset(size_t num_games) {
+    num_games = std::min(num_games, envs_.size());
+    if (num_games == 0) {
+        throw std::invalid_argument("EvalVecEnv::reset needs at least one game to play.");
+    }
     std::fill(outcomes_.begin(), outcomes_.end(), GameOutcome::Unfinished);
     std::fill(game_ticks_.begin(), game_ticks_.end(), 0);
 
-    pool_.dispatch(reset_task_, 0, envs_.size());
+    played_games_ = num_games;
+    pool_.dispatch(reset_task_, 0, played_games_);
     pool_.wait();
-    games_left_ = envs_.size();
+    games_left_ = played_games_;
 }
 
 void EvalVecEnv::step(const int* batched_actions) {
@@ -140,11 +150,12 @@ void EvalVecEnv::step(const int* batched_actions) {
 
     // Published to the workers by the pool's dispatch.
     current_actions_ptr_ = batched_actions;
-    pool_.dispatch(step_task_, 0, envs_.size());
+    pool_.dispatch(step_task_, 0, played_games_);
     pool_.wait();
     current_actions_ptr_ = nullptr;
 
-    games_left_ = static_cast<size_t>(std::count(outcomes_.begin(), outcomes_.end(), GameOutcome::Unfinished));
+    const auto played_end = outcomes_.begin() + static_cast<std::ptrdiff_t>(played_games_);
+    games_left_ = static_cast<size_t>(std::count(outcomes_.begin(), played_end, GameOutcome::Unfinished));
 }
 
 void EvalVecEnv::step_env(size_t env_idx) {

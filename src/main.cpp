@@ -59,9 +59,11 @@ int main() {
     config.benchmark = false;
 
     config.match_distributions = {
-        {1, 1, 1.0f}
+        {1, 1, 0.45f},
+        {2, 2, 0.30f},
+        {3, 3, 0.25f}
     };
-    config.max_players_per_team = 1;
+    config.max_players_per_team = 3;
 
     config.setter_distributions = {
         {create_default_kickoff_setter(), 0.30f},
@@ -76,8 +78,9 @@ int main() {
     
     config.reward_entries = {
         {"VelocityToBall", create_velocity_to_ball_reward(), 0.1f},
+        {"VelocityBallToGoal", create_velocity_ball_to_goal_reward(), 0.5f},
         {"TouchBall", create_touch_ball_reward(), 1.0f},
-        {"Goal", create_goal_reward(), 10.0f, {.opp_scale = 1.0f}}
+        {"Goal", create_goal_reward(), 50.0f, {.opp_scale = 1.0f}}
     };
 
     config.metric_entries = {
@@ -119,11 +122,15 @@ int main() {
     config.pfsp_cfg.envs = 0.2f;
     config.pfsp_cfg.versions = 2;
 
+    // Evaluation: every steps_per_eval, the learner plays fixed past versions and gets a Bradley-Terry Elo per team size.
+    config.eval_cfg.steps_per_eval = 50'000'000;
+
+
     try {
         PPORunner runner(config);
         // Trains for at most this many updates (~50M steps with this config), then saves a checkpoint and exits.
         // Rerunning resumes from that checkpoint.
-        runner.run(1'000,g_stop_training, "checkpoints");
+        runner.run(5'000,g_stop_training, "checkpoints");
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] " << e.what() << "\n";
         return 1;

@@ -35,6 +35,8 @@ constexpr const char* OPTIMIZER_FILE = "optimizer.pt";
 // Suffix of the PFSP pool's directory, `<bot name>_pool/`, next to the checkpoints.
 // Checkpoint loading skips it, since "pool" isn't a step count.
 constexpr const char* POOL_DIR_SUFFIX = "_pool";
+// Suffix of the Evaluation pool's directory.
+constexpr const char* EVAL_DIR_SUFFIX = "_eval";
 
 /**
  * @brief Converts an episode limit in seconds to physics ticks, 120 per second. 0 stays 0, which turns it off.
@@ -141,6 +143,22 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
         // Unpinned, one CPU is left for the main thread, which is slower when it has to share every CPU with workers.
         if (config_.num_threads == 0) {
             config_.num_threads = config_.worker_cpus.empty() ? std::max<size_t>(1, allowed_cpus_ - 1) : config_.worker_cpus.size();
+        }
+
+        // Evaluation rates every even layout trained on, unless the team sizes are set.
+        EvalConfig& eval = config_.eval_cfg;
+        if (eval.enabled() && eval.team_sizes.empty()) {
+            for (const MatchDistribution& dist : config_.match_distributions) {
+                if (dist.weight > 0.0f && dist.blue_players == dist.orange_players) {
+                    eval.team_sizes.push_back(dist.blue_players);
+                }
+            }
+            if (eval.team_sizes.empty()) {
+                throw std::invalid_argument("Evaluation needs even teams to rate. Set eval_cfg.team_sizes, or turn "
+                                            "evaluation off with eval_cfg.steps_per_eval = 0.");
+            }
+            std::sort(eval.team_sizes.begin(), eval.team_sizes.end());
+            eval.team_sizes.erase(std::unique(eval.team_sizes.begin(), eval.team_sizes.end()), eval.team_sizes.end());
         }
     }
 
@@ -352,6 +370,13 @@ void PPORunner::setup_dimensions_and_buffers() {
     if (!opponent_slots_.empty()) {
         opponent_pool_ = std::make_unique<OpponentPool>(config_.pfsp_cfg, model_config());
     }
+
+    // Setup gauntlet for evaluation.
+    if (config_.eval_cfg.enabled() && !config_.render && !benchmark_child_) {
+        gauntlet_ = std::make_unique<Gauntlet>(config_.eval_cfg, model_config(), config_.eval_cfg.team_sizes,
+                                               config_.num_threads, config_.worker_cpus, device_);
+    }
+
     
     buffer_ = std::make_unique<RolloutBuffer>(
         buffer_size_, learner_agents_, obs_size_, action_space_size, device_
@@ -879,6 +904,15 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         next_checkpoint_step_ = (global_step_ / checkpoint_interval + 1) * checkpoint_interval;
     }
 
+    // Evaluations land on multiples of the interval, like checkpoints. A run without anchors gets its first one now.
+    const int64_t steps_per_eval = config_.eval_cfg.steps_per_eval;
+    if (gauntlet_) {
+        if (gauntlet_->empty()) {
+            run_evaluation();
+        }
+        next_eval_step_ = (global_step_ / steps_per_eval + 1) * steps_per_eval;
+    }
+
     // TensorBoard logs land on multiples of the interval like checkpoints. 0 logs every update.
     const int64_t log_interval = config_.steps_per_log > 0 ? config_.steps_per_log : total_steps_per_update_;
     next_log_step_ = (global_step_ / log_interval + 1) * log_interval;
@@ -1010,6 +1044,12 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         check_rollout_bottleneck(physics_wait_seconds / rollout_time.count());
         print_warning_reminders();
 
+        if (gauntlet_ && global_step_ >= next_eval_step_) {
+            run_evaluation();
+            next_eval_step_ = (global_step_ / steps_per_eval + 1) * steps_per_eval;
+        }
+
+
         if (checkpoint_interval > 0 && global_step_ >= next_checkpoint_step_) {
             save_checkpoint(checkpoint_dir);
             last_checkpoint_step_ = global_step_;
@@ -1056,6 +1096,36 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
     }
 }
 
+void PPORunner::run_evaluation() {
+    const EvalResult result = gauntlet_->run(global_step_, actor_critic_);
+    if (!result.played) {
+        std::cout << " | Evaluation: the learner is now the first anchor, the reference at 0 Elo.\n";
+        return;
+    }
+
+    for (const EvalSizeResult& size : result.sizes) {
+        const std::string mode = std::to_string(size.team_size) + "v" + std::to_string(size.team_size);
+        const double games = size.wins + size.losses + size.draws;
+        logger_->add_scalar("Skill/" + mode + "_Elo", global_step_, size.elo);
+        logger_->add_scalar("Skill/" + mode + "_Elo_Std_Error", global_step_, size.elo_std_error);
+        logger_->add_scalar("Skill/" + mode + "_Score", global_step_, (size.wins + size.draws * 0.5f) / games);
+        logger_->add_scalar("Skill/" + mode + "_Draw_Rate", global_step_, size.draws / games);
+        logger_->add_scalar("Skill/" + mode + "_Mean_Game_Seconds", global_step_, size.mean_game_seconds);
+        std::cout << " | Eval " << mode << ":     " << std::fixed << std::setprecision(1) << size.elo << " +- "
+                  << size.elo_std_error << " Elo (W " << size.wins << " L " << size.losses << " D " << size.draws
+                  << ")" << std::defaultfloat << "\n";
+    }
+    logger_->add_scalar("Skill/Active_Anchors", global_step_, static_cast<float>(result.anchors_played.size()));
+    std::cout << " | Eval Played: ";
+    for (size_t i = 0; i < result.anchors_played.size(); i++) {
+        std::cout << (i == 0 ? "" : ", ") << result.anchors_played[i];
+    }
+    std::cout << "\n";
+    logger_->add_scalar("Performance/Eval_Time", global_step_, static_cast<float>(result.seconds));
+    std::cout << " | Eval Time:   " << std::fixed << std::setprecision(2) << result.seconds << "s"
+              << (result.promoted ? ", the learner is now an anchor" : "") << std::defaultfloat << "\n";
+}
+
 void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
     if (config_.benchmark) {
         run_benchmark(stop_flag);
@@ -1066,6 +1136,10 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
 
     if (opponent_pool_) {
         opponent_pool_->open(fs::path(checkpoint_dir) / (config_.bot_name + POOL_DIR_SUFFIX), global_step_);
+    }
+
+    if (gauntlet_) {
+        gauntlet_->open(fs::path(checkpoint_dir) / (config_.bot_name + EVAL_DIR_SUFFIX), global_step_);
     }
 
     if (config_.render) {

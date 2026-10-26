@@ -70,6 +70,7 @@ if(BUILD_RUST_BRIDGE)
         src/reward/event_goal.cpp
         src/reward/touch_ball.cpp
         src/reward/velocity_to_ball.cpp
+        src/reward/velocity_ball_to_goal.cpp
         src/rl/rating.cpp
         src/rl/eval_ledger.cpp
         src/rl/rollout_buffer.cpp
@@ -79,6 +80,7 @@ if(BUILD_RUST_BRIDGE)
         src/rl/ppo_runner.cpp
         src/rl/ppo_benchmark.cpp
         src/rl/opponent_pool.cpp
+        src/rl/gauntlet.cpp
         src/state/default_kickoff.cpp
         src/state/random_state.cpp
         src/state/eval_kickoff.cpp

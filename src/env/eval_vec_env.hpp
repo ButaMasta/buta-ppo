@@ -52,6 +52,10 @@ struct EvalGame {
  *
  * Learner rows come first, in game order, so they are rows [0, learner agents). Each anchor slot's rows follow, slot
  * by slot, in game order within a slot. Rewards and metrics aren't computed.
+ *
+ * `reset` can play only the first games, e.g. the slots that hold an anchor when games are laid out slot by slot.
+ * Each game's rows are `game_learner_rows` and `game_anchor_rows`, so a caller can run inference on just the games
+ * still running.
  */
 class EvalVecEnv {
 public:
@@ -77,21 +81,26 @@ public:
     ~EvalVecEnv();
 
     /**
-     * @brief Puts every game back at its start state, with its env's random number generators reseeded.
+     * @brief Puts the first `num_games` games back at their start state, with their envs' random number generators
+     * reseeded. Only they are played until the next `reset`; the others aren't stepped and stay `Unfinished`.
      *
-     * Clears the outcomes and fills the batched obs and action masks.
+     * Clears the outcomes and fills those games' rows of the batched obs and action masks.
+     *
+     * @param num_games The games to play, in [1, game count]. All of them by default.
      */
-    void reset();
+    void reset(size_t num_games = SIZE_MAX);
 
     /**
-     * @brief Steps every unfinished game once. Finished games are skipped and keep their rows unchanged.
+     * @brief Steps every unfinished game being played once. Finished games are skipped and keep their rows unchanged.
      *
-     * @param batched_actions An action for every row of the batched buffers. Finished games' rows are ignored.
+     * @param batched_actions An action for every row of the games being played. Other rows are ignored.
      */
     void step(const int* batched_actions);
 
     [[nodiscard]] bool all_done() const { return games_left_ == 0; }
     [[nodiscard]] size_t games_left() const { return games_left_; }
+    // The games the last `reset` started, the first ones in game order.
+    [[nodiscard]] size_t played_games() const { return played_games_; }
 
     // Each game's outcome, in the order the games were given.
     [[nodiscard]] const std::vector<GameOutcome>& outcomes() const { return outcomes_; }
@@ -99,6 +108,13 @@ public:
     [[nodiscard]] const std::vector<int>& game_ticks() const { return game_ticks_; }
 
     [[nodiscard]] RowRange learner_rows() const { return {0, learner_agents_}; }
+    // A game's learner rows and its anchor rows, contiguous, one per car of the team. Both teams are the same size.
+    [[nodiscard]] RowRange game_learner_rows(size_t game) const {
+        return {learner_rows_before_[game], learner_rows_before_[game + 1] - learner_rows_before_[game]};
+    }
+    [[nodiscard]] RowRange game_anchor_rows(size_t game) const {
+        return {anchor_row_begin_[game], learner_rows_before_[game + 1] - learner_rows_before_[game]};
+    }
     [[nodiscard]] RowRange anchor_rows(size_t slot) const { return anchor_rows_.at(slot); }
 
     // Batched CPU buffers (pinned), one row per agent. Their addresses never change.
@@ -121,6 +137,10 @@ private:
     size_t total_agents_ = 0;
     size_t learner_agents_ = 0;
     std::vector<RowRange> anchor_rows_;
+    // The learner rows of the games before each game, and of all games at the end, since they're in game order.
+    std::vector<size_t> learner_rows_before_;
+    // Each game's first anchor row.
+    std::vector<size_t> anchor_row_begin_;
 
     // Batched row of each env's agents, in env order. Env i's agents start at `env_agent_offsets_[i]`.
     std::vector<uint32_t> agent_rows_;
@@ -133,6 +153,7 @@ private:
     std::vector<GameOutcome> outcomes_;
     std::vector<int> game_ticks_;
     size_t games_left_ = 0;
+    size_t played_games_ = 0;
 
     torch::Tensor batched_obs_;
     torch::Tensor batched_action_masks_;

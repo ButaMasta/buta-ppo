@@ -10,6 +10,7 @@
 #include "metric/metric_manager.hpp"
 #include "env/episode_limits.hpp"
 #include "external/external_bot.hpp"
+#include "gauntlet.hpp"
 
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -144,6 +145,7 @@ struct RunnerConfig {
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
     PFSPConfig pfsp_cfg;
+    EvalConfig eval_cfg;
 
     /**
      * @brief The total envs: `num_envs`, or the env count closest to `target_steps_per_agent` when it is 0.
@@ -255,6 +257,15 @@ private:
     int64_t next_snapshot_step_{0};
     torch::Tensor opp_obs_gpu_;
     torch::Tensor opp_masks_gpu_;
+
+    // Evaluation gauntlets. Null when evaluation is off, and in render and benchmark runs.
+    std::unique_ptr<Gauntlet> gauntlet_;
+    int64_t next_eval_step_{0};
+
+    /**
+     * @brief Runs a gauntlet on the current learner, then logs and prints its results.
+     */
+    void run_evaluation();
 
     /**
      * @brief One env group's slice of the rollout: its agent rows and its inference CUDA graph.
