@@ -97,10 +97,12 @@ struct RunnerConfig {
     // touching it), since a bot's speed swings between the two as it learns. Nothing is loaded, saved, or logged.
     bool benchmark = false;
 
-    // Instead of training, regenerates the Nexto ladder (`eval_cfg.nexto_ladder_path`) from a large calibration: 512
-    // kickoffs per team size and pairing of rungs, each rung against the two above it, which takes about 20 minutes.
-    // Only needed after changing Nexto's model, the ladder's rungs or the eval kickoff setter. Other kickoff jitter or
-    // game cap settings than the shipped ladder's are calibrated by themselves at startup.
+    // Instead of training, calibrates the Nexto ladder precisely (`eval_cfg.nexto_calibration_bank_size` and
+    // `nexto_calibration_rungs_above`; about 20 minutes with the defaults). With the default kickoff jitter and game cap
+    // it regenerates the shipped ladder, only needed after changing Nexto's model, the ladder's rungs or the eval
+    // kickoff setter. With other values, which get a quick, rougher ladder at startup by themselves, it writes a precise
+    // one to `<checkpoint dir>/nexto_ladder.txt`, where evaluation looks for it. A changed `eval_cfg.nexto_ladder_path`
+    // is written instead. A new ladder restarts the Elo curve, so calibrate before training with the new settings.
     bool calibrate_nexto_ladder = false;
 
     std::vector<MatchDistribution> match_distributions = {
@@ -539,9 +541,10 @@ private:
     void run_benchmark(const std::atomic<bool>& stop_flag);
 
     /**
-     * @brief Regenerates the shipped Nexto ladder (see `RunnerConfig::calibrate_nexto_ladder`).
+     * @brief Calibrates the Nexto ladder (see `RunnerConfig::calibrate_nexto_ladder`): the shipped file for the default
+     * settings, else `<checkpoint_dir>/nexto_ladder.txt`, unless `eval_cfg.nexto_ladder_path` was changed.
      */
-    void run_ladder_calibration();
+    void run_ladder_calibration(const std::string& checkpoint_dir);
 
     /**
      * @brief Timing of one benchmark sample.

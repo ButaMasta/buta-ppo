@@ -192,7 +192,7 @@ void Gauntlet::open(const fs::path& dir, int64_t max_steps) {
         calibration.ticks_per_step = static_cast<int>(model_config_.ticks_per_step);
         calibration.virtual_draws = config_.virtual_draws;
         const NextoLadderSettings settings{config_.nexto_model_path, config_.pos_jitter, config_.yaw_jitter, config_.game_cap_seconds};
-        ladder_.open(settings, config_.nexto_ladder_path, dir_.parent_path() / "nexto_ladder.txt", calibration, rungs_.front());
+        ladder_.open(settings, config_.nexto_ladder_path, dir_.parent_path() / NextoLadder::CALIBRATED_FILE, calibration, rungs_.front());
         std::cout << "Evaluation Reference: Nexto at 1500 Elo in";
         for (const size_t size : nexto_sizes_) std::cout << " " << size << "v" << size;
         std::cout << " (ladder from " << ladder_.source().string() << ")";
@@ -200,6 +200,25 @@ void Gauntlet::open(const fs::path& dir, int64_t max_steps) {
             if (size > NextoLadder::MAX_TEAM_SIZE) std::cout << "; " << size << "v" << size << " rated against the first anchor, at 0";
         }
         std::cout << "\n";
+
+        // A ladder calibrated at startup for other settings than the shipped one's played fewer games, and the
+        // ratings' error bars don't include its rungs' errors.
+        if (ladder_.source() != fs::path(config_.nexto_ladder_path)) {
+            constexpr double ELO_PER_RATING = 400.0 / std::numbers::ln10;
+            double lowest = INFINITY;
+            double highest = 0.0;
+            for (size_t rung = 1; rung < NextoLadder::betas().size(); rung++) {
+                for (const size_t size : nexto_sizes_) {
+                    lowest = std::min(lowest, ladder_.std_error(rung, size) * ELO_PER_RATING);
+                    highest = std::max(highest, ladder_.std_error(rung, size) * ELO_PER_RATING);
+                }
+            }
+            std::ostringstream range;
+            range.precision(0);
+            range << std::fixed << lowest << " to " << highest;
+            std::cout << "Nexto Ladder: this ladder's rung ratings are known to +-" << range.str() << " Elo, which the "
+                      << "ratings' error bars don't include, so a rating's distance to Nexto is that much less certain.\n";
+        }
     }
 
     // Moves a ledger saved with other settings aside, anchor files and all, and drops rows past max_steps.

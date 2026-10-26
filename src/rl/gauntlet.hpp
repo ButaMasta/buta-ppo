@@ -69,6 +69,11 @@ struct EvalConfig {
     // The ladder's ratings, calibrated for the default kickoff jitter and game cap. With other values the ladder is
     // calibrated once at startup (about 90 s) and saved as `<checkpoint dir>/nexto_ladder.txt`.
     std::string nexto_ladder_path = "src/external/nexto/nexto_ladder.txt";
+    // The ladder calibration `RunnerConfig::calibrate_nexto_ladder` runs: kickoffs per team size and pairing of rungs,
+    // and how many rungs above each rung it plays. They set its precision (the shipped ladder: +-11 to 34 Elo, about 20
+    // minutes), not which ladder evaluation uses, so changing them alone changes nothing until a calibration runs.
+    size_t nexto_calibration_bank_size = 512;
+    size_t nexto_calibration_rungs_above = 2;
 
     [[nodiscard]] bool enabled() const { return steps_per_eval > 0; }
 };

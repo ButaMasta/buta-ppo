@@ -1100,13 +1100,26 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
     }
 }
 
-void PPORunner::run_ladder_calibration() {
+void PPORunner::run_ladder_calibration(const std::string& checkpoint_dir) {
     const EvalConfig& eval = config_.eval_cfg;
+    if (eval.nexto_calibration_bank_size == 0 || eval.nexto_calibration_rungs_above == 0) {
+        throw std::invalid_argument("eval_cfg.nexto_calibration_bank_size and nexto_calibration_rungs_above must be positive.");
+    }
+
+    // The shipped ladder is for the default settings. A ladder for others goes where evaluation looks for one, so the
+    // shipped file isn't overwritten, unless `nexto_ladder_path` was set to a file of the user's own.
+    const EvalConfig defaults;
+    const bool default_settings = eval.nexto_model_path == defaults.nexto_model_path && eval.pos_jitter == defaults.pos_jitter
+                                  && eval.yaw_jitter == defaults.yaw_jitter && eval.game_cap_seconds == defaults.game_cap_seconds;
+    const fs::path out = (default_settings || eval.nexto_ladder_path != defaults.nexto_ladder_path)
+                             ? fs::path(eval.nexto_ladder_path)
+                             : fs::path(checkpoint_dir) / NextoLadder::CALIBRATED_FILE;
+
     const NextoLadderSettings settings{eval.nexto_model_path, eval.pos_jitter, eval.yaw_jitter, eval.game_cap_seconds};
     NextoLadder::Calibration calibration;
-    calibration.bank_size = 512;
+    calibration.bank_size = eval.nexto_calibration_bank_size;
     calibration.bank_seed = eval.bank_seed;
-    calibration.rungs_above = 2;
+    calibration.rungs_above = eval.nexto_calibration_rungs_above;
     calibration.num_threads = config_.num_threads;
     calibration.worker_cpus = config_.worker_cpus;
     calibration.max_players_per_team = config_.max_players_per_team;
@@ -1116,10 +1129,13 @@ void PPORunner::run_ladder_calibration() {
     external::NextoOptions options;
     options.device = device_;
     const auto nexto = std::make_shared<external::NextoBot>(eval.nexto_model_path, options);
-    std::cout << "Calibrating the Nexto ladder: " << calibration.bank_size << " kickoffs per team size and pairing.\n";
+    std::cout << "Calibrating the Nexto ladder: " << calibration.bank_size << " kickoffs per team size and pairing, "
+              << calibration.rungs_above << " rung(s) above each, for " << out.string() << ".\n";
     const std::string text = NextoLadder::calibrate(settings, calibration, nexto);
-    util::write_text_file(eval.nexto_ladder_path, text);
-    std::cout << "Wrote the Nexto ladder to " << eval.nexto_ladder_path << "\n";
+    if (!out.parent_path().empty()) fs::create_directories(out.parent_path());
+    util::write_text_file(out, text);
+    std::cout << "Wrote the Nexto ladder to " << out.string() << ". Evaluation uses it from the next start; an "
+              << "evaluation ledger rated with another ladder is moved aside, and its Elo curve starts over.\n";
 }
 
 void PPORunner::run_evaluation() {
@@ -1184,7 +1200,7 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
         return;
     }
     if (config_.calibrate_nexto_ladder) {
-        run_ladder_calibration();
+        run_ladder_calibration(checkpoint_dir);
         return;
     }
 

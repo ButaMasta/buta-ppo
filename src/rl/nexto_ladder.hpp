@@ -38,6 +38,8 @@ class NextoLadder {
 public:
     static constexpr double REFERENCE_ELO = 1500.0;
     static constexpr size_t MAX_TEAM_SIZE = 3; // Nexto plays 1v1 to 3v3.
+    // A ladder calibrated for other settings than the shipped one's, in the checkpoint directory.
+    static constexpr const char* CALIBRATED_FILE = "nexto_ladder.txt";
 
     // The rungs' betas, strongest first. The first, beta 1, is the reference.
     [[nodiscard]] static const std::vector<float>& betas();
