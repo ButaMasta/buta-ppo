@@ -93,8 +93,8 @@ int main() {
 
     // Optional CPU pinning by logical CPU id (see `lscpu -e`). Empty leaves the threads unpinned. Whether pinning helps
     // depends on the CPU, so let benchmark mode compare it with unpinned setups and copy its lines here.
-    config.main_thread_cpus = {0};
-    config.worker_cpus = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+    // config.main_thread_cpus = {0};
+    // config.worker_cpus = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
     config.target_steps_per_update = 100'000;
     config.num_minibatches = 1;
@@ -122,15 +122,16 @@ int main() {
     config.pfsp_cfg.envs = 0.2f;
     config.pfsp_cfg.versions = 2;
 
-    // Evaluation: every steps_per_eval, the learner plays fixed past versions and gets a Bradley-Terry Elo per team size.
+    // Evaluation: every steps_per_eval, the learner plays fixed past versions and Nexto, and gets a Bradley-Terry Elo per
+    // team size on Nexto's scale (Nexto = 1500).
     config.eval_cfg.steps_per_eval = 50'000'000;
 
 
     try {
         PPORunner runner(config);
-        // Trains for at most this many updates (~50M steps with this config), then saves a checkpoint and exits.
+        // Trains for at most this many updates (~100M steps with this config), then saves a checkpoint and exits.
         // Rerunning resumes from that checkpoint.
-        runner.run(5'000,g_stop_training, "checkpoints");
+        runner.run(1'000, g_stop_training, "checkpoints");
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] " << e.what() << "\n";
         return 1;

@@ -1184,7 +1184,8 @@ void PPORunner::run_evaluation() {
         std::cout << " | Eval Nexto:  ";
         for (size_t i = 0; i < result.nexto_played.size(); i++) {
             const EvalNextoResult& n = result.nexto_played[i];
-            std::cout << (i == 0 ? "" : ", ") << n.team_size << "v" << n.team_size << " beta " << n.beta << " (W "
+            std::cout << (i == 0 ? "" : ", ") << n.team_size << "v" << n.team_size << " beta " << std::setprecision(6)
+                      << n.beta << " (W "
                       << n.wins << " L " << n.losses << " D " << n.draws << ")";
         }
         std::cout << "\n";

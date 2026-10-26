@@ -4,7 +4,7 @@ buta-ppo is a C++ reinforcement learning framework implementing Proximal Policy 
 
 My main goal with this framework was to make use seamless and speeds respectable. Comparing against my own experience with [GigaLearn](https://github.com/ZealanL/GigaLearnCPP-Leak) I can confidently say it's at least four times as fast. As for training stability and quality though I cannot say as this project is so new I have not extensively tested it though there are some bots which have surpassed nexto level utilizing this framework already.
 
-For reference, the demo configuration in `src/main.cpp` (1v1, 500 envs, a ~6M parameter network, PFSP enabled, CPU pinning) trains at about 530k steps per second with a fresh policy, and about 480k once the bot begins to properly interact with the ball, on an i5-14600K with an RTX 5070. Steps here are agent steps: each learner car's step counts once, so a 1v1 env step is two steps, or one when a PFSP opponent drives the other car. The console's `Total SPS` and TensorBoard's `Performance/Total_SPS` count the same way.
+For reference, the demo configuration in `src/main.cpp` (1v1, 2v2, and 3v3, 500 envs, a ~6M parameter network, PFSP enabled, unpinned) trains at about 580k steps per second with a fresh policy, and about 550k once the bot begins to properly interact with the ball, on an i5-14600K with an RTX 5070. Steps here are agent steps: each learner car's step counts once, so a 1v1 env step is two steps, or one when a PFSP opponent drives the other car. The console's `Total SPS` and TensorBoard's `Performance/Total_SPS` count the same way.
 
 ## Features
 
@@ -90,7 +90,7 @@ CMake fetches the remaining C++ dependencies and builds the Rust FFI bridge as p
 git clone -b stable https://github.com/ButaMasta/buta-ppo.git
 cd buta-ppo
 ```
-To use a specific release instead, clone its tag, e.g. `git clone -b v0.1.0 https://github.com/ButaMasta/buta-ppo.git`.
+To use a specific release instead, clone its tag, e.g. `git clone -b v0.3.0 https://github.com/ButaMasta/buta-ppo.git`.
 
 1. **Set the LibTorch Path:** Set the `LIBTORCH` environment variable to your LibTorch directory, the one containing `lib/` and `share/`. Add it to your shell's config so it persists:
 ```bash
@@ -134,7 +134,7 @@ Run the compiled binary from the project root, so the relative paths to `assets/
 
 On startup, the framework searches `checkpoints/` for the most recent checkpoint matching the configured `bot_name`. If one is found, training resumes from its step count. Otherwise, a fresh model is initialized. A checkpoint has to match the configured network: if the `ac_cfg` layers or layer norm changed, or the obs size did (through `max_players_per_team` or the obs builder), startup fails with an error showing the settings the checkpoint was trained with next to the configured ones. Change `bot_name` or move the old checkpoints out of `checkpoints/` to start fresh. A changed `ticks_per_step` only prints a `[WARN]`, and training continues with the new value.
 
-A run trains for at most the number of updates passed to `runner.run` in `main.cpp` (`1'000` by default, about 50M steps with the demo config), then saves a checkpoint and exits. Run the binary again to continue from there.
+A run trains for at most the number of updates passed to `runner.run` in `main.cpp` (`1'000` by default, about 100M steps with the demo config), then saves a checkpoint and exits. Run the binary again to continue from there.
 
 To stop training safely, press Ctrl+C, or send `SIGTERM` (what `kill`, `systemctl stop`, and `docker stop` send). The current update finishes, a checkpoint is saved, and the program exits.
 
@@ -358,7 +358,7 @@ Each evaluation, the learner plays one rung per team size, the one closest to it
 | Option | Default | Description |
 |---|---|---|
 | `steps_per_eval` | `50'000'000` | Lifetime steps between evaluations. `0` turns evaluation off. |
-| `team_sizes` | `{}` | Team sizes rated, each played as NvN. Empty rates every even layout in `match_distributions`. |
+| `team_sizes` | `{}` | Team sizes rated, each played as NvN. Empty rates every even layout in `match_distributions`; with none, startup fails until you set the sizes or turn evaluation off. |
 | `bank_size` | `64` | Start states per team size. Each is played from both sides against every anchor played. |
 | `bank_seed` | `12345` | Seed of the start-state bank. |
 | `pos_jitter` | `2.5` | How far each kickoff car is moved, in uu. |
@@ -579,7 +579,7 @@ On startup the bot prints the settings it read from the model. It stops with an 
 
 ## Versioning
 
-buta-ppo follows [Semantic Versioning](https://semver.org) (`MAJOR.MINOR.PATCH`). The current version is **0.1.0**.
+buta-ppo follows [Semantic Versioning](https://semver.org) (`MAJOR.MINOR.PATCH`). The current version is **0.3.0**.
 
 While the version is 0.x the framework is still settling, so:
 * A **minor** release (0.1 → 0.2) may contain breaking changes.
