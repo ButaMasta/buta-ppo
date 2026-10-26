@@ -32,7 +32,7 @@ void* bot_api_init(const char* checkpoint_path) {
         if (!config) {
             throw std::runtime_error(std::string(checkpoint_path) + " has no stored model config, since it was saved "
                                      "before models stored one. Re-save it first by running training with its "
-                                     "checkpoint as the latest and 0 updates (see Deploying to RLBot in the README)");
+                                     "checkpoint as the latest and 0 updates (see docs/deploying.md)");
         }
         ctx->config = *config;
 

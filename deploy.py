@@ -52,7 +52,7 @@ def deploy():
     model = find_model(args.checkpoint, args.bot)
     if model and not has_model_config(model):
         sys.exit(f"{model} was saved before models stored their config, so the bot can't load it. Re-save it first by "
-                 "running training with its checkpoint as the latest and 0 updates (see Deploying to RLBot in the README).")
+                 "running training with its checkpoint as the latest and 0 updates (see docs/deploying.md).")
 
     # LibTorch location, from the same environment variable the CMake build uses. Cargo's build script reads it too.
     libtorch = os.environ.get("LIBTORCH")

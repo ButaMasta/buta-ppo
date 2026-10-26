@@ -112,6 +112,8 @@
     - For custom external bots: `ExternalBot` gained `model()` and `make_batch_runner()`, and `ExternalController` gained `decision_delay()`, `request_decision()`, and `decision_interval()`, all with defaults that keep the old behavior. `NextoBot::with_options` makes Nexto with other options on the same network.
     - `Skill/<N>vN_Score`, `Draw_Rate` and `Mean_Game_Seconds` count only the games against snapshot anchors, as before Nexto, and are skipped on a run's first evaluation, which plays only Nexto. New tags `Skill/<N>vN_Nexto_Beta`, `Nexto_Score`, `Nexto_Gap` and `Nexto_Gap_Std_Error` show the rung played, the score against it, and whether the Nexto games and the snapshot games agree on the learner's rating (logged while the score against the rung is between 0.05 and 0.95).
     - `RocketSimEnv::reset` and `step` were split into parts shared with evaluation's play. Training and the visualizer give bit-identical results, checked against a trace from before the change, at the same speed.
+25. The README was split up: it keeps the overview, the build steps, updating, and versioning, and links to pages in `docs/` for everything else (training, configuration, performance, PFSP, evaluation, telemetry, the visualizer, deploying, and extending the framework). The text was moved unchanged.
+    - Non-breaking. Links to README sections, such as `README.md#evaluation`, now go to the README's top; the README's Documentation table lists where each section moved. The two error messages that pointed to the README's Deploying to RLBot section now point to `docs/deploying.md`.
 
 ### Releases
 #### 0.2.0

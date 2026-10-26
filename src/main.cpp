@@ -55,7 +55,7 @@ int main() {
     //                                {nexto, ffi::Team::Blue}};
 
     // Instead of training, measures thread counts, CPU pinning and env counts for this config, then prints the fastest
-    // as the num_threads, num_envs, main_thread_cpus and worker_cpus lines below. See "Benchmarking Your Hardware".
+    // as the num_threads, num_envs, main_thread_cpus and worker_cpus lines below. See docs/performance.md.
     config.benchmark = false;
 
     config.match_distributions = {
