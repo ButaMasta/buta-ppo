@@ -406,7 +406,14 @@ EvalResult Gauntlet::run(int64_t learner_steps, ActorCritic learner) {
         // Each kind of opponent fitted alone. The combined fit leans toward whichever has more games, so it would hide
         // part of a disagreement between them.
         const auto split = rated[size_idx].begin() + static_cast<std::ptrdiff_t>(snapshot_rated[size_idx]);
-        if (split != rated[size_idx].begin() && split != rated[size_idx].end()) {
+        // Only when a rung's games tell where the learner is. Past the ladder's ends (a near-perfect record against
+        // Nexto at beta 1, or against beta 0), the Nexto-only rating stops at the virtual draws' limit, about 960 Elo
+        // from the rung, while the snapshot rating keeps moving, so the gap would grow without meaning anything.
+        const bool informative = std::any_of(split, rated[size_idx].end(), [](const AnchorResult& r) {
+            const double score = (r.wins + 0.5 * r.draws) / (r.wins + r.losses + r.draws);
+            return score >= 0.05 && score <= 0.95;
+        });
+        if (split != rated[size_idx].begin() && informative) {
             const RatingFit snapshots = fit_learner_rating({rated[size_idx].begin(), split}, fit.rating, config_.virtual_draws);
             const RatingFit nexto = fit_learner_rating({split, rated[size_idx].end()}, fit.rating, config_.virtual_draws);
             size_result.nexto_gap_elo = (nexto.rating - snapshots.rating) * ELO_PER_RATING;

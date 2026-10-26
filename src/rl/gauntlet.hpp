@@ -90,7 +90,8 @@ struct EvalSizeResult {
     std::optional<float> nexto_beta{};
     double nexto_score = 0.0;
     // The learner's rating from the Nexto games alone minus its rating from the snapshot games alone, in Elo, and its
-    // standard error: whether the fixed reference agrees with the snapshot chain. Only when both were played.
+    // standard error: whether the fixed reference agrees with the snapshot chain. Only when both were played, and a
+    // rung's score was within 0.05 to 0.95: past the ladder's ends the Nexto-only rating can't follow the learner.
     std::optional<double> nexto_gap_elo{};
     double nexto_gap_std_error = 0.0;
 };
