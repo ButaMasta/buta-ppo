@@ -189,7 +189,7 @@ impl ButaPPOBot {
                     handbrake_val: rs_car_state.handbrake_val,
                     air_time_since_jump: rs_car_state.air_time_since_jump,
                     demo_respawn_timer: rs_car_state.demo_respawn_timer,
-                    is_on_ground: rs_car_state.is_on_ground,
+                    is_on_ground: rs_car_state.is_on_ground(),
                     has_jumped: rs_car_state.has_jumped,
                     has_double_jumped: rs_car_state.has_double_jumped,
                     is_jumping: rs_car_state.is_jumping,

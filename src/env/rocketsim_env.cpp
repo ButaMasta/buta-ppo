@@ -55,6 +55,13 @@ RocketSimEnv::RocketSimEnv(
     }
 
     arena_ = render ? ffi::create_arena_vis(0) : ffi::create_arena(0);
+    if (!arena_) {
+        throw std::runtime_error(render ? "Could not start the RocketSim viewer. Install it with `cargo binstall "
+                                          "rocketsim-viewer@0.3.3` or `cargo install --locked rocketsim_viewer --version "
+                                          "0.3.3` and put rocketsim-viewer on PATH, or set ROCKETSIM_VIEWER to its path "
+                                          "(see docs/visualizer.md)."
+                                        : "Could not create a RocketSim arena.");
+    }
     single_obs_size_ = obs_builder_.get_obs_size();
     action_space_size_ = action_parser_.get_action_space_size();
 
@@ -154,6 +161,9 @@ StepResult RocketSimEnv::step(const int* actions) {
 void RocketSimEnv::reset_episode_state() {
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
+    // The setter teleported the cars and the ball. Once all are placed, the old contacts are dropped and the state is read
+    // back with each car's grounding at its new pose, so the first obs sees it.
+    ffi::settle_contacts(arena_, arena_state_);
     ticks_since_last_touch_ = 0;
     match_ticks_ = 0;
     reward_manager_.reset(agents_, arena_state_);

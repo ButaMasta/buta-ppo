@@ -3,7 +3,7 @@ use std::{ffi::CStr};
 use std::os::raw::c_char;
 use rocketsim::{
     Arena, ArenaEvent, BallState, Car, 
-    CarBodyConfig, CarControls, CarInfo, 
+    CarBodyConfig, CarControls, CarCore, CarInfo,
     CarState, GameMode, PhysState, Team,
     BoostPadConfig, Mat3A, Vec3A
 };
@@ -269,8 +269,12 @@ pub extern "C" fn rs_arena_create_vis(game_mode_idx: i32) -> *mut Arena {
     };
 
     let mut arena: Arena = Arena::new(game_mode);
-    arena.set_vis_enabled(true);
-    
+    // Starts (or reuses) the separate rocketsim-viewer app. Without it, C++ gets a null arena and stops with an error.
+    if let Err(error) = arena.try_set_vis_enabled(true) {
+        eprintln!("[ERROR] Could not start the RocketSim viewer: {error}");
+        return std::ptr::null_mut();
+    }
+
     // Move the Arena to the heap and hand the pointer to C++.
     Box::into_raw(Box::new(arena))
 }
@@ -419,7 +423,7 @@ pub extern "C" fn rs_arena_get_arena_state(
         state.cars[i].handbrake_val = car_state.handbrake_val;
         state.cars[i].air_time_since_jump = car_state.air_time_since_jump;
         state.cars[i].demo_respawn_timer = car_state.demo_respawn_timer;
-        state.cars[i].is_on_ground = car_state.is_on_ground;
+        state.cars[i].is_on_ground = car_state.is_on_ground();
         state.cars[i].has_jumped = car_state.has_jumped;
         state.cars[i].has_double_jumped = car_state.has_double_jumped;
         state.cars[i].is_jumping = car_state.is_jumping;
@@ -539,7 +543,9 @@ pub extern "C" fn rs_arena_set_ball_state_ball_sim(arena_ptr: *mut BallSimArena,
     arena.clear_persistent_manifolds();
 }
 
-/// Set a car's state, phys and flags/amounts.
+/// Teleports a car: sets its phys, flags, and amounts, and clears its contacts. `handbrake_val` and `is_supersonic`
+/// are derived from the velocity, and `is_on_ground` and `has_flip_or_jump` from the contacts, so those fields of
+/// `car_state` are ignored. Call `rs_arena_settle_contacts` once every car and the ball are placed.
 #[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_set_car_state(
     arena_ptr: *mut Arena,
@@ -556,23 +562,50 @@ pub extern "C" fn rs_arena_set_car_state(
         return;
     }
 
-    let mut curr_car: CarState = *arena.get_car_state(idx);
-    curr_car.phys                = PhysState::from(car_state.phys);
-    curr_car.boost               = car_state.boost;
-    curr_car.handbrake_val       = car_state.handbrake_val;
-    curr_car.air_time_since_jump = car_state.air_time_since_jump;
-    curr_car.demo_respawn_timer  = car_state.demo_respawn_timer;
-    curr_car.is_on_ground        = car_state.is_on_ground;
-    curr_car.has_jumped          = car_state.has_jumped;
-    curr_car.has_double_jumped   = car_state.has_double_jumped;
-    curr_car.is_jumping          = car_state.is_jumping;
-    curr_car.has_flipped         = car_state.has_flipped;
-    curr_car.is_auto_flipping    = car_state.is_auto_flipping;
-    curr_car.is_flipping         = car_state.is_flipping;
-    curr_car.is_demoed           = car_state.is_demoed;
-    curr_car.is_supersonic       = car_state.is_supersonic;
+    let mut core: CarCore = arena.get_car_state(idx).core();
+    core.phys                = PhysState::from(car_state.phys);
+    core.boost               = car_state.boost;
+    core.air_time_since_jump = car_state.air_time_since_jump;
+    core.demo_respawn_timer  = car_state.demo_respawn_timer;
+    core.has_jumped          = car_state.has_jumped;
+    core.has_double_jumped   = car_state.has_double_jumped;
+    core.is_jumping          = car_state.is_jumping;
+    core.has_flipped         = car_state.has_flipped;
+    core.is_auto_flipping    = car_state.is_auto_flipping;
+    core.is_flipping         = car_state.is_flipping;
+    core.is_demoed           = car_state.is_demoed;
 
-    arena.set_car_state(idx, curr_car);
+    arena.set_car_state(idx, core);
+}
+
+/// Finishes a reset once every car and the ball are placed: drops the contacts cached at the old poses, and writes the
+/// arena state to `out_state` with each car's grounding found at its new pose, which a teleported car otherwise only
+/// gets on the first tick.
+///
+/// The physics doesn't keep those contacts: each car's state is restored afterwards, so the first tick finds them
+/// itself. Keeping them (`refresh_car_contacts`, or the refresh below without the restore) made about 1 evaluation game
+/// in 150 stop repeating exactly from run to run. That came from the observation builder's ball-prediction arena,
+/// which is reused across games and isn't restored with the arena: restoring it too made those games repeat (see
+/// tests/rocketsim_leak_repro).
+#[unsafe(no_mangle)]
+pub extern "C" fn rs_arena_settle_contacts(arena_ptr: *mut Arena, out_state: *mut CArenaState) {
+    if arena_ptr.is_null() || out_state.is_null() {
+        return;
+    }
+    let arena: &mut Arena = unsafe { &mut *arena_ptr };
+
+    arena.clear_persistent_manifolds();
+
+    let num_cars = arena.num_cars().min(8);
+    let mut saved = [CarState::DEFAULT; 8];
+    for idx in 0..num_cars {
+        saved[idx] = *arena.get_car_state(idx);
+        arena.refresh_car_contact_state(idx);
+    }
+    rs_arena_get_arena_state(arena, out_state);
+    for idx in 0..num_cars {
+        arena.set_car_state_full(idx, saved[idx]);
+    }
 }
 
 /// Reset arena to random kickoff state.
@@ -588,6 +621,29 @@ pub extern "C" fn rs_arena_reset_to_random_kickoff(
     let arena: &mut Arena = unsafe { &mut *arena_ptr };
     let rng_seed: Option<u64> = if use_seed { Some(seed) } else { None };
     arena.reset_to_random_kickoff(rng_seed);
+}
+
+/// A copy of the whole simulation on the heap, which plays exactly as the original would from here. A viewer isn't
+/// copied. Free it with `rs_arena_free`.
+#[unsafe(no_mangle)]
+pub extern "C" fn rs_arena_clone(arena_ptr: *const Arena) -> *mut Arena {
+    if arena_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let arena: &Arena = unsafe { &*arena_ptr };
+    Box::into_raw(Box::new(arena.clone()))
+}
+
+/// Makes `dst` an exact copy of `src`'s simulation, in place, so pointers to `dst` stay valid. A viewer attached to
+/// `dst` is dropped.
+#[unsafe(no_mangle)]
+pub extern "C" fn rs_arena_copy_from(dst_ptr: *mut Arena, src_ptr: *const Arena) {
+    if dst_ptr.is_null() || src_ptr.is_null() || std::ptr::eq(dst_ptr, src_ptr) {
+        return;
+    }
+    let dst: &mut Arena = unsafe { &mut *dst_ptr };
+    let src: &Arena = unsafe { &*src_ptr };
+    dst.clone_from(src);
 }
 
 /// Restarts the arena's random number generator, which picks where demolished cars respawn (and the kickoff, when

@@ -111,6 +111,9 @@ extern "C" {
     void rs_arena_set_car_state(rs_arena* arena_ptr, uint32_t car_idx, rs_car_state car_state);
     void rs_arena_reset_to_random_kickoff(rs_arena* arena_ptr, uint64_t seed, bool use_seed);
     void rs_arena_seed_rng(rs_arena* arena_ptr, uint64_t seed);
+    void rs_arena_settle_contacts(rs_arena* arena_ptr, rs_arena_state* out_state);
+    rs_arena* rs_arena_clone(const rs_arena* arena_ptr);
+    void rs_arena_copy_from(rs_arena* dst_ptr, const rs_arena* src_ptr);
 }
 
 namespace buta_ppo::ffi {
@@ -221,15 +224,39 @@ inline void set_ball_state_ball_sim(const BallSimArenaPtr& ball_sim_arena, const
     }
 }
 
+// Teleports a car and clears its contacts. `handbrake_val` and `is_supersonic` are derived from the velocity, and
+// `is_on_ground` and `has_flip_or_jump` from the contacts, which `settle_contacts` reads after the reset, so those
+// fields of `state` are ignored.
 inline void set_car_state(const ArenaPtr& arena, uint32_t car_idx, const CarState& state) {
     if (arena) {
         rs_arena_set_car_state(arena.get(), car_idx, state);
     }
 }
 
+// Finishes a reset once every car and the ball are placed: drops the contacts cached at the old poses and reads the
+// arena state into `out_state`, with each car's grounding at its new pose. The physics finds the contacts itself on the
+// first tick. `RocketSimEnv` calls it after every state setter.
+inline void settle_contacts(const ArenaPtr& arena, ArenaState& out_state) {
+    if (arena) {
+        rs_arena_settle_contacts(arena.get(), &out_state);
+    }
+}
+
 inline void reset_to_random_kickoff(const ArenaPtr& arena, uint64_t seed = 0, bool use_seed = false) {
     if (arena) {
         rs_arena_reset_to_random_kickoff(arena.get(), seed, use_seed);
+    }
+}
+
+// A copy of the whole simulation, which plays exactly as the original would from here. A viewer isn't copied.
+inline ArenaPtr clone_arena(const ArenaPtr& arena) {
+    return ArenaPtr(arena ? rs_arena_clone(arena.get()) : nullptr);
+}
+
+// Makes `dst` an exact copy of `src`'s simulation, in place. A viewer attached to `dst` is dropped.
+inline void copy_arena(const ArenaPtr& dst, const ArenaPtr& src) {
+    if (dst && src) {
+        rs_arena_copy_from(dst.get(), src.get());
     }
 }
 

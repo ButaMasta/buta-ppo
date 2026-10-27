@@ -76,6 +76,7 @@ struct AgentMeta {
 class RocketSimEnv {
 private:
     ffi::ArenaPtr arena_;
+    ffi::ArenaPtr pristine_arena_; // The arena before it played, taken by the first `reseed`. Empty until then.
     ffi::ArenaState arena_state_;
 
     std::vector<AgentMeta> agents_;
@@ -355,10 +356,18 @@ public:
     void set_heavy_workload(bool enabled);
 
     /**
-     * @brief Restarts the env's random number generators from `seed`, so the episodes after the next reset play out
+     * @brief Restarts the env as if it had just been built with `seed`, so the episodes after the next reset play out
      * the same every time given the same actions. Evaluation uses it to replay the same games on the same envs.
+     *
+     * The arena itself is restored to a copy taken at the first call, so call it before the env plays. RocketSim 0.3's
+     * reset leaves some state from earlier games in the arena, which changes later play.
      */
     void reseed(uint32_t seed) {
+        if (!pristine_arena_) {
+            pristine_arena_ = ffi::clone_arena(arena_);
+        } else {
+            ffi::copy_arena(arena_, pristine_arena_);
+        }
         rng_.seed(seed);
         obs_builder_.reseed(seed);
         ffi::seed_arena_rng(arena_, seed);

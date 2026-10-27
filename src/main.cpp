@@ -88,7 +88,7 @@ int main() {
     };
 
     config.num_envs = 500;     // 0 picks the env count from target_steps_per_agent below.
-    config.num_threads = 18;   // 0 = one per CPU in worker_cpus, or every CPU but one when unpinned.
+    config.num_threads = 0;    // 0 = one per CPU in worker_cpus, or every CPU but one when unpinned.
     config.ticks_per_step = 8;
 
     // Optional CPU pinning by logical CPU id (see `lscpu -e`). Empty leaves the threads unpinned. Whether pinning helps
@@ -97,7 +97,7 @@ int main() {
     // config.worker_cpus = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
 
     config.target_steps_per_update = 100'000;
-    config.num_minibatches = 1;
+    config.num_minibatches = 2;
     config.target_steps_per_agent = 100;   // Steps each agent collects per update. Sets the env count when num_envs is 0.
 
     // Lifetime steps between checkpoints saved during training. 0 only saves when training ends or is interrupted.

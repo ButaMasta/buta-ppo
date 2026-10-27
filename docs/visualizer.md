@@ -2,6 +2,20 @@
 
 Setting `config.render = true;` in `main.cpp` skips training and runs a single environment in real time in the RocketSim visualizer, using the latest checkpoint for `bot_name`. By default the policy plays its most likely action, as the RLBot bot does, so the visualizer shows how the bot plays in a match. `config.render_best_action = false;` samples actions from the policy like training does instead.
 
+The visualizer is a separate app, `rocketsim-viewer`, which the framework starts (or connects to, if it's already open) when render mode begins. Install the version matching the framework's RocketSim once, either as a prebuilt binary with [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), which takes seconds:
+
+```bash
+cargo binstall rocketsim_viewer@0.3.3
+```
+
+or by building it from source, which takes a few minutes:
+
+```bash
+cargo install --locked rocketsim_viewer --version 0.3.3
+```
+
+It needs to be on your `PATH` (Cargo installs to `~/.cargo/bin`), or set the `ROCKETSIM_VIEWER` environment variable to its path. Without it, render mode stops at startup with an error saying so. The viewer has its own camera controls; its car controls aren't used, since the policy and any external bots drive every car.
+
 ## Playing Against Nexto
 
 The visualizer can put Nexto, the RLGym community bot, on a team in place of your policy:

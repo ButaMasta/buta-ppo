@@ -13,9 +13,11 @@ default-members = ["."]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-rocketsim = "0.2.11"
-rocketsim_vis = "0.2.11"
-ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git", rev = "88279c9f3b6f431dc2f342947e1f5b32db8f0254" }
+# Exact versions: the shipped Nexto ladder (src/external/nexto/nexto_ladder.txt) is calibrated for this physics, so a
+# RocketSim update means recalibrating it. ball_sim's rev is the one synced with this RocketSim.
+rocketsim = "=0.3.3"
+rocketsim_vis = "=0.3.3"
+ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git", rev = "90df2bc795545d1c458ce0b67398ebdb56a2ab3b" }
 libc = "0.2"
 
 [profile.release]
