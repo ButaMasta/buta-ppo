@@ -52,4 +52,26 @@ inline bool pin_thread(pthread_t thread, const std::vector<int>& cpus) {
     return pthread_setaffinity_np(thread, sizeof(set), &set) == 0;
 }
 
+/**
+ * @brief Gives the calling thread back the CPUs it had at construction when it goes out of scope.
+ */
+class AffinityRestorer {
+public:
+    AffinityRestorer() {
+        CPU_ZERO(&cpus_);
+        saved_ = pthread_getaffinity_np(pthread_self(), sizeof(cpus_), &cpus_) == 0;
+    }
+    ~AffinityRestorer() {
+        if (saved_) {
+            pthread_setaffinity_np(pthread_self(), sizeof(cpus_), &cpus_);
+        }
+    }
+    AffinityRestorer(const AffinityRestorer&) = delete;
+    AffinityRestorer& operator=(const AffinityRestorer&) = delete;
+
+private:
+    cpu_set_t cpus_;
+    bool saved_ = false;
+};
+
 } // namespace buta_ppo::util

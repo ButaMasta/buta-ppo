@@ -58,7 +58,40 @@ int limit_ticks(float seconds, const std::string& name) {
     }
     return static_cast<int>(ticks);
 }
+
+/**
+ * @brief The newest `<bot name>_<steps>/` directory in `dir` that contains a model, and its steps.
+ */
+std::optional<std::pair<fs::path, int64_t>> find_latest_checkpoint(const std::string& dir, const std::string& bot_name) {
+    if (!fs::exists(dir)) return std::nullopt;
+
+    std::optional<std::pair<fs::path, int64_t>> latest;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (!entry.is_directory() || !fs::exists(entry.path() / MODEL_FILE)) continue;
+
+        const std::string name = entry.path().filename().string();
+        const size_t delim_pos = name.find_last_of('_');
+        if (delim_pos == std::string::npos || name.substr(0, delim_pos) != bot_name) continue;
+
+        // The whole suffix must be the step count, so in-progress `<bot name>_<steps>.tmp` saves are skipped.
+        int64_t steps = 0;
+        const char* first = name.data() + delim_pos + 1;
+        const char* last = name.data() + name.size();
+        const auto [ptr, ec] = std::from_chars(first, last, steps);
+        if (ec != std::errc{} || ptr != last || first == last) continue;
+
+        if (!latest || steps > latest->second) {
+            latest = {entry.path(), steps};
+        }
+    }
+    return latest;
+}
 } // namespace
+
+int64_t latest_checkpoint_steps(const std::string& dir, const std::string& bot_name) {
+    const auto latest = find_latest_checkpoint(dir, bot_name);
+    return latest ? latest->second : 0;
+}
 
 size_t learner_agents_for(size_t envs, const RunnerConfig& config) {
     const std::vector<size_t> counts = compute_env_counts(envs, config.match_distributions);
@@ -182,34 +215,12 @@ int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
         return 0;
     }
 
-    fs::path latest_dir;
-    int64_t max_steps = -1;
-
-    // Scan for checkpoint directories named <bot name>_<steps> that contain a model.
-    for (const auto& entry : fs::directory_iterator(dir)) {
-        if (!entry.is_directory() || !fs::exists(entry.path() / MODEL_FILE)) continue;
-
-        const std::string name = entry.path().filename().string();
-        const size_t delim_pos = name.find_last_of('_');
-        if (delim_pos == std::string::npos || name.substr(0, delim_pos) != config_.bot_name) continue;
-
-        // The whole suffix must be the step count, so in-progress `<bot name>_<steps>.tmp` saves are skipped.
-        int64_t steps = 0;
-        const char* first = name.data() + delim_pos + 1;
-        const char* last = name.data() + name.size();
-        const auto [ptr, ec] = std::from_chars(first, last, steps);
-        if (ec != std::errc{} || ptr != last || first == last) continue;
-
-        if (steps > max_steps) {
-            max_steps = steps;
-            latest_dir = entry.path();
-        }
-    }
-
-    if (max_steps < 0) {
+    const auto latest = find_latest_checkpoint(dir, config_.bot_name);
+    if (!latest) {
         std::cout << "No valid checkpoints found for bot '" << config_.bot_name << "'. Starting fresh training.\n";
         return 0;
     }
+    const auto& [latest_dir, max_steps] = *latest;
 
     const std::string model_path = (latest_dir / MODEL_FILE).string();
     const ModelConfig current = model_config();
@@ -886,7 +897,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options);
 
     // The main thread runs inference and the step bookkeeping. Pinned only here, after the env workers and CUDA have
-    // started their threads, since threads it starts from now on inherit its CPUs.
+    // started their threads, since threads it starts from now on inherit its CPUs. Unpinned again when training ends,
+    // so a runner built afterwards (the next stage of a training plan) starts from the process's CPUs.
+    const util::AffinityRestorer restore_main_thread_cpus;
     if (!config_.main_thread_cpus.empty() && !util::pin_thread(pthread_self(), config_.main_thread_cpus)) {
         warn("Could not pin the main thread to main_thread_cpus. It runs unpinned.", "Main thread unpinned");
     }
@@ -926,6 +939,10 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         if (stop_flag) {
             std::cout << "\nTraining interrupted by user. Stopping...\n";
+            break;
+        }
+        if (config_.train_until_steps > 0 && global_step_ >= config_.train_until_steps) {
+            std::cout << "\nReached train_until_steps (" << config_.train_until_steps << "). Stopping...\n";
             break;
         }
 
@@ -1217,6 +1234,10 @@ void PPORunner::run(int num_updates, const std::atomic<bool>& stop_flag, const s
 
     if (config_.render) {
         run_render(stop_flag);
+    } else if (config_.train_until_steps > 0 && global_step_ >= config_.train_until_steps) {
+        // Nothing to train, and nothing to save: the checkpoint just loaded is already the newest.
+        std::cout << "The latest checkpoint is already at train_until_steps (" << config_.train_until_steps
+                  << "). Nothing to train.\n";
     } else {
         run_training(num_updates, stop_flag, checkpoint_dir);
     }

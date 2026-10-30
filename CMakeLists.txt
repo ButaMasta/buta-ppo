@@ -79,6 +79,7 @@ if(BUILD_RUST_BRIDGE)
         src/rl/ppo_trainer.cpp
         src/rl/ppo_runner.cpp
         src/rl/ppo_benchmark.cpp
+        src/rl/training_plan.cpp
         src/rl/opponent_pool.cpp
         src/rl/gauntlet.cpp
         src/rl/nexto_ladder.cpp

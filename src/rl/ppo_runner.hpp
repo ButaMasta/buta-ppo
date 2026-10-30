@@ -150,6 +150,11 @@ struct RunnerConfig {
     // 0 logs every update, as does any value below the actual steps per update.
     int64_t steps_per_log = 0;
 
+    // Lifetime steps to train up to. Training stops after the update that reaches them and saves a checkpoint, and a
+    // start at or past them trains nothing. 0 trains until the update count given to `run` is used up or training is
+    // stopped. Training plans (`training_plan.hpp`) set it to each stage's end.
+    int64_t train_until_steps = 0;
+
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
     PFSPConfig pfsp_cfg;
@@ -220,6 +225,15 @@ struct RunnerConfig {
  * @param config The config with the match distributions and PFSP settings.
  */
 [[nodiscard]] size_t learner_agents_for(size_t envs, const RunnerConfig& config);
+
+/**
+ * @brief The lifetime steps of a bot's latest checkpoint, the one training resumes from.
+ *
+ * @param dir The checkpoint directory.
+ * @param bot_name The bot whose `<bot name>_<steps>/` checkpoints to look for.
+ * @return The steps, or 0 without a checkpoint (training starts fresh).
+ */
+[[nodiscard]] int64_t latest_checkpoint_steps(const std::string& dir, const std::string& bot_name);
 
 /**
  * @brief The core class that encapsulates the logic for actually running the entire training process.
