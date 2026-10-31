@@ -55,6 +55,11 @@ struct AutocastOffGuard {
  * Autocast runs LayerNorm in fp32, which casts every activation to fp32 and back. 
  * The CUDA kernel accumulates in fp32 even for bf16 input (`acc_type<BFloat16> = float`, see `aten/src/ATen/native/cuda/layer_norm_kernel.cu` in v2.14),
  * so this runs it on bf16 directly.
+ *
+ * Under autocast, a Linear layer with an odd input width also gets its bf16 input and weight zero-padded to a multiple
+ * of 8. A bf16 row of odd width is only 2-byte aligned, which sends cuBLAS to slower kernels: a 339-wide first layer's
+ * forward and backward over 50k rows took 7.4 ms, padded 5.6 ms (RTX 5070, LibTorch 2.14). The zeros add nothing to
+ * the result, the weight keeps its shape, and its gradient comes back through the padding.
  * 
  * @param seq The block to run.
  * @param x The tensor to pass through the block.
@@ -64,7 +69,12 @@ torch::Tensor run_block(torch::nn::Sequential& seq, torch::Tensor x) {
     const bool autocast_enabled = at::autocast::is_autocast_enabled(torch::kCUDA);
     for (auto& layer : *seq) {
         auto ln = std::dynamic_pointer_cast<torch::nn::LayerNormImpl>(layer.ptr());
-        if (ln && autocast_enabled && x.scalar_type() == torch::kBFloat16) {
+        auto linear = std::dynamic_pointer_cast<torch::nn::LinearImpl>(layer.ptr());
+        if (linear && autocast_enabled && x.is_cuda() && linear->weight.size(1) % 2 != 0) {
+            const int64_t pad = 8 - linear->weight.size(1) % 8;
+            x = torch::nn::functional::linear(torch::constant_pad_nd(x.to(torch::kBFloat16), {0, pad}),
+                                              torch::constant_pad_nd(linear->weight, {0, pad}), linear->bias);
+        } else if (ln && autocast_enabled && x.scalar_type() == torch::kBFloat16) {
             AutocastOffGuard temp_disable_autocast_guard;
             x = torch::layer_norm(x, 
                                   ln->options.normalized_shape(), 
