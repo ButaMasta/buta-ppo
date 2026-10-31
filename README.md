@@ -125,7 +125,7 @@ Resuming, stopping, training plans, and checkpoints are covered in [Training](do
 
 ## Versioning
 
-buta-ppo follows [Semantic Versioning](https://semver.org) (`MAJOR.MINOR.PATCH`). The current version is **0.3.0**.
+buta-ppo follows [Semantic Versioning](https://semver.org) (`MAJOR.MINOR.PATCH`). The current version is **0.3.1**.
 
 While the version is 0.x the framework is still settling, so:
 * A **minor** release (0.1 → 0.2) may contain breaking changes.
