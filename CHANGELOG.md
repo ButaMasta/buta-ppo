@@ -1,4 +1,7 @@
 ### Current Unreleased Changes
+
+### Releases
+#### 0.3.1
 1. Added training plans, which train through a list of stages in one process, each changing the config and training up to a lifetime step count, so a run can follow a curriculum unattended (add rewards in phases, lower the learning rate, shift the match or state setter weights). See [Training Plans](docs/training.md#training-plans).
     - `run_training_plan(config, stages, stop_flag, checkpoint_dir)` in `src/rl/training_plan.hpp` runs in place of `runner.run`. Each `TrainingStage {name, until_steps, apply}` lists only what it changes from the stage before. Each stage builds a fresh runner that resumes from the latest checkpoint, the same as stopping and restarting with the changed config, so the model, optimizer state, PFSP pool and evaluation carry over.
     - On startup the plan picks the stage the latest checkpoint is in, so a stopped or crashed plan carries on when run again. Every stage's config is built first, and a stage that changes `bot_name`, `ac_cfg`, `max_players_per_team` or the mode fails at startup.
@@ -28,7 +31,6 @@
     - Before, it had no default. Left unset, it was an uninitialized bool: the network built and trained, but `save_model` wrote the raw byte into `model.pt`, so every load failed with "Unknown opcode for unpickling", and resuming, deploying and the next training plan stage all failed.
     - Non-breaking. Configs that set it train exactly as before. Configs that leave it unset now get layer norm.
 
-### Releases
 #### 0.3.0
 1. LayerNorm during autocast now correctly interprets features in bf16 since internally on the version of libtorch compiled with the project this is computed in fp32 for the accumulations so there is no noticeable precision loss, just faster compute times skipping the cast prior.
     - Non-breaking.
