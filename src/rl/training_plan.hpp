@@ -48,6 +48,9 @@ struct TrainingStage {
  * the stage the latest checkpoint is in, so a stopped or crashed plan carries on where it left off when run again.
  * Every stage's config is built and checked first, so a broken stage fails at startup rather than hours in.
  *
+ * `max_steps` limits one call, like `PPORunner::run`'s update count: the stage it ends in trains only to it, and the
+ * next call resumes that stage.
+ *
  * Render, benchmark and ladder calibration modes run once, with the config of the stage the latest checkpoint is in
  * (the last stage once the plan is done).
  *
@@ -56,11 +59,15 @@ struct TrainingStage {
  * @param stop_flag Stops training after the current update and saves a checkpoint, ending the plan. So does a stage's
  *                  `stop_condition`.
  * @param checkpoint_dir The directory checkpoints are loaded from and saved to.
- * @throws std::invalid_argument If the plan is empty, its ends don't increase, a stage changes a setting that can't
+ * @param max_steps The most steps to train in this call, counted from the latest checkpoint at startup, like the update
+ *                  count of `PPORunner::run`: training stops after the update that reaches them and saves a checkpoint,
+ *                  and the next call carries on from there, in the middle of a stage if need be. 0 trains to the
+ *                  plan's end.
+ * @throws std::invalid_argument If `max_steps` is negative, the plan is empty, its ends don't increase, a stage changes a setting that can't
  *         change during a run (`bot_name`, `ac_cfg`, `max_players_per_team`, or the mode), or a stage's
  *         `ppo_cfg.lr_schedule` is invalid.
  */
 void run_training_plan(const RunnerConfig& base, const std::vector<TrainingStage>& stages,
-                       const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
+                       const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir, int64_t max_steps = 0);
 
 } // namespace buta_ppo::rl

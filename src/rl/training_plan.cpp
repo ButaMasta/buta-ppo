@@ -83,9 +83,14 @@ size_t current_stage(const std::vector<TrainingStage>& stages, int64_t steps) {
 }
 
 void run_training_plan(const RunnerConfig& base, const std::vector<TrainingStage>& stages,
-                       const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
+                       const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir, int64_t max_steps) {
+    if (max_steps < 0) {
+        throw std::invalid_argument("A training plan's max_steps must be 0 (train to the plan's end) or more.");
+    }
     validate_plan(base, stages);
     int64_t steps = latest_checkpoint_steps(checkpoint_dir, base.bot_name);
+    // This call's own end, or 0 for none.
+    const int64_t until = max_steps > 0 ? steps + max_steps : 0;
 
     if (base.render || base.benchmark || base.calibrate_nexto_ladder) {
         const size_t stage = std::min(current_stage(stages, steps), stages.size() - 1);
@@ -102,13 +107,23 @@ void run_training_plan(const RunnerConfig& base, const std::vector<TrainingStage
                       << "ended at " << stages.back().until_steps << ".\n";
             return;
         }
+        if (until > 0 && steps >= until) {
+            std::cout << "Training plan paused at " << steps << " steps, after the " << max_steps << " steps this run "
+                      << "was given, in " << describe_stage(stages, stage) << ". Run it again to carry on.\n";
+            return;
+        }
+        RunnerConfig config = stage_config(base, stages, stage);
+        if (until > 0) {
+            config.train_until_steps = std::min(config.train_until_steps, until);
+        }
         std::cout << "\nTraining plan: " << describe_stage(stages, stage) << ", from " << steps << " to "
-                  << stages[stage].until_steps << " steps.\n";
+                  << config.train_until_steps << " steps"
+                  << (config.train_until_steps < stages[stage].until_steps ? " (this run's limit)" : "") << ".\n";
 
         // Destroyed before the next stage builds its runner, so the two never hold the GPU and env threads at once.
         std::optional<std::string> stop_reason;
         {
-            PPORunner runner(stage_config(base, stages, stage));
+            PPORunner runner(config);
             runner.run(std::numeric_limits<int>::max(), stop_flag, checkpoint_dir);
             stop_reason = runner.stop_reason();
         }
