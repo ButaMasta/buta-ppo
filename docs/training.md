@@ -34,7 +34,7 @@ On startup the plan resumes in the stage the latest checkpoint is in, so after C
 
 ## Stop Conditions
 
-An unattended run that goes wrong keeps training until someone looks. `config.stop_condition` checks the telemetry as it's logged and stops the run when it returns a reason, the same way as Ctrl+C: the update finishes, a checkpoint is saved, and a training plan ends there instead of moving to its next stage. The reason is printed, repeated in the warning summary at the end, and appended with the time and step to `logs/<bot_name>.stops.txt`.
+An unattended run that goes wrong keeps training until someone looks. `config.stop_condition` checks the telemetry as it's logged and stops the run when it returns a reason, the same way as Ctrl+C: the update finishes, a checkpoint is saved, and a training plan ends there instead of moving to its next stage. The reason is printed, repeated in the warning summary at the end, and appended with the time and step to `<bot_name>.stops.txt` next to the event file (`logs/`, or `logs/<run_name>/`).
 
 ```cpp
 config.stop_condition = [](const TelemetryPoint& point, const RunnerConfig& config) -> std::optional<std::string> {
@@ -69,4 +69,4 @@ checkpoints/
 
 Checkpoints are written to a temporary directory and renamed when complete, so an interrupted save never produces a broken checkpoint. If the optimizer state can't be loaded (for example after switching optimizer presets), training continues with a fresh optimizer.
 
-To roll back, delete the checkpoint directories newer than the one you want. On startup, pool snapshots, evaluation anchors, and evaluation results newer than the resumed checkpoint are deleted automatically. If the network shape changed, the old pool is moved aside to `<bot_name>_pool.stale-<time>` and a fresh pool is started. The evaluation directory is moved aside the same way, to `<bot_name>_eval.stale-<time>`, when a setting its ratings depend on changed (see [Evaluation](evaluation.md)), and the next evaluation places the learner on Nexto's ladder again (or, without Nexto, makes it the new reference). TensorBoard logs are appended, not rolled back, so move the old event file out of `logs/` if you want clean curves.
+To roll back, delete the checkpoint directories newer than the one you want. On startup, pool snapshots, evaluation anchors, and evaluation results newer than the resumed checkpoint are deleted automatically. If the network shape changed, the old pool is moved aside to `<bot_name>_pool.stale-<time>` and a fresh pool is started. The evaluation directory is moved aside the same way, to `<bot_name>_eval.stale-<time>`, when a setting its ratings depend on changed (see [Evaluation](evaluation.md)), and the next evaluation places the learner on Nexto's ladder again (or, without Nexto, makes it the new reference). TensorBoard logs are appended, not rolled back, so move the old event file out of `logs/` (or start a new `run_name`) if you want clean curves.

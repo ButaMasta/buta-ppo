@@ -165,6 +165,12 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
         validate_cpu_pinning();
     }
 
+    // A run name is a directory under logs/, which TensorBoard shows as the run.
+    const fs::path run_name(config_.run_name);
+    if (run_name.is_absolute() || std::any_of(run_name.begin(), run_name.end(), [](const fs::path& p) { return p == ".."; })) {
+        throw std::invalid_argument("run_name must be a relative path inside logs/, without '..': \"" + config_.run_name + "\".");
+    }
+
     // Converted before the benchmark returns below, so a bad value fails once here instead of in every candidate.
     episode_limits_ = {limit_ticks(config_.no_touch_timeout_seconds, "no_touch_timeout_seconds"),
                        limit_ticks(config_.episode_time_limit_seconds, "episode_time_limit_seconds")};
@@ -210,6 +216,10 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
 }
 
 PPORunner::~PPORunner() = default;
+
+std::string PPORunner::log_dir() const {
+    return config_.run_name.empty() ? "logs" : (fs::path("logs") / config_.run_name).string();
+}
 
 int64_t PPORunner::load_latest_checkpoint(const std::string& dir) {
     if (!fs::exists(dir)) {
@@ -821,7 +831,7 @@ void PPORunner::check_stop_condition() {
     warn(message, "Stopping: " + *reason);
 
     // Kept apart from the console, which an unattended run may not keep.
-    std::ofstream out("logs/" + config_.bot_name + ".stops.txt", std::ios::app);
+    std::ofstream out(log_dir() + "/" + config_.bot_name + ".stops.txt", std::ios::app);
     const std::time_t now = std::time(nullptr);
     out << std::put_time(std::localtime(&now), "%Y-%m-%d %H:%M:%S") << "  " << telemetry_.steps << " steps  " << *reason
         << "\n";
@@ -917,8 +927,8 @@ void PPORunner::prepare_rollouts() {
 
 void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir) {
 
-    fs::create_directories("logs");
-    const std::string log_file = "logs/" + config_.bot_name + ".tfevents";
+    fs::create_directories(log_dir());
+    const std::string log_file = log_dir() + "/" + config_.bot_name + ".tfevents";
     TensorBoardLoggerOptions logger_options{};
     logger_options.resume_ = true;
     logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options);

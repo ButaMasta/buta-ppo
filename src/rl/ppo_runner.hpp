@@ -180,6 +180,12 @@ struct RunnerConfig {
     // 0 logs every update, as does any value below the actual steps per update.
     int64_t steps_per_log = 0;
 
+    // TensorBoard's name for this run. TensorBoard names a run by its event file's directory under the log dir, so
+    // the event file goes to `logs/<run_name>/<bot name>.tfevents`, and `tensorboard --logdir logs` shows every run
+    // side by side. May have subdirectories ("porkchop/run2"). Empty writes `logs/<bot name>.tfevents`, a run named
+    // ".". Changing it starts a new event file; checkpoints don't depend on it.
+    std::string run_name;
+
     // Lifetime steps to train up to. Training stops after the update that reaches them and saves a checkpoint, and a
     // start at or past them trains nothing. 0 trains until the update count given to `run` is used up or training is
     // stopped. Training plans (`training_plan.hpp`) set it to each stage's end.
@@ -188,7 +194,7 @@ struct RunnerConfig {
     // Checks telemetry during training, to stop a run that went wrong while nobody was watching. Called after each
     // TensorBoard log (`steps_per_log`) and each evaluation. Returning a reason stops training as Ctrl+C does: the
     // update finishes and a checkpoint is saved, and a training plan ends there too. The reason is printed and appended
-    // to `logs/<bot name>.stops.txt`. Empty never stops.
+    // to `<bot name>.stops.txt` next to the event file (see `run_name`). Empty never stops.
     StopCondition stop_condition;
 
     ActorCriticConfig ac_cfg;
@@ -416,7 +422,7 @@ private:
     void log_scalar(const std::string& tag, int64_t step, T value);
     /**
      * @brief Runs the stop condition on `telemetry_`, and on a reason to stop, keeps it, prints it and appends it to
-     * `logs/<bot name>.stops.txt`. Training stops before its next update.
+     * `<bot name>.stops.txt` in `log_dir()`. Training stops before its next update.
      */
     void check_stop_condition();
 
@@ -577,6 +583,10 @@ private:
      */
     int64_t load_latest_checkpoint(const std::string& dir);
 
+    /**
+     * @brief Where the event file and the stops file go: `logs/`, or `logs/<run_name>/`.
+     */
+    [[nodiscard]] std::string log_dir() const;
     /**
      * @brief The config saved with every model: the network config and the obs settings from the runner config.
      */

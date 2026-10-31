@@ -1,6 +1,12 @@
 # Telemetry
 
-Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-axis.
+Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-axis. TensorBoard names a run after its event file's directory, so that run shows up as "."; set a run name to put it in `logs/<run_name>/` instead, and `tensorboard --logdir logs` shows the runs side by side under their names:
+
+```cpp
+config.run_name = "run2"; // logs/run2/<bot_name>.tfevents. Subdirectories work too ("porkchop/run2").
+```
+
+Run colors can't be set from the event file: TensorBoard assigns them in the browser, where they can be changed per run.
 
 ```cpp
 // Lifetime steps between TensorBoard logs, each aggregating the updates since the last. 0 logs every update.
