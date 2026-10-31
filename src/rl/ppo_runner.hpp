@@ -18,8 +18,10 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <functional>
 #include <memory>
 #include <atomic>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -65,6 +67,34 @@ struct MatchDistribution {
         return layout;
     }
 };
+
+/**
+ * @brief The values one TensorBoard write logged, by tag (see docs/telemetry.md), for `RunnerConfig::stop_condition`.
+ */
+struct TelemetryPoint {
+    int64_t steps = 0;        // The lifetime steps it was logged at.
+    // The steps a log window covered: its counts (`Episode/Goals`, the truncations, `PFSP/Games`) are totals over them.
+    // 0 for an evaluation's values (`Skill/`).
+    int64_t window_steps = 0;
+    std::unordered_map<std::string, double> values;
+
+    /**
+     * @brief The value logged under `tag`, if this write logged one.
+     */
+    [[nodiscard]] std::optional<double> find(const std::string& tag) const {
+        const auto it = values.find(tag);
+        return it == values.end() ? std::nullopt : std::optional<double>(it->second);
+    }
+};
+
+struct RunnerConfig;
+
+/**
+ * @brief Decides from telemetry whether training should stop: a reason to stop, or nothing to carry on.
+ *
+ * Gets the values just logged and the config training runs with (its reward entries, `ppo_cfg.gae_gamma`).
+ */
+using StopCondition = std::function<std::optional<std::string>(const TelemetryPoint&, const RunnerConfig&)>;
 
 /**
  * @brief The core config for a bot trained with this framework.
@@ -150,6 +180,23 @@ struct RunnerConfig {
     // 0 logs every update, as does any value below the actual steps per update.
     int64_t steps_per_log = 0;
 
+    // TensorBoard's name for this run. TensorBoard names a run by its event file's directory under the log dir, so
+    // the event file goes to `logs/<run_name>/<bot name>.tfevents`, and `tensorboard --logdir logs` shows every run
+    // side by side. May have subdirectories ("mybot/run2"). Empty writes `logs/<bot name>.tfevents`, a run named
+    // ".". Changing it starts a new event file; checkpoints don't depend on it.
+    std::string run_name;
+
+    // Lifetime steps to train up to. Training stops after the update that reaches them and saves a checkpoint, and a
+    // start at or past them trains nothing. 0 trains until the update count given to `run` is used up or training is
+    // stopped. Training plans (`training_plan.hpp`) set it to each stage's end.
+    int64_t train_until_steps = 0;
+
+    // Checks telemetry during training, to stop a run that went wrong while nobody was watching. Called after each
+    // TensorBoard log (`steps_per_log`) and each evaluation. Returning a reason stops training as Ctrl+C does: the
+    // update finishes and a checkpoint is saved, and a training plan ends there too. The reason is printed and appended
+    // to `<bot name>.stops.txt` next to the event file (see `run_name`). Empty never stops.
+    StopCondition stop_condition;
+
     ActorCriticConfig ac_cfg;
     PPOConfig ppo_cfg;
     PFSPConfig pfsp_cfg;
@@ -220,6 +267,15 @@ struct RunnerConfig {
  * @param config The config with the match distributions and PFSP settings.
  */
 [[nodiscard]] size_t learner_agents_for(size_t envs, const RunnerConfig& config);
+
+/**
+ * @brief The lifetime steps of a bot's latest checkpoint, the one training resumes from.
+ *
+ * @param dir The checkpoint directory.
+ * @param bot_name The bot whose `<bot name>_<steps>/` checkpoints to look for.
+ * @return The steps, or 0 without a checkpoint (training starts fresh).
+ */
+[[nodiscard]] int64_t latest_checkpoint_steps(const std::string& dir, const std::string& bot_name);
 
 /**
  * @brief The core class that encapsulates the logic for actually running the entire training process.
@@ -356,6 +412,19 @@ private:
     };
     LogWindow log_window_;
     int64_t next_log_step_{0};
+    // The values of the TensorBoard write in progress (a log window or an evaluation), for the stop condition.
+    TelemetryPoint telemetry_;
+    std::optional<std::string> stop_reason_;
+    /**
+     * @brief Logs a TensorBoard scalar and records it in `telemetry_`.
+     */
+    template <class T>
+    void log_scalar(const std::string& tag, int64_t step, T value);
+    /**
+     * @brief Runs the stop condition on `telemetry_`, and on a reason to stop, keeps it, prints it and appends it to
+     * `<bot name>.stops.txt` in `log_dir()`. Training stops before its next update.
+     */
+    void check_stop_condition();
 
     // Rollout bottleneck warnings, see `check_rollout_bottleneck`.
     size_t allowed_cpus_{0};                  // CPUs this process may run on, read before any thread is pinned.
@@ -515,6 +584,10 @@ private:
     int64_t load_latest_checkpoint(const std::string& dir);
 
     /**
+     * @brief Where the event file and the stops file go: `logs/`, or `logs/<run_name>/`.
+     */
+    [[nodiscard]] std::string log_dir() const;
+    /**
      * @brief The config saved with every model: the network config and the obs settings from the runner config.
      */
     [[nodiscard]] ModelConfig model_config() const;
@@ -602,6 +675,10 @@ public:
      * @param checkpoint_dir The directory to save a checkpoint to.
      */
     void run(int num_updates, const std::atomic<bool>& stop_flag, const std::string& checkpoint_dir);
+    /**
+     * @brief Why the stop condition stopped training, if it did.
+     */
+    [[nodiscard]] const std::optional<std::string>& stop_reason() const { return stop_reason_; }
 };
 
 } // namespace buta_ppo::rl

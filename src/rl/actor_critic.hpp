@@ -13,7 +13,7 @@ namespace buta_ppo::rl {
 /**
  * @brief Config params to define the MLP layout.
  * 
- * NOTE: User MUST fill out these fields. Default values are intentionally omitted.
+ * NOTE: User MUST fill out the layers. `obs_size` and `action_size` are filled in by the runner.
  */
 struct ActorCriticConfig {
     int64_t obs_size;
@@ -24,7 +24,8 @@ struct ActorCriticConfig {
     std::vector<int64_t> actor_layers;
     std::vector<int64_t> critic_layers;
 
-    bool use_layer_norm;
+    // A LayerNorm between each hidden layer and its ReLU. Stored in the model file, which the bot builds from.
+    bool use_layer_norm = true;
 
     bool operator==(const ActorCriticConfig&) const = default;
 };

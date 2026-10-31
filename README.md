@@ -17,7 +17,8 @@ For reference, the demo configuration in `src/main.cpp` (1v1, 2v2, and 3v3, 500 
 * **Observations & Actions:** Team-relative observations with X-axis mirroring, ball prediction, and shuffled car slots. A 90-action discrete lookup table with action masking based on the car's state.
 * **Rust FFI Bridge:** Physics runs in RocketSim through a lightweight C ABI exported from Rust.
 * **Skill Tracking:** Periodic evaluation games against fixed past versions of the bot and against Nexto, the RLGym community bot, give a Bradley–Terry Elo rating per team size on a fixed scale (Nexto = 1500), so you can see whether the bot is actually getting better, and how far it is from Nexto.
-* **Telemetry & Checkpoints:** TensorBoard logging with custom per-tick metrics, automatic resume from the latest checkpoint, and a persistent PFSP opponent pool.
+* **Telemetry & Checkpoints:** TensorBoard logging with custom per-tick metrics and named runs, automatic resume from the latest checkpoint, and a persistent PFSP opponent pool.
+* **Unattended Training:** Training plans run a curriculum of config stages in one process, a learning rate schedule decays the learning rates without restarts, and stop conditions end a run that goes wrong while nobody is watching.
 * **RLBot Deployment:** A Rust RLBot v5 bot binary that runs trained checkpoints in real matches.
 
 ## How It Works
@@ -106,18 +107,18 @@ Run the compiled binary from the project root, so the relative paths to `assets/
 ./build/buta_ppo
 ```
 
-Resuming, stopping, and checkpoints are covered in [Training](docs/training.md), and every setting in [Configuration](docs/configuration.md).
+Resuming, stopping, training plans, and checkpoints are covered in [Training](docs/training.md), and every setting in [Configuration](docs/configuration.md).
 
 ## Documentation
 
 | Page | Covers |
 |---|---|
-| [Training](docs/training.md) | Resuming and stopping, the update cap, checkpoints, the PFSP pool, and rolling back |
-| [Configuration](docs/configuration.md) | Matches, state setters, episode limits, rewards and reward options, metrics, envs and batch size, the network, and PPO and the optimizer |
+| [Training](docs/training.md) | Resuming and stopping, the update cap and step limits, training plans, stop conditions, checkpoints, the PFSP pool, and rolling back |
+| [Configuration](docs/configuration.md) | Matches, state setters, episode limits, rewards and reward options, metrics, envs and batch size, the network, PPO and the optimizer, and the learning rate schedule |
 | [Performance](docs/performance.md) | Benchmark mode, the rollout bottleneck (`Phys Wait`), and CPU pinning |
 | [PFSP](docs/pfsp.md) | Self-play against past versions of the learner, and its options |
 | [Evaluation](docs/evaluation.md) | Elo ratings, Nexto and its ladder, anchors, options, reading the curve, and the cost |
-| [Telemetry](docs/telemetry.md) | TensorBoard groups and tags, and how to view them |
+| [Telemetry](docs/telemetry.md) | TensorBoard groups and tags, run names, and how to view them |
 | [Visualizer Mode](docs/visualizer.md) | Watching the bot in the RocketSim visualizer, and playing it against Nexto |
 | [Deploying to RLBot](docs/deploying.md) | Packaging the bot and running it in RLBot v5 |
 | [Extending the Framework](docs/extending.md) | Custom rewards, metrics, and state setters, the arena state reference, and the directory structure |

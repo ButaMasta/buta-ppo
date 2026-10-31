@@ -5,6 +5,7 @@
 
 #include <torch/torch.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -112,7 +113,59 @@ struct OptimizerConfig {
 };
 
 /**
+ * @brief Scales every learning rate of `PPOConfig::optimizer` by a factor that changes with the lifetime steps.
+ *
+ * Holds `start_scale` up to `start_steps`, moves to `end_scale` by `end_steps` along `shape`, and holds `end_scale`
+ * after. The default is 1 throughout. The runner sets the scale before each update, and the captured training graph
+ * reads it, so it changes without a restart, and a resumed run picks it up from its step count. Scaling every group
+ * keeps the ratios between them (Muon's lr against AdamW's, a critic set lower).
+ *
+ * `LrSchedule::exponential(7'000'000'000, 12'000'000'000, 1.0f, 0.25f)` halves the learning rates twice between 7B and
+ * 12B steps, at an even pace.
+ */
+struct LrSchedule {
+    enum class Shape {
+        Constant,    // `start_scale` throughout.
+        Linear,      // A straight line from `start_scale` to `end_scale`.
+        Exponential, // A geometric one: equal stretches of steps take off equal fractions.
+        Cosine       // Half a cosine: slow at both ends, fastest in the middle.
+    };
+
+    Shape shape = Shape::Constant;
+    int64_t start_steps = 0;
+    int64_t end_steps = 0;
+    float start_scale = 1.0f;
+    float end_scale = 1.0f;
+
+    [[nodiscard]] static LrSchedule linear(int64_t start_steps, int64_t end_steps, float start_scale, float end_scale) {
+        return {Shape::Linear, start_steps, end_steps, start_scale, end_scale};
+    }
+    [[nodiscard]] static LrSchedule exponential(int64_t start_steps, int64_t end_steps, float start_scale, float end_scale) {
+        return {Shape::Exponential, start_steps, end_steps, start_scale, end_scale};
+    }
+    [[nodiscard]] static LrSchedule cosine(int64_t start_steps, int64_t end_steps, float start_scale, float end_scale) {
+        return {Shape::Cosine, start_steps, end_steps, start_scale, end_scale};
+    }
+
+    /**
+     * @brief The scale at `steps` lifetime steps.
+     */
+    [[nodiscard]] float scale_at(int64_t steps) const;
+
+    /**
+     * @throws std::invalid_argument If a scale isn't positive and finite, or a changing schedule doesn't end after it
+     *         starts.
+     */
+    void validate() const;
+
+    bool operator==(const LrSchedule&) const = default;
+};
+
+/**
  * @brief An optimizer whose step only issues device work, so it can be captured in a CUDA graph and replayed.
+ *
+ * Its learning rates are multiplied by a device scalar (see `LrSchedule`), read at every step, so a captured graph
+ * picks up a new scale on its next replay.
  */
 class GraphSafeOptimizer {
 public:
@@ -139,12 +192,15 @@ public:
  *
  * @param layout The classified parameters of the network.
  * @param config The optimizer config.
+ * @param lr_scale A 0-dim float32 tensor on the parameters' device that every learning rate is multiplied by. Its
+ *                 value is read at every step; the tensor itself must stay the same one.
  * @return The optimizers, which together cover every parameter exactly once.
  * @throws std::invalid_argument If Muon is set on a non-hidden group or a learning rate isn't positive.
  */
 [[nodiscard]] std::vector<std::unique_ptr<GraphSafeOptimizer>> build_optimizers(
     const std::vector<ParamInfo>& layout,
-    const OptimizerConfig& config
+    const OptimizerConfig& config,
+    const torch::Tensor& lr_scale
 );
 
 } // namespace buta_ppo::rl

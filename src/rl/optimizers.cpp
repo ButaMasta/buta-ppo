@@ -5,6 +5,7 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace buta_ppo::rl {
 
@@ -21,21 +22,26 @@ std::string join_names(const std::vector<std::string>& names) {
 /**
  * @brief Adam / AdamW via the fused multi-tensor kernels.
  *
- * Step counts live on the device so bias correction advances on every graph replay.
+ * Step counts live on the device so bias correction advances on every graph replay. So does the learning rate, through
+ * the kernels' tensor-lr variant.
  */
 class FusedAdamOptimizer final : public GraphSafeOptimizer {
 private:
     OptimizerSpec spec_;
     std::vector<std::string> names_;
     std::vector<torch::Tensor> params_;
+    torch::Tensor lr_scale_;
+    torch::Tensor lr_; // spec_.lr * lr_scale_, refilled every step.
     std::vector<torch::Tensor> grads_; // Refilled each step within reserved capacity.
     std::vector<torch::Tensor> exp_avgs_;
     std::vector<torch::Tensor> exp_avg_sqs_;
     std::vector<torch::Tensor> state_steps_;
 
 public:
-    FusedAdamOptimizer(const OptimizerSpec& spec, std::vector<std::string> names, std::vector<torch::Tensor> params)
-        : spec_(spec), names_(std::move(names)), params_(std::move(params)) {
+    FusedAdamOptimizer(const OptimizerSpec& spec, std::vector<std::string> names, std::vector<torch::Tensor> params,
+                       torch::Tensor lr_scale)
+        : spec_(spec), names_(std::move(names)), params_(std::move(params)), lr_scale_(std::move(lr_scale)) {
+        lr_ = torch::empty({}, lr_scale_.options());
         for (const auto& p : params_) {
             exp_avgs_.push_back(torch::zeros_like(p));
             exp_avg_sqs_.push_back(torch::zeros_like(p));
@@ -52,11 +58,13 @@ public:
         }
 
         torch::_foreach_add_(state_steps_, 1);
+        // In float32, as the kernels use a scalar lr: at scale 1 it's exactly spec_.lr.
+        lr_.copy_(lr_scale_).mul_(spec_.lr);
         if (spec_.type == OptimizerType::AdamW) {
-            at::_fused_adamw_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_, spec_.lr, spec_.beta1,
+            at::_fused_adamw_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_, lr_, spec_.beta1,
                               spec_.beta2, spec_.weight_decay, spec_.eps, /*amsgrad=*/false, /*maximize=*/false);
         } else {
-            at::_fused_adam_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_, spec_.lr, spec_.beta1,
+            at::_fused_adam_(params_, grads_, exp_avgs_, exp_avg_sqs_, {}, state_steps_, lr_, spec_.beta1,
                              spec_.beta2, spec_.weight_decay, spec_.eps, /*amsgrad=*/false, /*maximize=*/false);
         }
     }
@@ -92,6 +100,11 @@ private:
     std::vector<torch::Tensor> params_;
     std::vector<torch::Tensor> momentum_buffers_;
     std::vector<double> adjusted_lrs_; // lr scaled for each matrix's shape.
+    torch::Tensor lr_scale_;
+    // Refilled every step from lr_scale_: each matrix's negated step size and the weight decay factor. In float64, so
+    // they round to float32 in the kernels as the scalars they replace did, and scale 1 updates exactly as before.
+    std::vector<torch::Tensor> neg_lrs_;
+    torch::Tensor decay_;
 
     // Approximates the nearest semi-orthogonal matrix to `g` with a quintic Newton-Schulz iteration in bf16.
     static torch::Tensor newton_schulz(const torch::Tensor& g, int steps) {
@@ -111,8 +124,11 @@ private:
     }
 
 public:
-    MuonOptimizer(const OptimizerSpec& spec, std::vector<std::string> names, std::vector<torch::Tensor> params)
-        : spec_(spec), names_(std::move(names)), params_(std::move(params)) {
+    MuonOptimizer(const OptimizerSpec& spec, std::vector<std::string> names, std::vector<torch::Tensor> params,
+                  torch::Tensor lr_scale)
+        : spec_(spec), names_(std::move(names)), params_(std::move(params)), lr_scale_(std::move(lr_scale)) {
+        const auto scalar_opts = lr_scale_.options().dtype(torch::kFloat64);
+        decay_ = torch::empty({}, scalar_opts);
         for (size_t i = 0; i < params_.size(); ++i) {
             const torch::Tensor& p = params_[i];
             TORCH_CHECK(p.dim() == 2, "Muon requires 2D weight matrices, but '", names_[i], "' has ", p.dim(), " dims.");
@@ -124,6 +140,7 @@ public:
                 ? 0.2 * std::sqrt(std::max(rows, cols))
                 : std::sqrt(std::max(1.0, rows / cols));
             adjusted_lrs_.push_back(spec_.lr * ratio);
+            neg_lrs_.push_back(torch::empty({}, scalar_opts));
         }
     }
 
@@ -139,9 +156,14 @@ public:
             const torch::Tensor ortho = newton_schulz(update, spec_.ns_steps);
 
             if (spec_.weight_decay != 0.0f) {
-                p.mul_(1.0 - static_cast<double>(spec_.lr) * spec_.weight_decay);
+                // 1 - lr * scale * wd.
+                decay_.copy_(lr_scale_).mul_(-static_cast<double>(spec_.lr) * spec_.weight_decay).add_(1.0);
+                p.mul_(decay_);
             }
-            p.add_(ortho, -adjusted_lrs_[i]);
+            // p -= adjusted lr * scale * ortho. addcmul computes in float32 like add's alpha, where multiplying ortho by
+            // the lr first would round the step to ortho's bf16.
+            neg_lrs_[i].copy_(lr_scale_).mul_(-adjusted_lrs_[i]);
+            p.addcmul_(ortho, neg_lrs_[i]);
         }
     }
 
@@ -192,10 +214,41 @@ void validate(const OptimizerSpec& spec, const ParamInfo& info) {
 
 } // namespace
 
+float LrSchedule::scale_at(int64_t steps) const {
+    if (shape == Shape::Constant) return start_scale;
+    if (steps <= start_steps) return start_scale;
+    if (steps >= end_steps) return end_scale;
+
+    const double t = static_cast<double>(steps - start_steps) / static_cast<double>(end_steps - start_steps);
+    const double from = start_scale;
+    const double to = end_scale;
+    switch (shape) {
+        case Shape::Linear:      return static_cast<float>(from + (to - from) * t);
+        case Shape::Exponential: return static_cast<float>(from * std::pow(to / from, t));
+        case Shape::Cosine:      return static_cast<float>(to + (from - to) * 0.5 * (1.0 + std::cos(M_PI * t)));
+        case Shape::Constant:    break;
+    }
+    return start_scale;
+}
+
+void LrSchedule::validate() const {
+    const auto positive = [](float v) { return std::isfinite(v) && v > 0.0f; };
+    if (!positive(start_scale) || (shape != Shape::Constant && !positive(end_scale))) {
+        throw std::invalid_argument("LrSchedule scales must be positive and finite.");
+    }
+    if (shape != Shape::Constant && (start_steps < 0 || end_steps <= start_steps)) {
+        throw std::invalid_argument("An LrSchedule that changes must start at 0 steps or later and end after it starts (" +
+                                    std::to_string(start_steps) + " to " + std::to_string(end_steps) + ").");
+    }
+}
+
 std::vector<std::unique_ptr<GraphSafeOptimizer>> build_optimizers(
     const std::vector<ParamInfo>& layout,
-    const OptimizerConfig& config
+    const OptimizerConfig& config,
+    const torch::Tensor& lr_scale
 ) {
+    TORCH_CHECK(lr_scale.dim() == 0 && lr_scale.scalar_type() == torch::kFloat32,
+                "lr_scale must be a 0-dim float32 tensor.");
     // Bucket parameters by identical spec, in order of first appearance, so each spec is one optimizer.
     struct Bucket {
         OptimizerSpec spec;
@@ -220,9 +273,10 @@ std::vector<std::unique_ptr<GraphSafeOptimizer>> build_optimizers(
     std::vector<std::unique_ptr<GraphSafeOptimizer>> optimizers;
     for (auto& b : buckets) {
         if (b.spec.type == OptimizerType::Muon) {
-            optimizers.push_back(std::make_unique<MuonOptimizer>(b.spec, std::move(b.names), std::move(b.params)));
+            optimizers.push_back(std::make_unique<MuonOptimizer>(b.spec, std::move(b.names), std::move(b.params), lr_scale));
         } else {
-            optimizers.push_back(std::make_unique<FusedAdamOptimizer>(b.spec, std::move(b.names), std::move(b.params)));
+            optimizers.push_back(std::make_unique<FusedAdamOptimizer>(b.spec, std::move(b.names), std::move(b.params),
+                                                                      lr_scale));
         }
     }
     return optimizers;

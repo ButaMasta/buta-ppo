@@ -1,13 +1,19 @@
 # Telemetry
 
-Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-axis.
+Metrics are written to `logs/<bot_name>.tfevents`, with lifetime steps on the x-axis. TensorBoard names a run after its event file's directory, so that run shows up as "."; set a run name to put it in `logs/<run_name>/` instead, and `tensorboard --logdir logs` shows the runs side by side under their names:
+
+```cpp
+config.run_name = "run2"; // logs/run2/<bot_name>.tfevents. Subdirectories work too ("mybot/run2").
+```
+
+Run colors can't be set from the event file: TensorBoard assigns them in the browser, where they can be changed per run.
 
 ```cpp
 // Lifetime steps between TensorBoard logs, each aggregating the updates since the last. 0 logs every update.
 config.steps_per_log = 0;
 ```
 
-By default, every update is logged. With a larger `steps_per_log`, each logged point covers every update since the previous one: rewards and metrics are averaged over all of its steps and ticks, episode and PFSP counts are totals, the training statistics are averaged over its updates, and steps per second covers its whole duration. Log points land on multiples of `steps_per_log`, so they stay on schedule across resumes. A value below the actual steps per update logs every update. When training stops, any updates logged since the last point are written as one final, shorter point. The console output is still printed every update.
+By default, every update is logged. With a larger `steps_per_log`, each logged point covers every update since the previous one: rewards and metrics are averaged over all of its steps and ticks, episode and PFSP counts are totals, the training statistics are averaged over its updates, and steps per second covers its whole duration. Log points land on multiples of `steps_per_log`, so they stay on schedule across resumes. A value below the actual steps per update logs every update. When training stops, any updates logged since the last point are written as one final, shorter point. The console output is still printed every update. Each point's values also go to `config.stop_condition`, which can stop training on them ([Stop Conditions](training.md#stop-conditions)).
 
 | Group | Metrics |
 |---|---|
@@ -18,7 +24,7 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Episode/` | Goals, and truncations split into no-touch and time-limit, summed since the previous log |
 | `Metrics/` | Each configured metric's average over every measured tick since the previous log. A metric that skipped every tick in that time isn't logged for it |
 | `Loss/` | Policy, value, entropy |
-| `Policy/` | Approx KL, clip fraction, normalized entropy |
+| `Policy/` | Approx KL, clip fraction, normalized entropy, the learning rate scale (`LR_Scale`, 1 without an `lr_schedule`) |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
 | `Skill/` | Logged at each evaluation, per team size: `<N>vN_Elo` and its standard error `<N>vN_Elo_Std_Error`, `<N>vN_Score` (wins plus half the draws), `<N>vN_Draw_Rate`, and `<N>vN_Mean_Game_Seconds`, over the games against the snapshot anchors (none on a run's first evaluation with Nexto, which plays only Nexto); with Nexto, `<N>vN_Nexto_Beta`, the rung played (where the placement search ended on the first evaluation), `<N>vN_Nexto_Score`, the score against it, and `<N>vN_Nexto_Gap` and `<N>vN_Nexto_Gap_Std_Error` (see [Evaluation](evaluation.md)); plus `Active_Anchors`, the anchors played. The console prints the same after the update it ran in, and the Nexto rungs played with their results |

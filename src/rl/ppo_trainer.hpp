@@ -36,6 +36,8 @@ struct PPOConfig {
 
     // Optimizer per network section and parameter role. See `OptimizerConfig` presets.
     OptimizerConfig optimizer = OptimizerConfig::adam(3e-4f);
+    // Scales every learning rate above by lifetime steps, e.g. for a decay. The default keeps them as set.
+    LrSchedule lr_schedule;
 };
 
 /**
@@ -75,6 +77,9 @@ private:
 
     // One graph-safe optimizer per distinct spec. Together they cover every parameter exactly once.
     std::vector<std::unique_ptr<GraphSafeOptimizer>> optimizers_;
+    // Every learning rate is multiplied by it inside the training graph. See `set_lr_scale`.
+    torch::Tensor lr_scale_;
+    float lr_scale_value_ = 1.0f;
 
     // Reused grad handle list for clipping. Grads are re-created by each backward (set_to_none).
     std::vector<torch::Tensor> grads_;
@@ -121,6 +126,13 @@ public:
      * @return Metrics averaged over minibatches: losses, entropy, normalized entropy, approx KL, and clip fraction.
      */
     [[nodiscard]] std::unordered_map<std::string, float> train_step(const RolloutBuffer& buffer);
+
+    /**
+     * @brief Sets the factor every learning rate is multiplied by from the next `train_step` on (1 at the start).
+     *
+     * @param scale The factor, usually `PPOConfig::lr_schedule` at the current steps.
+     */
+    void set_lr_scale(float scale);
 
     /**
      * @brief Saves the state of every optimizer, keyed by state and parameter name.

@@ -91,6 +91,8 @@ config.ac_cfg.critic_layers = { 1024, 768 };
 config.ac_cfg.use_layer_norm = true;
 ```
 
+`use_layer_norm` (a LayerNorm between each hidden layer and its ReLU) defaults to `true`.
+
 ## PPO & Optimizer
 
 ```cpp
@@ -105,3 +107,15 @@ config.ppo_cfg.optimizer.critic.with_lr(1e-4f);
 ```
 
 The Muon preset applies Muon to hidden-to-hidden weight matrices and AdamW to everything else. Its learning rate is scaled so values comparable to Adam's carry over.
+
+### Learning Rate Schedule
+
+`config.ppo_cfg.lr_schedule` multiplies every learning rate in `optimizer` by a factor that changes with lifetime steps, so the ratios between sections and groups stay as set. It holds its start scale until its start step, moves to its end scale by its end step, and holds that after. The default is 1 throughout.
+
+```cpp
+// Halve twice between 7B and 12B steps, at an even pace: 0.5 at 9.5B, 0.25 from 12B on.
+config.ppo_cfg.lr_schedule = LrSchedule::exponential(7'000'000'000, 12'000'000'000, 1.0f, 0.25f);
+// Also LrSchedule::linear and LrSchedule::cosine, with the same arguments.
+```
+
+The scale is set before each update and read by the captured training graph, so it changes smoothly without restarts, and a resumed run picks it up from its step count. A schedule fits a [training plan](training.md#training-plans) stage: set it in the stage it should run in. The scale is logged as `Policy/LR_Scale`, and printed under each update while a schedule is set.
