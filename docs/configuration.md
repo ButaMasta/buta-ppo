@@ -91,6 +91,8 @@ config.ac_cfg.critic_layers = { 1024, 768 };
 config.ac_cfg.use_layer_norm = true;
 ```
 
+`use_layer_norm` (a LayerNorm between each hidden layer and its ReLU) defaults to `true`.
+
 ## PPO & Optimizer
 
 ```cpp
