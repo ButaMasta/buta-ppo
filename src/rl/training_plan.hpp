@@ -16,7 +16,7 @@ namespace buta_ppo::rl {
  * @brief One stage of a training plan: the config changes it makes and the lifetime steps it trains up to.
  */
 struct TrainingStage {
-    // Printed when the stage starts, e.g. "Shot and Save added".
+    // Printed when the stage starts, e.g. "Velocity Ball to Goal added".
     std::string name;
     // Lifetime steps the stage trains up to. Each stage starts where the one before it ended.
     int64_t until_steps = 0;

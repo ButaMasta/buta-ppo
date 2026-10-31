@@ -17,8 +17,8 @@ A plan trains through stages, each changing the config and training up to a step
 
 const std::vector<TrainingStage> plan = {
     {"Learn to play", 1'000'000'000, {}},
-    {"Shot and Save", 3'000'000'000, [](RunnerConfig& c) {
-        c.reward_entries.push_back({"Shot", create_shot_reward(4.0f), 1.5f});
+    {"Velocity Ball to Goal", 3'000'000'000, [](RunnerConfig& c) {
+        c.reward_entries.push_back({"VelocityBallToGoal", create_velocity_ball_to_goal_reward(), 0.5f});
     }},
     {"Decay lr", 5'000'000'000, [](RunnerConfig& c) {
         // A quarter of the learning rates by the end of the stage (docs/configuration.md).

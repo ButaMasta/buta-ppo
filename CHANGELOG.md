@@ -1,4 +1,32 @@
 ### Current Unreleased Changes
+1. Added training plans, which train through a list of stages in one process, each changing the config and training up to a lifetime step count, so a run can follow a curriculum unattended (add rewards in phases, lower the learning rate, shift the match or state setter weights). See [Training Plans](docs/training.md#training-plans).
+    - `run_training_plan(config, stages, stop_flag, checkpoint_dir)` in `src/rl/training_plan.hpp` runs in place of `runner.run`. Each `TrainingStage {name, until_steps, apply}` lists only what it changes from the stage before. Each stage builds a fresh runner that resumes from the latest checkpoint, the same as stopping and restarting with the changed config, so the model, optimizer state, PFSP pool and evaluation carry over.
+    - On startup the plan picks the stage the latest checkpoint is in, so a stopped or crashed plan carries on when run again. Every stage's config is built first, and a stage that changes `bot_name`, `ac_cfg`, `max_players_per_team` or the mode fails at startup.
+    - An optional last argument, `max_steps`, limits the steps trained in one launch, so a long plan can be trained in pieces. `0`, the default, trains to the plan's end.
+    - Added `RunnerConfig::train_until_steps`, which plans use for each stage's end and which also works on its own: training stops after the update that reaches it and saves a checkpoint, and a start at or past it trains nothing and saves nothing. `0`, the default, has no limit.
+    - `latest_checkpoint_steps(dir, bot_name)` is now public.
+    - Fixed: the main thread stayed pinned to `main_thread_cpus` after training ended, so a second runner in the same process failed its CPU check on `worker_cpus`. It now gets its CPUs back when training returns.
+    - The CUDA cache is emptied between stages, since the next runner's graph captures can't use memory the previous runner left cached. Without it, a large network ran out of GPU memory at the first stage change.
+    - Non-breaking. `train_until_steps` defaults to off, and `runner.run` works as before.
+2. Added a learning rate schedule, `PPOConfig::lr_schedule`, which multiplies every learning rate in `ppo_cfg.optimizer` by a factor that changes with lifetime steps, so the ratios between sections and groups stay as set. See [Learning Rate Schedule](docs/configuration.md#learning-rate-schedule).
+    - `LrSchedule::linear`, `LrSchedule::exponential` and `LrSchedule::cosine` take `(start_steps, end_steps, start_scale, end_scale)`. The schedule holds its start scale before its start and its end scale after its end. The default is 1 throughout.
+    - The learning rates used to be constants baked into the captured training graph, so they could only change with a restart. The scale is now a GPU value the graph reads on every replay, set before each update, so it changes smoothly, and a resumed run or a training plan stage picks it up from its step count.
+    - Logged as `Policy/LR_Scale`, and printed under each update as `LR Scale` while a schedule is set.
+    - Non-breaking. At the default scale of 1, Adam, AdamW and Muon updates are bit-identical to before. Breaking only for custom code calling `build_optimizers`, which now takes a `lr_scale` tensor.
+3. Added stop conditions, `RunnerConfig::stop_condition`, which check the telemetry as it's logged and stop a run that went wrong while nobody was watching. See [Stop Conditions](docs/training.md#stop-conditions).
+    - The condition gets a `TelemetryPoint` (the values just logged, by TensorBoard tag, with the steps they cover) and the config training runs with. It's called after every TensorBoard log and every evaluation. Returning a reason stops training the way Ctrl+C does: the update finishes, a checkpoint is saved, and a training plan ends instead of moving to its next stage.
+    - The reason is printed, repeated in the warning summary, and appended with the time and step to `<bot_name>.stops.txt` next to the event file.
+    - Non-breaking. It's empty by default, and the event file is written exactly as before.
+4. Added `RunnerConfig::run_name`, which puts the event file in `logs/<run_name>/` so TensorBoard shows each run under its own name instead of every run as ".". Subdirectories are allowed. An absolute path or a `..` component fails at startup.
+    - Non-breaking. Empty, the default, keeps `logs/<bot_name>.tfevents`. Checkpoints don't depend on it.
+5. Training is faster for networks with an odd layer input width, such as an odd obs size. Under bf16 autocast, a row of an odd number of bf16 values is only 2-byte aligned, which sends cuBLAS to slower kernels. Such layers now get their input and weight zero-padded to a multiple of 8 before the multiply, which made a training minibatch with an odd obs size about 4% faster, as fast as an even one.
+    - The weight keeps its shape, so models, checkpoints and the deployed bot are unchanged. Rollout inference, evaluation, render and the CPU bot take the old path.
+    - Non-breaking. For odd widths, training is no longer bit-identical to before, only equal up to bf16 rounding. Even widths are unaffected.
+6. Training uses less GPU memory. The warmup passes before each CUDA graph capture left their activations cached, where the graph can't use them and nothing else needs them again, so they stayed reserved for the whole run. The cache is now emptied just before each capture, about 1.8 GiB less for a large network with 50k-row minibatches.
+    - Non-breaking.
+7. `ActorCriticConfig::use_layer_norm` now defaults to `true`, the value the demo config and the docs use.
+    - Before, it had no default. Left unset, it was an uninitialized bool: the network built and trained, but `save_model` wrote the raw byte into `model.pt`, so every load failed with "Unknown opcode for unpickling", and resuming, deploying and the next training plan stage all failed.
+    - Non-breaking. Configs that set it train exactly as before. Configs that leave it unset now get layer norm.
 
 ### Releases
 #### 0.3.0

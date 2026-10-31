@@ -182,7 +182,7 @@ struct RunnerConfig {
 
     // TensorBoard's name for this run. TensorBoard names a run by its event file's directory under the log dir, so
     // the event file goes to `logs/<run_name>/<bot name>.tfevents`, and `tensorboard --logdir logs` shows every run
-    // side by side. May have subdirectories ("porkchop/run2"). Empty writes `logs/<bot name>.tfevents`, a run named
+    // side by side. May have subdirectories ("mybot/run2"). Empty writes `logs/<bot name>.tfevents`, a run named
     // ".". Changing it starts a new event file; checkpoints don't depend on it.
     std::string run_name;
 
