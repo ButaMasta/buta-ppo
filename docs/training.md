@@ -32,6 +32,22 @@ A stage's `apply` changes the config the stage before trained with, so each stag
 
 On startup the plan resumes in the stage the latest checkpoint is in, so after Ctrl+C or a crash, run the binary again and it carries on. Every stage's config is built first, and a stage that changes `bot_name`, `ac_cfg`, `max_players_per_team` or the mode fails at startup, since its resume would. Other mistakes in a stage's config (an invalid reward entry, say) only show when that stage starts, and stop the plan at the stage before's final checkpoint. A plan that's done trains nothing; append a stage to train further. Render, benchmark and calibrate modes run once with the config of the stage the latest checkpoint is in.
 
+## Stop Conditions
+
+An unattended run that goes wrong keeps training until someone looks. `config.stop_condition` checks the telemetry as it's logged and stops the run when it returns a reason, the same way as Ctrl+C: the update finishes, a checkpoint is saved, and a training plan ends there instead of moving to its next stage. The reason is printed, repeated in the warning summary at the end, and appended with the time and step to `logs/<bot_name>.stops.txt`.
+
+```cpp
+config.stop_condition = [](const TelemetryPoint& point, const RunnerConfig& config) -> std::optional<std::string> {
+    const auto time_limit = point.find("Episode/Truncations_Time_Limit");
+    if (time_limit && *time_limit > 50) return "most episodes hit the time limit";
+    return std::nullopt;
+};
+```
+
+It's called after every TensorBoard log with the values just logged, by tag ([Telemetry](telemetry.md)), and after every evaluation with its `Skill/` values. `point.steps` is the lifetime step count, and `point.window_steps` the steps the log covered (0 for an evaluation), since counts such as `Episode/Goals` are totals over the log. `config` is the config training runs with, so a stage's own rewards and gamma are there. Logs come every `steps_per_log` steps, so a condition that averages over many of them is less noisy than one that judges a single log. A condition can keep its own history by capturing shared state (a `std::shared_ptr`): copies then share it, so it carries across a plan's stages, though not across a restart.
+
+Restarting after a stop simply carries on; change the config first if the stop was right.
+
 ## Checkpoints & the PFSP Pool
 
 ```text

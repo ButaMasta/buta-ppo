@@ -20,6 +20,8 @@
 #include <iomanip>
 #include <iostream>
 #include <filesystem>
+#include <fstream>
+#include <ctime>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -802,8 +804,32 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
     std::cout << "Checkpoint saved to: " << final_dir.string() << "\n";
 }
 
+template <class T>
+void PPORunner::log_scalar(const std::string& tag, int64_t step, T value) {
+    logger_->add_scalar(tag, step, value);
+    telemetry_.values[tag] = static_cast<double>(value);
+}
+
+void PPORunner::check_stop_condition() {
+    if (!config_.stop_condition || stop_reason_) return;
+    const std::optional<std::string> reason = config_.stop_condition(telemetry_, config_);
+    if (!reason) return;
+
+    stop_reason_ = *reason;
+    const std::string message = "Stop condition at " + std::to_string(telemetry_.steps) + " steps: " + *reason +
+                                ". Training stops after this update and saves a checkpoint.";
+    warn(message, "Stopping: " + *reason);
+
+    // Kept apart from the console, which an unattended run may not keep.
+    std::ofstream out("logs/" + config_.bot_name + ".stops.txt", std::ios::app);
+    const std::time_t now = std::time(nullptr);
+    out << std::put_time(std::localtime(&now), "%Y-%m-%d %H:%M:%S") << "  " << telemetry_.steps << " steps  " << *reason
+        << "\n";
+}
+
 void PPORunner::write_log_window() {
     LogWindow& window = log_window_;
+    telemetry_ = {global_step_, window.steps, {}};
     const double steps = static_cast<double>(window.steps);
     const double updates = static_cast<double>(window.updates);
 
@@ -815,37 +841,37 @@ void PPORunner::write_log_window() {
     for (const auto& [name, accumulation] : vec_env_->get_reward_breakdown()) {
         total_raw += accumulation.raw;
         total_magnitude += accumulation.magnitude;
-        logger_->add_scalar("Reward_Components/" + name, global_step_, static_cast<float>(accumulation.raw / steps));
-        logger_->add_scalar("Reward_Magnitude/" + name, global_step_, static_cast<float>(accumulation.magnitude / steps));
+        log_scalar("Reward_Components/" + name, global_step_, static_cast<float>(accumulation.raw / steps));
+        log_scalar("Reward_Magnitude/" + name, global_step_, static_cast<float>(accumulation.magnitude / steps));
     }
-    logger_->add_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_raw / steps));
-    logger_->add_scalar("Reward/Mean_Abs_Step", global_step_, static_cast<float>(total_magnitude / steps));
+    log_scalar("Reward/Mean_Step", global_step_, static_cast<float>(total_raw / steps));
+    log_scalar("Reward/Mean_Abs_Step", global_step_, static_cast<float>(total_magnitude / steps));
 
     // Each reward's fraction of the total magnitude, which sums to 1. Skipped when no reward was received.
     if (total_magnitude > 0.0) {
         for (const auto& [name, accumulation] : vec_env_->get_reward_breakdown()) {
-            logger_->add_scalar("Reward_Share/" + name, global_step_, static_cast<float>(accumulation.magnitude / total_magnitude));
+            log_scalar("Reward_Share/" + name, global_step_, static_cast<float>(accumulation.magnitude / total_magnitude));
         }
     }
 
     // Custom Metrics.
     for (const auto& [name, accumulation] : vec_env_->get_metric_breakdown()) {
         if (accumulation.count == 0) continue;
-        logger_->add_scalar("Metrics/" + name, global_step_, static_cast<float>(accumulation.value / accumulation.count));
+        log_scalar("Metrics/" + name, global_step_, static_cast<float>(accumulation.value / accumulation.count));
     }
 
-    logger_->add_scalar("Episode/Goals", global_step_, static_cast<float>(window.goals));
-    logger_->add_scalar("Episode/Truncations", global_step_,
+    log_scalar("Episode/Goals", global_step_, static_cast<float>(window.goals));
+    log_scalar("Episode/Truncations", global_step_,
                         static_cast<float>(window.no_touch_truncations + window.time_limit_truncations));
-    logger_->add_scalar("Episode/Truncations_No_Touch", global_step_, static_cast<float>(window.no_touch_truncations));
-    logger_->add_scalar("Episode/Truncations_Time_Limit", global_step_, static_cast<float>(window.time_limit_truncations));
+    log_scalar("Episode/Truncations_No_Touch", global_step_, static_cast<float>(window.no_touch_truncations));
+    log_scalar("Episode/Truncations_Time_Limit", global_step_, static_cast<float>(window.time_limit_truncations));
 
     // PFSP totals over the window. Truncated episodes aren't counted.
     if (!opponent_slots_.empty()) {
-        logger_->add_scalar("PFSP/Pool_Size", global_step_, static_cast<float>(opponent_pool_->size()));
-        logger_->add_scalar("PFSP/Games", global_step_, static_cast<float>(window.pfsp_games));
+        log_scalar("PFSP/Pool_Size", global_step_, static_cast<float>(opponent_pool_->size()));
+        log_scalar("PFSP/Games", global_step_, static_cast<float>(window.pfsp_games));
         if (window.pfsp_games > 0) {
-            logger_->add_scalar("PFSP/Win_Rate", global_step_,
+            log_scalar("PFSP/Win_Rate", global_step_,
                                 static_cast<float>(window.pfsp_wins) / static_cast<float>(window.pfsp_games));
         }
     }
@@ -854,27 +880,27 @@ void PPORunner::write_log_window() {
     const auto mean_metric = [&](const std::string& name) {
         return static_cast<float>(window.train_metrics.at(name) / updates);
     };
-    logger_->add_scalar("Performance/Total_SPS", global_step_, steps / window.update_seconds);
-    logger_->add_scalar("Performance/Rollout_SPS", global_step_, steps / window.rollout_seconds);
-    logger_->add_scalar("Performance/Rollout_Physics_Wait", global_step_, window.physics_wait_seconds / window.rollout_seconds);
+    log_scalar("Performance/Total_SPS", global_step_, steps / window.update_seconds);
+    log_scalar("Performance/Rollout_SPS", global_step_, steps / window.rollout_seconds);
+    log_scalar("Performance/Rollout_Physics_Wait", global_step_, window.physics_wait_seconds / window.rollout_seconds);
 
     // What the envs cost to step since the last log. Touches and repredictions explain most of the step time's rise
     // as a bot learns to play the ball.
     const env::EnvCostCounts cost = vec_env_->collect_cost_counts();
     if (cost.env_steps > 0) {
         const auto env_steps = static_cast<double>(cost.env_steps);
-        logger_->add_scalar("Performance/Env_Step_Microseconds", global_step_, 1e6 * cost.step_seconds / env_steps);
-        logger_->add_scalar("Performance/Touch_Ticks_Per_Env_Step", global_step_, static_cast<double>(cost.touch_ticks) / env_steps);
-        logger_->add_scalar("Performance/Repredictions_Per_Env_Step", global_step_, static_cast<double>(cost.repredictions) / env_steps);
+        log_scalar("Performance/Env_Step_Microseconds", global_step_, 1e6 * cost.step_seconds / env_steps);
+        log_scalar("Performance/Touch_Ticks_Per_Env_Step", global_step_, static_cast<double>(cost.touch_ticks) / env_steps);
+        log_scalar("Performance/Repredictions_Per_Env_Step", global_step_, static_cast<double>(cost.repredictions) / env_steps);
     }
-    logger_->add_scalar("Loss/Policy", global_step_, mean_metric("policy_loss"));
-    logger_->add_scalar("Loss/Value", global_step_, mean_metric("value_loss"));
-    logger_->add_scalar("Loss/Entropy", global_step_, mean_metric("entropy"));
-    logger_->add_scalar("Policy/Normalized_Entropy", global_step_, mean_metric("normalized_entropy"));
-    logger_->add_scalar("Policy/Approx_KL", global_step_, mean_metric("approx_kl"));
-    logger_->add_scalar("Policy/Clip_Fraction", global_step_, mean_metric("clip_fraction"));
-    logger_->add_scalar("Policy/LR_Scale", global_step_, mean_metric("lr_scale"));
-    logger_->add_scalar("Value/Explained_Variance", global_step_, mean_metric("explained_variance"));
+    log_scalar("Loss/Policy", global_step_, mean_metric("policy_loss"));
+    log_scalar("Loss/Value", global_step_, mean_metric("value_loss"));
+    log_scalar("Loss/Entropy", global_step_, mean_metric("entropy"));
+    log_scalar("Policy/Normalized_Entropy", global_step_, mean_metric("normalized_entropy"));
+    log_scalar("Policy/Approx_KL", global_step_, mean_metric("approx_kl"));
+    log_scalar("Policy/Clip_Fraction", global_step_, mean_metric("clip_fraction"));
+    log_scalar("Policy/LR_Scale", global_step_, mean_metric("lr_scale"));
+    log_scalar("Value/Explained_Variance", global_step_, mean_metric("explained_variance"));
 
     window = {};
 }
@@ -944,6 +970,10 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         }
         if (config_.train_until_steps > 0 && global_step_ >= config_.train_until_steps) {
             std::cout << "\nReached train_until_steps (" << config_.train_until_steps << "). Stopping...\n";
+            break;
+        }
+        if (stop_reason_) {
+            std::cout << "\nStop condition: " << *stop_reason_ << ". Stopping...\n";
             break;
         }
 
@@ -1030,6 +1060,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         }
         if (global_step_ >= next_log_step_) {
             write_log_window();
+            check_stop_condition();
             next_log_step_ = (global_step_ / log_interval + 1) * log_interval;
         }
 
@@ -1072,6 +1103,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
         if (gauntlet_ && global_step_ >= next_eval_step_) {
             run_evaluation();
+            check_stop_condition();
             next_eval_step_ = (global_step_ / steps_per_eval + 1) * steps_per_eval;
         }
 
@@ -1162,6 +1194,7 @@ void PPORunner::run_ladder_calibration(const std::string& checkpoint_dir) {
 
 void PPORunner::run_evaluation() {
     const EvalResult result = gauntlet_->run(global_step_, actor_critic_);
+    telemetry_ = {global_step_, 0, {}};
     if (!result.played) {
         std::cout << " | Evaluation: the learner is now the first anchor, the reference at 0 Elo.\n";
         return;
@@ -1170,21 +1203,21 @@ void PPORunner::run_evaluation() {
     for (const EvalSizeResult& size : result.sizes) {
         const std::string mode = std::to_string(size.team_size) + "v" + std::to_string(size.team_size);
         const double games = size.wins + size.losses + size.draws;
-        logger_->add_scalar("Skill/" + mode + "_Elo", global_step_, size.elo);
-        logger_->add_scalar("Skill/" + mode + "_Elo_Std_Error", global_step_, size.elo_std_error);
+        log_scalar("Skill/" + mode + "_Elo", global_step_, size.elo);
+        log_scalar("Skill/" + mode + "_Elo_Std_Error", global_step_, size.elo_std_error);
         // Against the snapshot anchors, which a run's first evaluation with Nexto doesn't play.
         if (games > 0) {
-            logger_->add_scalar("Skill/" + mode + "_Score", global_step_, (size.wins + size.draws * 0.5f) / games);
-            logger_->add_scalar("Skill/" + mode + "_Draw_Rate", global_step_, size.draws / games);
-            logger_->add_scalar("Skill/" + mode + "_Mean_Game_Seconds", global_step_, size.mean_game_seconds);
+            log_scalar("Skill/" + mode + "_Score", global_step_, (size.wins + size.draws * 0.5f) / games);
+            log_scalar("Skill/" + mode + "_Draw_Rate", global_step_, size.draws / games);
+            log_scalar("Skill/" + mode + "_Mean_Game_Seconds", global_step_, size.mean_game_seconds);
         }
         if (size.nexto_beta) {
-            logger_->add_scalar("Skill/" + mode + "_Nexto_Beta", global_step_, *size.nexto_beta);
-            logger_->add_scalar("Skill/" + mode + "_Nexto_Score", global_step_, size.nexto_score);
+            log_scalar("Skill/" + mode + "_Nexto_Beta", global_step_, *size.nexto_beta);
+            log_scalar("Skill/" + mode + "_Nexto_Score", global_step_, size.nexto_score);
         }
         if (size.nexto_gap_elo) {
-            logger_->add_scalar("Skill/" + mode + "_Nexto_Gap", global_step_, *size.nexto_gap_elo);
-            logger_->add_scalar("Skill/" + mode + "_Nexto_Gap_Std_Error", global_step_, size.nexto_gap_std_error);
+            log_scalar("Skill/" + mode + "_Nexto_Gap", global_step_, *size.nexto_gap_elo);
+            log_scalar("Skill/" + mode + "_Nexto_Gap_Std_Error", global_step_, size.nexto_gap_std_error);
         }
         std::cout << " | Eval " << mode << ":     " << std::fixed << std::setprecision(1) << size.elo << " +- "
                   << size.elo_std_error << " Elo";
@@ -1196,7 +1229,7 @@ void PPORunner::run_evaluation() {
         }
         std::cout << std::defaultfloat << "\n";
     }
-    logger_->add_scalar("Skill/Active_Anchors", global_step_, static_cast<float>(result.anchors_played.size()));
+    log_scalar("Skill/Active_Anchors", global_step_, static_cast<float>(result.anchors_played.size()));
     std::cout << " | Eval Played: ";
     for (size_t i = 0; i < result.anchors_played.size(); i++) {
         std::cout << (i == 0 ? "" : ", ") << result.anchors_played[i];
@@ -1212,7 +1245,7 @@ void PPORunner::run_evaluation() {
         }
         std::cout << "\n";
     }
-    logger_->add_scalar("Performance/Eval_Time", global_step_, static_cast<float>(result.seconds));
+    log_scalar("Performance/Eval_Time", global_step_, static_cast<float>(result.seconds));
     std::cout << " | Eval Time:   " << std::fixed << std::setprecision(2) << result.seconds << "s"
               << (result.promoted ? ", the learner is now an anchor" : "") << std::defaultfloat << "\n";
 }

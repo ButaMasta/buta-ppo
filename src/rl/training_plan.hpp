@@ -53,7 +53,8 @@ struct TrainingStage {
  *
  * @param base The config before any stage's changes.
  * @param stages The stages, with increasing `until_steps`.
- * @param stop_flag Stops training after the current update and saves a checkpoint, ending the plan.
+ * @param stop_flag Stops training after the current update and saves a checkpoint, ending the plan. So does a stage's
+ *                  `stop_condition`.
  * @param checkpoint_dir The directory checkpoints are loaded from and saved to.
  * @throws std::invalid_argument If the plan is empty, its ends don't increase, a stage changes a setting that can't
  *         change during a run (`bot_name`, `ac_cfg`, `max_players_per_team`, or the mode), or a stage's

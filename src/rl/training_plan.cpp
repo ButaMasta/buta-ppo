@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 
 namespace buta_ppo::rl {
@@ -105,9 +106,16 @@ void run_training_plan(const RunnerConfig& base, const std::vector<TrainingStage
                   << stages[stage].until_steps << " steps.\n";
 
         // Destroyed before the next stage builds its runner, so the two never hold the GPU and env threads at once.
+        std::optional<std::string> stop_reason;
         {
             PPORunner runner(stage_config(base, stages, stage));
             runner.run(std::numeric_limits<int>::max(), stop_flag, checkpoint_dir);
+            stop_reason = runner.stop_reason();
+        }
+        if (stop_reason) {
+            std::cout << "Training plan stopped in " << describe_stage(stages, stage) << " by its stop condition: "
+                      << *stop_reason << ".\n";
+            return;
         }
 
         const int64_t new_steps = latest_checkpoint_steps(checkpoint_dir, base.bot_name);
