@@ -3,6 +3,7 @@
 #include "rollout_buffer.hpp"
 
 #include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
 
@@ -294,7 +295,10 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
                 }
                 
                 capture_stream.synchronize();
-                
+
+                // The capture can't use memory cached outside its own pool (e.g. the warmup's activations), so free it.
+                c10::cuda::CUDACachingAllocator::emptyCache();
+
                 // Capture the graph.
                 graph_.capture_begin();
                 execute_minibatch_graph_logic();

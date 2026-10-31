@@ -10,6 +10,7 @@
 
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 
 #include <algorithm>
@@ -535,6 +536,8 @@ void PPORunner::infer_group(RolloutGroup& group, const torch::Tensor& obs, const
             }
             capture_stream.synchronize();
 
+            // The capture can't use memory cached outside its own pool, so free it.
+            c10::cuda::CUDACachingAllocator::emptyCache();
             group.graph.capture_begin();
             std::tie(group.actions_gpu, group.log_probs_gpu, group.values_gpu) = inference_graph_logic(group);
             group.graph.capture_end();
@@ -600,6 +603,8 @@ void PPORunner::finish_group_step(RolloutGroup& group, size_t step, const env::B
         }
         {
             at::cuda::CUDAStreamGuard stream_guard(capture_stream);
+            // The capture can't use memory cached outside its own pool, so free it.
+            c10::cuda::CUDACachingAllocator::emptyCache();
             group.insert_graph.capture_begin();
             insert_graph_logic(group);
             group.insert_graph.capture_end();
