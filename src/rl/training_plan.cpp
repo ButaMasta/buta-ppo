@@ -51,6 +51,11 @@ void validate_plan(const RunnerConfig& base, const std::vector<TrainingStage>& s
         unchanged(config.render == base.render && config.benchmark == base.benchmark &&
                   config.calibrate_nexto_ladder == base.calibrate_nexto_ladder,
                   "the mode (render, benchmark or calibrate_nexto_ladder)");
+        try {
+            config.ppo_cfg.lr_schedule.validate();
+        } catch (const std::invalid_argument& e) {
+            throw std::invalid_argument("The training plan's " + describe_stage(stages, i) + ": " + e.what());
+        }
     }
 }
 } // namespace

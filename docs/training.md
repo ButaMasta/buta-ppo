@@ -20,8 +20,9 @@ const std::vector<TrainingStage> plan = {
     {"Shot and Save", 3'000'000'000, [](RunnerConfig& c) {
         c.reward_entries.push_back({"Shot", create_shot_reward(4.0f), 1.5f});
     }},
-    {"Lower lr", 5'000'000'000, [](RunnerConfig& c) {
-        c.ppo_cfg.optimizer = OptimizerConfig::muon(1.5e-4, 1.5e-4, 0.01);
+    {"Decay lr", 5'000'000'000, [](RunnerConfig& c) {
+        // A quarter of the learning rates by the end of the stage (docs/configuration.md).
+        c.ppo_cfg.lr_schedule = LrSchedule::exponential(3'000'000'000, 5'000'000'000, 1.0f, 0.25f);
     }},
 };
 run_training_plan(config, plan, g_stop_training, "checkpoints");

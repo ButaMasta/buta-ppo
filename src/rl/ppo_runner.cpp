@@ -873,6 +873,7 @@ void PPORunner::write_log_window() {
     logger_->add_scalar("Policy/Normalized_Entropy", global_step_, mean_metric("normalized_entropy"));
     logger_->add_scalar("Policy/Approx_KL", global_step_, mean_metric("approx_kl"));
     logger_->add_scalar("Policy/Clip_Fraction", global_step_, mean_metric("clip_fraction"));
+    logger_->add_scalar("Policy/LR_Scale", global_step_, mean_metric("lr_scale"));
     logger_->add_scalar("Value/Explained_Variance", global_step_, mean_metric("explained_variance"));
 
     window = {};
@@ -999,6 +1000,7 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
         const auto gae_start = std::chrono::high_resolution_clock::now();
         compute_advantages();
         const auto gae_end = std::chrono::high_resolution_clock::now();
+        trainer_->set_lr_scale(config_.ppo_cfg.lr_schedule.scale_at(global_step_));
         const auto metrics = trainer_->train_step(*buffer_);
 
         // Snapshot the freshly trained learner into the pool. Invalidates `opponent_picks`.
@@ -1049,6 +1051,9 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
                   << "\n | Expl Var:    " << metrics.at("explained_variance")
                   << "\n | Episodes:    " << episodes.goals << " goals, " << episodes.no_touch_truncations << " no touch, "
                   << episodes.time_limit_truncations << " time limit\n";
+        if (config_.ppo_cfg.lr_schedule.shape != LrSchedule::Shape::Constant) {
+            std::cout << " | LR Scale:    " << metrics.at("lr_scale") << "\n";
+        }
         if (!pfsp_outcomes.empty()) {
             std::cout << " | PFSP Wins:   " << pfsp_wins << " / " << pfsp_games << " games";
             if (opponent_versions.empty()) {

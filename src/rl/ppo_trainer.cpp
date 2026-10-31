@@ -36,11 +36,20 @@ PPOTrainer::PPOTrainer(PPOConfig config, ActorCritic actor_critic, torch::Device
                   << "\n | Critic: " << critic_count << "\n";
     }
 
-    optimizers_ = build_optimizers(layout, config_.optimizer);
+    config_.lr_schedule.validate();
+    lr_scale_ = torch::ones({}, torch::TensorOptions().device(device_).dtype(torch::kFloat32));
+    optimizers_ = build_optimizers(layout, config_.optimizer, lr_scale_);
     // std::cout << "Optimizers:\n";
     // for (const auto& opt : optimizers_) {
     //     std::cout << " | " << opt->describe() << "\n";
     // }
+}
+
+void PPOTrainer::set_lr_scale(float scale) {
+    if (scale != lr_scale_value_) {
+        lr_scale_.fill_(scale);
+        lr_scale_value_ = scale;
+    }
 }
 
 std::vector<std::pair<std::string, torch::Tensor>> PPOTrainer::optimizer_state() const {
@@ -325,7 +334,8 @@ std::unordered_map<std::string, float> PPOTrainer::train_step(const RolloutBuffe
         {"normalized_entropy", total_normalized_entropy_tsr.item<float>() / std::max(1, updates)},
         {"approx_kl", total_approx_kl_tsr.item<float>() / std::max(1, updates)},
         {"clip_fraction", total_clip_fraction_tsr.item<float>() / std::max(1, updates)},
-        {"explained_variance", explained_variance.item<float>()}
+        {"explained_variance", explained_variance.item<float>()},
+        {"lr_scale", lr_scale_value_}
     };
 }
 

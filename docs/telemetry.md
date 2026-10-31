@@ -18,7 +18,7 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Episode/` | Goals, and truncations split into no-touch and time-limit, summed since the previous log |
 | `Metrics/` | Each configured metric's average over every measured tick since the previous log. A metric that skipped every tick in that time isn't logged for it |
 | `Loss/` | Policy, value, entropy |
-| `Policy/` | Approx KL, clip fraction, normalized entropy |
+| `Policy/` | Approx KL, clip fraction, normalized entropy, the learning rate scale (`LR_Scale`, 1 without an `lr_schedule`) |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |
 | `PFSP/` | Win rate and games since the previous log, and pool size. The versions played each update are printed to the console |
 | `Skill/` | Logged at each evaluation, per team size: `<N>vN_Elo` and its standard error `<N>vN_Elo_Std_Error`, `<N>vN_Score` (wins plus half the draws), `<N>vN_Draw_Rate`, and `<N>vN_Mean_Game_Seconds`, over the games against the snapshot anchors (none on a run's first evaluation with Nexto, which plays only Nexto); with Nexto, `<N>vN_Nexto_Beta`, the rung played (where the placement search ended on the first evaluation), `<N>vN_Nexto_Score`, the score against it, and `<N>vN_Nexto_Gap` and `<N>vN_Nexto_Gap_Std_Error` (see [Evaluation](evaluation.md)); plus `Active_Anchors`, the anchors played. The console prints the same after the update it ran in, and the Nexto rungs played with their results |
