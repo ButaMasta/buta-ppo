@@ -1,6 +1,9 @@
 // buta-ppo/src/rl/training_plan.cpp
 #include "training_plan.hpp"
 
+#include <c10/cuda/CUDACachingAllocator.h>
+#include <torch/cuda.h>
+
 #include <algorithm>
 #include <iostream>
 #include <limits>
@@ -126,6 +129,11 @@ void run_training_plan(const RunnerConfig& base, const std::vector<TrainingStage
             PPORunner runner(config);
             runner.run(std::numeric_limits<int>::max(), stop_flag, checkpoint_dir);
             stop_reason = runner.stop_reason();
+        }
+        // The old runner's memory stays cached, and the next runner's graph captures can't use any of it (a capture only
+        // allocates from its own pool and can't free cached memory), so give it back to the driver first.
+        if (torch::cuda::is_available()) {
+            c10::cuda::CUDACachingAllocator::emptyCache();
         }
         if (stop_reason) {
             std::cout << "Training plan stopped in " << describe_stage(stages, stage) << " by its stop condition: "
