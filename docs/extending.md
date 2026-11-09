@@ -79,7 +79,7 @@ Rewards, metrics, and state setters all read the game through `ffi::ArenaState` 
 | Field | Description |
 | --- | --- |
 | `is_ball_scored` | A goal was scored this tick. Check which goal from the ball's Y position. |
-| `car_hit_ball[i]` | Car `i` touched the ball. |
+| `car_hit_ball[i]` | Car `i` is touching the ball. It's set on every tick the car is in contact with the ball, not once per touch, so a touch reward should use a cooldown or scale by the ball's velocity change. |
 | `ball_hit_extra_vel[i]` | Size of the extra velocity car `i`'s touch added to the ball. |
 | `car_got_boost[i]` | Car `i` picked up a boost pad. |
 | `car_bumped_car[b][v].bumped` | Car `b` bumped car `v`. Only real bumps count (the bumper drives into the victim, inside its bump cone), not every contact between cars. A head-on collision can register in both directions. |

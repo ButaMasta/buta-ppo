@@ -128,6 +128,8 @@ config.ppo_cfg.optimizer = OptimizerConfig::muon(3e-4, 3e-4, 0.01);
 config.ppo_cfg.optimizer.critic.with_lr(1e-4f);
 ```
 
+`entropy_coef` scales the raw entropy in nats, not the entropy divided by `ln(valid actions)` as GigaLearn's `entropyScale` does. With the default action set (usually about 34 to 40 valid actions on average, depending on how the bot plays), the same number is about 3.5× stronger here, and it's stronger where more actions are valid.
+
 The Muon preset applies Muon to hidden-to-hidden weight matrices and AdamW to everything else. Its learning rate is scaled so values comparable to Adam's carry over.
 
 ### Learning Rate Schedule
