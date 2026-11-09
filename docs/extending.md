@@ -26,6 +26,30 @@ public:
 
 Only the agents being trained are measured. In PFSP envs, the past version's cars are left out. A metric that returns the same value for every agent, such as the ball's height, is still counted once per measured agent, so envs with more learner agents (for example 3v3 compared to 1v1) carry more weight in its average. Metrics are averaged per tick, so per-episode statistics (such as average episode length) aren't supported.
 
+**Metrics that read rewards:** A metric can count what a reward already judges, such as a shot or a save, without computing it again. Override `reward_inputs()` to return the names of the reward entries it reads, and call `reward_value(i, agent)` in `get_metric` for the `i`-th of them. It gives what that entry's function returned for the agent on the current tick (rewards run before metrics in a tick), before its weight and `RewardOptions`, or `std::nullopt` when no reward entry has that name. A missing entry isn't an error, so a metric can name a reward that a training plan only adds in a later stage, and it logs nothing until then. Only the entries some metric names are recorded each tick, so metrics without reward inputs cost nothing extra. The example assumes a shot reward has been made.
+
+```cpp
+// Shots per agent tick: 1 on the tick the "Shot" reward pays the agent, 0 otherwise.
+class ShotCountMetric : public metric::MetricFunction {
+public:
+    [[nodiscard]] std::vector<std::string> reward_inputs() const override { return {"Shot"}; }
+
+    std::optional<double> get_metric(
+        const env::AgentMeta& agent,
+        const ffi::ArenaState& /* current_state */,
+        const ffi::ArenaState& /* previous_state */
+    ) const override {
+        const std::optional<float> shot = reward_value(0, agent);
+        if (!shot) return std::nullopt;  // No "Shot" reward configured.
+        return *shot > 0.0f ? 1.0 : 0.0;
+    }
+
+    [[nodiscard]] std::unique_ptr<metric::MetricFunction> clone() const override {
+        return std::make_unique<ShotCountMetric>(*this);
+    }
+};
+```
+
 **State Setters:** Subclass `state::StateSetter` and implement `apply(arena, current_state, agents, rng)` and `clone()`. Add a factory function to `src/state/setters.hpp`.
 
 New `.cpp` files must be added to the explicit source list in `CMakeLists.txt`.

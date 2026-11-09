@@ -11,8 +11,9 @@
 #include <utility>
 #include <cstdint>
 
-// Forward declaration.
+// Forward declarations.
 namespace buta_ppo::env { struct AgentMeta; }
+namespace buta_ppo::reward { struct RewardTickValues; class RewardManager; }
 
 namespace buta_ppo::metric {
 
@@ -20,8 +21,30 @@ namespace buta_ppo::metric {
  * @brief Abstract class for defining environment metrics.
  */
 class MetricFunction {
+    friend class MetricManager;
+
+    // Set by the manager: this tick's reward values, and each of `reward_inputs()`'s row in them (-1 when no entry has
+    // that name). Neither is episode state; the metric stays stateless.
+    const reward::RewardTickValues* reward_values_ = nullptr;
+    std::vector<int> reward_slots_;
+
+protected:
+    /**
+     * @brief What the reward entry named `reward_inputs()[input]` returned for `agent` this tick, before its weight
+     * and `RewardOptions`. Rewards run before metrics within a tick, so it's the same tick's value.
+     *
+     * @return The value, or nothing when no reward entry has that name (or `input` is out of range).
+     */
+    [[nodiscard]] std::optional<float> reward_value(size_t input, const env::AgentMeta& agent) const;
+
 public:
     virtual ~MetricFunction() = default;
+
+    /**
+     * @brief Names of the reward entries this metric reads with `reward_value`, so it can count what a reward judges
+     * (a shot, a save) without computing it again. Only these entries are recorded each tick. Empty by default.
+     */
+    [[nodiscard]] virtual std::vector<std::string> reward_inputs() const { return {}; }
 
     /**
      * @brief Computes the metric value for a specific agent at the current sim tick.
@@ -89,6 +112,14 @@ public:
     void set_metrics(const std::vector<MetricEntry>& metrics);
 
     /**
+     * @brief Lets the metrics read the reward entries they name in `reward_inputs`: asks `rewards` to record those
+     * entries each tick. Call after `set_metrics` and after the rewards are set.
+     *
+     * @param rewards The env's reward manager.
+     */
+    void bind_rewards(reward::RewardManager& rewards);
+
+    /**
      * @brief Resets previous state with a new state at the start of a new episode.
      * 
      * @param initial_state The initial arena state to reset to.
@@ -101,8 +132,10 @@ public:
      * @param agent The agent to get the metrics for.
      * @param current_state The current arena state to utilize in metric calculation.
      * @param track_telemetry Whether to add the metrics to the telemetry. False for agents that aren't trained on.
+     * @param reward_values This tick's reward values from the env's reward manager, for metrics with reward inputs.
      */
-    void calculate_metrics(const env::AgentMeta& agent, const ffi::ArenaState& current_state, bool track_telemetry = true);
+    void calculate_metrics(const env::AgentMeta& agent, const ffi::ArenaState& current_state, bool track_telemetry = true,
+                           const reward::RewardTickValues* reward_values = nullptr);
 
     /**
      * @brief Updates the previous state. Called after all metrics for a tick have been fetched.

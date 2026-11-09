@@ -60,7 +60,7 @@ The order of the two options doesn't matter. Don't set `opp_scale` on a reward t
 
 Invalid options, non-finite weights, and duplicate reward names stop training at startup. Settings that have no effect, such as `self_share` in 1v1-only layouts, a zero weight, or an `opp_scale` above 1, print a `[WARN]` instead.
 
-Metrics are averaged over every tick since the previous TensorBoard log, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. See [Extending the Framework](extending.md) to write your own and [Telemetry](telemetry.md) for how they are logged.
+Metrics are averaged over every tick since the previous TensorBoard log, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. A metric can also count what a reward entry judges each tick by naming it (see "Metrics that read rewards" in [Extending the Framework](extending.md)). To write your own metrics see [Extending the Framework](extending.md) and [Telemetry](telemetry.md) for how they are logged.
 
 ## Environments & Batch Size
 

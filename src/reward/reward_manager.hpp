@@ -167,6 +167,16 @@ struct RewardEntry {
 );
 
 /**
+ * @brief This tick's values of the reward entries that metrics read (`MetricFunction::reward_inputs`), by car id: what
+ * each entry's function returned, before its weight and `RewardOptions`. Only entries a metric asked for are recorded.
+ */
+struct RewardTickValues {
+    static constexpr size_t MAX_CARS = 8;
+    // One row per recorded entry, in the order `RewardManager::track_tick_values` handed out their slots.
+    std::vector<std::array<float, MAX_CARS>> values;
+};
+
+/**
  * @brief Manages the set of rewards for the following actions: computing, weighting, transforming, and accumulating telemetry.
  *
  * Each step is `begin_step`, then `accumulate_tick` once per sim tick, then `end_step`.
@@ -186,15 +196,21 @@ private:
     std::vector<float> step_raw_;
     std::vector<float> step_received_;
 
+    // Values recorded for metrics. `tracked_slot_[entry]` is the entry's row in `tick_values_`, or -1 when no metric
+    // reads it; empty until a metric asks, so nothing is recorded otherwise.
+    std::vector<int> tracked_slot_;
+    RewardTickValues tick_values_;
+
     /**
      * @brief Accumulates a team reward's weighted values for this tick, calling it once per team that has agents.
      */
-    void accumulate_team_reward(TeamRewardFunction& function, float weight, float* raw, const ffi::ArenaState& current_state);
+    void accumulate_team_reward(TeamRewardFunction& function, float weight, float* raw, int slot,
+                                const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& current_state);
 
     /**
      * @brief Accumulates a per-agent reward's weighted values for this tick, calling it once per agent.
      */
-    void accumulate_agent_reward(RewardFunction& function, float weight, float* raw,
+    void accumulate_agent_reward(RewardFunction& function, float weight, float* raw, int slot,
                                  const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& current_state);
 
     /**
@@ -216,6 +232,20 @@ public:
      * @param rewards The desired rewards, these are deep copied.
      */
     void set_rewards(const std::vector<RewardEntry>& rewards);
+
+    /**
+     * @brief Starts recording the named entry's value for every agent each tick, for a metric to read
+     * (`MetricFunction::reward_inputs`). Asking again for the same entry returns the same slot.
+     *
+     * @param name The reward entry's name.
+     * @return The entry's row in `tick_values()`, or -1 when no entry has that name.
+     */
+    int track_tick_values(const std::string& name);
+
+    /**
+     * @brief This tick's recorded values, filled by `accumulate_tick`.
+     */
+    [[nodiscard]] const RewardTickValues& tick_values() const { return tick_values_; }
 
     /**
      * @brief Resets all reward trackers with a new state at the start of a new episode, and binds the agent layout.

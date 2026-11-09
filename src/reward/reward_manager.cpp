@@ -60,9 +60,26 @@ std::vector<std::string> validate_reward_entries(const std::vector<RewardEntry>&
 
 void RewardManager::set_rewards(const std::vector<RewardEntry>& rewards) {
     rewards_ = rewards;
+    // New entries, so any recording metrics asked for is dropped; they ask again (`MetricManager::bind_rewards`).
+    tracked_slot_.clear();
+    tick_values_.values.clear();
     for (const RewardEntry& entry : rewards_) {
         telemetry_breakdown_[entry.name] = RewardAccumulation{};
     }
+}
+
+int RewardManager::track_tick_values(const std::string& name) {
+    for (size_t e = 0; e < rewards_.size(); e++) {
+        if (rewards_[e].name != name) continue;
+        if (tracked_slot_.empty()) tracked_slot_.assign(rewards_.size(), -1);
+        if (tracked_slot_[e] < 0) {
+            tracked_slot_[e] = static_cast<int>(tick_values_.values.size());
+            tick_values_.values.emplace_back();
+            tick_values_.values.back().fill(0.0f);
+        }
+        return tracked_slot_[e];
+    }
+    return -1;
 }
 
 void RewardManager::reset(const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& initial_state) {
@@ -95,35 +112,41 @@ void RewardManager::accumulate_tick(const std::vector<env::AgentMeta>& agents, c
     for (size_t e = 0; e < rewards_.size(); e++) {
         RewardEntry& entry = rewards_[e];
         float* raw = step_raw_.data() + e * num_agents_;
+        const int slot = tracked_slot_.empty() ? -1 : tracked_slot_[e];
 
         if (entry.function->is_team_reward()) {
             auto& team_function = static_cast<TeamRewardFunction&>(*entry.function);
-            accumulate_team_reward(team_function, entry.weight, raw, current_state);
+            accumulate_team_reward(team_function, entry.weight, raw, slot, agents, current_state);
         } else {
-            accumulate_agent_reward(*entry.function, entry.weight, raw, agents, current_state);
+            accumulate_agent_reward(*entry.function, entry.weight, raw, slot, agents, current_state);
         }
     }
 
     previous_state_ = current_state;
 }
 
-void RewardManager::accumulate_team_reward(TeamRewardFunction& function, float weight, float* raw, const ffi::ArenaState& current_state) {
+void RewardManager::accumulate_team_reward(TeamRewardFunction& function, float weight, float* raw, int slot,
+                                           const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& current_state) {
     std::array<float, 2> team_values{};
     for (size_t team = 0; team < team_values.size(); team++) {
         if (team_sizes_[team] > 0) {
-            team_values[team] = function.get_team_reward(static_cast<ffi::Team>(team), current_state, previous_state_) * weight;
+            team_values[team] = function.get_team_reward(static_cast<ffi::Team>(team), current_state, previous_state_);
         }
     }
 
     for (size_t a = 0; a < num_agents_; a++) {
-        raw[a] += team_values[agent_teams_[a]];
+        const float value = team_values[agent_teams_[a]];
+        raw[a] += value * weight;
+        if (slot >= 0) tick_values_.values[slot][agents[a].car_id] = value;
     }
 }
 
-void RewardManager::accumulate_agent_reward(RewardFunction& function, float weight, float* raw,
+void RewardManager::accumulate_agent_reward(RewardFunction& function, float weight, float* raw, int slot,
                                             const std::vector<env::AgentMeta>& agents, const ffi::ArenaState& current_state) {
     for (size_t a = 0; a < num_agents_; a++) {
-        raw[a] += function.get_reward(agents[a], current_state, previous_state_) * weight;
+        const float value = function.get_reward(agents[a], current_state, previous_state_);
+        raw[a] += value * weight;
+        if (slot >= 0) tick_values_.values[slot][agents[a].car_id] = value;
     }
 }
 

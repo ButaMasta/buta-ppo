@@ -113,8 +113,9 @@ RocketSimEnv::RocketSimEnv(
 
     // Setup Rewards.
     reward_manager_.set_rewards(rewards);
-    // Setup Metrics.
+    // Setup Metrics, and the reward entries they read.
     metric_manager_.set_metrics(metrics);
+    metric_manager_.bind_rewards(reward_manager_);
 }
 
 uint32_t RocketSimEnv::add_agent(ffi::Team team) {
@@ -220,7 +221,7 @@ bool RocketSimEnv::advance_tick(int tick, StepProgress& progress) {
     for (size_t a = 0; a < agents_.size(); a++) {
         // opponent_team_ is an optional only set by pfsp envs. If it is not set then this evaluates to true.
         const bool track_telemetry = agents_[a].team != opponent_team_;
-        metric_manager_.calculate_metrics(agents_[a], arena_state_, track_telemetry);
+        metric_manager_.calculate_metrics(agents_[a], arena_state_, track_telemetry, &reward_manager_.tick_values());
     }
     metric_manager_.update_previous_state(arena_state_);
 
