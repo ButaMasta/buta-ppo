@@ -62,6 +62,28 @@ Invalid options, non-finite weights, and duplicate reward names stop training at
 
 Metrics are averaged over every tick since the previous TensorBoard log, so they don't depend on `ticks_per_step`. Leaving `metric_entries` empty disables them. A metric can also count what a reward entry judges each tick by naming it (see "Metrics that read rewards" in [Extending the Framework](extending.md)). To write your own metrics see [Extending the Framework](extending.md) and [Telemetry](telemetry.md) for how they are logged.
 
+**Metric Options:** Every metric runs once per measured agent per physics tick, and each costs a few nanoseconds per call, so a long list of metrics slows the env workers measurably. Each entry can take an optional `MetricOptions` that limits where it is computed, and `metric_env_share` measures every entry in a share of the envs.
+
+```cpp
+// Compute the metrics in a quarter of each match layout's envs.
+config.metric_env_share = 0.25f;
+
+config.metric_entries = {
+    {"InAirRatio", create_in_air_ratio_metric()},
+    // Only in 3v3 envs. The other envs never call it.
+    {"InAirRatio_3v3", create_in_air_ratio_metric(), {.layouts = {{3, 3}}}},
+    // A {blue, orange} pair matches either way round, so {1, 2} covers 1v2 and 2v1.
+    {"InAirRatio_1v2", create_in_air_ratio_metric(), {.layouts = {{1, 2}}}},
+    // Measured in every env whatever metric_env_share is, for a metric of rare events that needs every sample.
+    {"InAirRatio_AllEnvs", create_in_air_ratio_metric(), {.env_share = 1.0f}}
+};
+```
+
+- `layouts` (default empty, every layout): the team sizes `{blue, orange}` of the match layouts the entry is computed in. Envs of other layouts skip it entirely, which saves its cost there and makes any metric loggable per layout. An entry whose layouts no match distribution plays prints a `[WARN]`, since it never logs.
+- `env_share` (default unset, `metric_env_share`): the share of each layout's envs, in `(0, 1]`, that compute the entry. `metric_env_share` (default `1`) is the share for entries that don't set their own.
+
+Shares pick `max(1, round(share × n))` of a layout's `n` envs, spread evenly by env index, counted separately for its self-play and its PFSP envs so each kind gets its share. The picks are fixed for the run, so a restart measures the same envs. A metric's logged value is then the average over the measured envs' agent ticks: the same quantity, from fewer samples, so a share of 0.25 cuts the metrics' cost about four times and their curves get somewhat noisier, mostly for rare events. Shares outside `(0, 1]` and layouts with an empty team stop training at startup. With any option in use, startup prints how many envs compute metrics and how many entries each computes.
+
 ## Environments & Batch Size
 
 ```cpp

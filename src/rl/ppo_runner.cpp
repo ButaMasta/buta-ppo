@@ -163,6 +163,7 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
     // A benchmark runner's config was already checked by the benchmark that made it.
     if (!benchmark_child_) {
         validate_rewards();
+        validate_metrics();
         validate_cpu_pinning();
     }
 
@@ -291,6 +292,16 @@ void PPORunner::validate_rewards() {
     }
 }
 
+void PPORunner::validate_metrics() {
+    std::vector<std::pair<size_t, size_t>> layouts;
+    for (const auto& dist : config_.match_distributions) {
+        if (dist.weight > 0.0f) layouts.emplace_back(dist.blue_players, dist.orange_players);
+    }
+    for (const std::string& warning : metric::validate_metric_entries(config_.metric_entries, config_.metric_env_share, layouts)) {
+        warn(warning, "Metric config");
+    }
+}
+
 void PPORunner::validate_cpu_pinning() {
     // Runs before any thread is pinned, so the allowed CPUs are the whole process's, e.g. as limited by `taskset`.
     util::validate_cpus(config_.main_thread_cpus, "main_thread_cpus");
@@ -327,7 +338,8 @@ void PPORunner::setup_dimensions_and_buffers() {
         config_.render,
         config_.pfsp_cfg,
         config_.worker_cpus,
-        config_.render_external_bots
+        config_.render_external_bots,
+        config_.metric_env_share
     );
 
     total_agents_ = vec_env_->get_total_agents();
@@ -376,6 +388,17 @@ void PPORunner::setup_dimensions_and_buffers() {
     if (!benchmark_child_ && !config_.render) {
         std::cout << "Envs: " << config_.num_envs << " (" << learner_agents_ << " learner agents, " << buffer_size_
                   << " steps each per update), worker threads: " << config_.num_threads << "\n";
+        // Only when metric options are in use, so other configs print as before.
+        const bool options_used = config_.metric_env_share < 1.0f ||
+            std::any_of(config_.metric_entries.begin(), config_.metric_entries.end(), [](const metric::MetricEntry& e) {
+                return !e.options.layouts.empty() || e.options.env_share.has_value();
+            });
+        if (options_used) {
+            const auto s = vec_env_->get_metric_sampling();
+            std::cout << "Metrics: " << config_.metric_entries.size() << " entries, computed in " << s.measuring_envs
+                      << " of " << config_.num_envs << " envs (" << s.min_active << "-" << s.max_active
+                      << " entries per env), metric_env_share " << config_.metric_env_share << "\n";
+        }
     }
 
     config_.ac_cfg.obs_size = static_cast<int64_t>(obs_size_);

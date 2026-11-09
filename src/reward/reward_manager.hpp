@@ -243,6 +243,14 @@ public:
     int track_tick_values(const std::string& name);
 
     /**
+     * @brief Stops recording every entry, as before any `track_tick_values`.
+     */
+    void clear_tick_values() {
+        tracked_slot_.clear();
+        tick_values_.values.clear();
+    }
+
+    /**
      * @brief This tick's recorded values, filled by `accumulate_tick`.
      */
     [[nodiscard]] const RewardTickValues& tick_values() const { return tick_values_; }

@@ -152,6 +152,11 @@ struct RunnerConfig {
     float episode_time_limit_seconds = 150.0f;
     std::vector<reward::RewardEntry> reward_entries;
     std::vector<metric::MetricEntry> metric_entries = {};
+    // Share of each match layout's envs that compute the metric entries, in (0, 1], spread evenly over its self-play
+    // envs and over its PFSP envs; an entry's `MetricOptions::env_share` overrides it. 
+    // Metrics cost time every tick, so a share cuts their cost about as much;
+    // their curves then come from fewer agent ticks. 1 computes them in every env.
+    float metric_env_share = 1.0f;
 
     // Total envs. 0 picks the env count whose steps per agent come closest to target_steps_per_agent.
     // Workers take envs one at a time, so it doesn't need to divide by the thread count. Training needs at least 2.
@@ -469,6 +474,7 @@ private:
      * for settings that likely don't do what was intended.
      */
     void validate_rewards();
+    void validate_metrics();
 
     /**
      * @brief Checks the CPU pinning config. Throws on CPUs this process can't run on and warns when the main

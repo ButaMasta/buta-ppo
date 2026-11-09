@@ -200,7 +200,8 @@ public:
         bool render = false,
         const rl::PFSPConfig& pfsp_cfg = {},
         const std::vector<int>& worker_cpus = {},
-        const std::vector<external::ExternalSide>& external_sides = {}
+        const std::vector<external::ExternalSide>& external_sides = {},
+        float metric_env_share = 1.0f
     );
 
     ~VecEnv();
@@ -295,6 +296,9 @@ public:
     [[nodiscard]] size_t get_num_opponent_slots() const { return num_opponent_slots_; };
     [[nodiscard]] size_t get_single_obs_size() const { return single_obs_size_; };
     [[nodiscard]] size_t get_action_space_size() const { return action_space_size_; };
+    // Envs that compute at least one metric entry, and the fewest and most entries an env computes.
+    struct MetricSampling { size_t measuring_envs = 0, min_active = 0, max_active = 0; };
+    [[nodiscard]] MetricSampling get_metric_sampling() const;
 };
 
 } // namespace buta_ppo::env

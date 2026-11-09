@@ -70,6 +70,8 @@ RocketSimEnv::RocketSimEnv(
     if (blue_count > max_players_per_team || match_layout.size() - blue_count > max_players_per_team) {
         throw std::invalid_argument("RocketSimEnv: match layout has a team larger than max_players_per_team.");
     }
+    team_players_[0] = blue_count;
+    team_players_[1] = match_layout.size() - blue_count;
 
     for (const ffi::Team team : match_layout) {
         add_agent(team);
@@ -113,8 +115,16 @@ RocketSimEnv::RocketSimEnv(
 
     // Setup Rewards.
     reward_manager_.set_rewards(rewards);
-    // Setup Metrics, and the reward entries they read.
+    // Setup Metrics: the entries for this layout, and the reward entries they read.
     metric_manager_.set_metrics(metrics);
+    metric_manager_.select(team_players_[0], team_players_[1], 0, 1, 1.0f);
+    metric_manager_.bind_rewards(reward_manager_);
+}
+
+void RocketSimEnv::set_metric_sampling(size_t rank, size_t group_size, float default_share) {
+    metric_manager_.select(team_players_[0], team_players_[1], rank, group_size, default_share);
+    // Record only the rewards the entries still computed here read.
+    reward_manager_.clear_tick_values();
     metric_manager_.bind_rewards(reward_manager_);
 }
 

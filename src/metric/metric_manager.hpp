@@ -3,6 +3,7 @@
 
 #include "buta_ppo/ffi.h"
 
+#include <cstddef>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -69,22 +70,48 @@ struct MetricAccumulation {
     uint64_t count = 0;
 };
 
+/**
+ * @brief Where a metric entry is computed. Metrics run every tick for every measured agent, so leaving them out of envs
+ * where they can't apply, or measuring them in a share of the envs, saves their cost there.
+ */
+struct MetricOptions {
+    // Team sizes {blue, orange} of the match layouts the entry is computed in, each matching either way round ({1, 2}
+    // covers 1v2 and 2v1). Empty: every layout. Other envs never call it, which is how to log a metric per layout.
+    std::vector<std::pair<size_t, size_t>> layouts = {};
+    // Share of each layout's envs that compute the entry, in (0, 1], spread evenly over its self-play envs and over its
+    // PFSP envs. Unset: the config's `metric_env_share` (1 by default, every env).
+    std::optional<float> env_share = std::nullopt;
+
+    /**
+     * @brief Whether the entry is computed in a `blue` v `orange` layout.
+     */
+    [[nodiscard]] bool applies_to(size_t blue, size_t orange) const {
+        if (layouts.empty()) return true;
+        for (const auto& [a, b] : layouts) {
+            if ((a == blue && b == orange) || (a == orange && b == blue)) return true;
+        }
+        return false;
+    }
+};
+
 struct MetricEntry {
     std::string name;
     std::unique_ptr<MetricFunction> function;
+    MetricOptions options;
     MetricAccumulation accumulate;
 
-    MetricEntry(std::string n, std::unique_ptr<MetricFunction> f)
-        : name(std::move(n)), function(std::move(f)) {}
+    MetricEntry(std::string n, std::unique_ptr<MetricFunction> f, MetricOptions o = {})
+        : name(std::move(n)), function(std::move(f)), options(std::move(o)) {}
     
     MetricEntry(const MetricEntry& other)
-        : name(other.name), function(other.function->clone()), 
+        : name(other.name), function(other.function->clone()), options(other.options),
           accumulate(other.accumulate) {}
     
     MetricEntry& operator=(const MetricEntry& other) {
         if (this != &other) {
             name = other.name;
             function = other.function->clone();
+            options = other.options;
             accumulate = other.accumulate;
         }
         return *this;
@@ -92,11 +119,34 @@ struct MetricEntry {
 };
 
 /**
+ * @brief Whether the env at `rank` among the `group_size` envs of its layout computes an entry measured in a `share`
+ * of them: max(1, round(share x group_size)) envs, spread evenly over the ranks.
+ */
+[[nodiscard]] bool metric_env_sampled(size_t rank, size_t group_size, float share);
+
+/**
+ * @brief Checks metric entries' options. Throws `std::invalid_argument` on a share outside (0, 1] (`default_share`
+ * or an entry's) or a layout with an empty team.
+ *
+ * @param metrics The metric entries to check.
+ * @param default_share The config's `metric_env_share`.
+ * @param layouts Team sizes {blue, orange} of the match layouts that get envs.
+ * @return Warnings for entries that are valid but likely misconfigured, such as layouts that no env plays.
+ */
+[[nodiscard]] std::vector<std::string> validate_metric_entries(
+    const std::vector<MetricEntry>& metrics,
+    float default_share,
+    const std::vector<std::pair<size_t, size_t>>& layouts
+);
+
+/**
  * @brief Manages the set of metrics for computing and accumulating telemetry.
  */
 class MetricManager {
 private:
     std::vector<MetricEntry> metrics_;
+    // Indices of the entries this env computes (`select`); all of them until then.
+    std::vector<size_t> active_;
     ffi::ArenaState previous_state_;
     std::unordered_map<std::string, MetricAccumulation> telemetry_breakdown_;
 
@@ -112,8 +162,26 @@ public:
     void set_metrics(const std::vector<MetricEntry>& metrics);
 
     /**
-     * @brief Lets the metrics read the reward entries they name in `reward_inputs`: asks `rewards` to record those
-     * entries each tick. Call after `set_metrics` and after the rewards are set.
+     * @brief Picks the entries this env computes from their `MetricOptions`: those whose layouts include this env's
+     * and that sample this env (`metric_env_sampled`). The others are never called here; they keep their telemetry
+     * entry with no measured ticks. Call `bind_rewards` again afterwards.
+     *
+     * @param blue Players on blue in this env.
+     * @param orange Players on orange in this env.
+     * @param rank This env's index among the envs of its layout.
+     * @param group_size The number of envs of its layout.
+     * @param default_share The share for entries without their own `env_share`.
+     */
+    void select(size_t blue, size_t orange, size_t rank, size_t group_size, float default_share);
+
+    /**
+     * @brief How many entries this env computes.
+     */
+    [[nodiscard]] size_t active_count() const { return active_.size(); }
+
+    /**
+     * @brief Lets the computed metrics read the reward entries they name in `reward_inputs`: asks `rewards` to record
+     * those entries each tick. Call after `set_metrics` (and `select`) and after the rewards are set.
      *
      * @param rewards The env's reward manager.
      */

@@ -83,6 +83,8 @@ private:
 
     // The team controlled by a past policy in a PFSP match, whose rewards are left out of the telemetry.
     std::optional<ffi::Team> opponent_team_;
+    // Players per team, {blue, orange}, for the metric entries' layouts.
+    size_t team_players_[2] = {0, 0};
 
     std::vector<float> obs_buffer_;
     std::vector<float> action_mask_buffer_;
@@ -367,6 +369,23 @@ public:
      * and behave the same on every machine. The policy still runs, so its actions are computed and then ignored.
      */
     void set_heavy_workload(bool enabled);
+
+    /**
+     * @brief Measures the metric entries in a share of the envs (`MetricOptions::env_share`, `RunnerConfig::
+     * metric_env_share`): this env computes an entry when its rank among the `group_size` envs of its layout is one of
+     * those the entry's share picks (`metric::metric_env_sampled`). Entries whose layouts don't include this env's are
+     * left out from the start, with or without this. Without a call, every applicable entry is computed.
+     *
+     * @param rank This env's index among the envs of its layout.
+     * @param group_size The number of envs of its layout.
+     * @param default_share The share for entries without their own.
+     */
+    void set_metric_sampling(size_t rank, size_t group_size, float default_share);
+
+    /**
+     * @brief How many metric entries this env computes.
+     */
+    [[nodiscard]] size_t active_metric_count() const { return metric_manager_.active_count(); }
 
     /**
      * @brief Restarts the env as if it had just been built with `seed`, so the episodes after the next reset play out

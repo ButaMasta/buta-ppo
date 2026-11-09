@@ -22,7 +22,7 @@ By default, every update is logged. With a larger `steps_per_log`, each logged p
 | `Reward_Share/` | Each reward's fraction of the total magnitude, summing to 1. Shows which rewards dominate training. Not logged when no reward was received |
 | `Reward/` | `Mean_Step` and `Mean_Abs_Step`, the totals of `Reward_Components/` and `Reward_Magnitude/` |
 | `Episode/` | Goals, and truncations split into no-touch and time-limit, summed since the previous log |
-| `Metrics/` | Each configured metric's average over every measured tick since the previous log. A metric that skipped every tick in that time isn't logged for it |
+| `Metrics/` | Each configured metric's average over every measured tick since the previous log, in the envs that compute it (see Metric Options in [Configuration](configuration.md)). A metric that skipped every tick in that time isn't logged for it |
 | `Loss/` | Policy, value, entropy |
 | `Policy/` | Approx KL, clip fraction, normalized entropy, the learning rate scale (`LR_Scale`, 1 without an `lr_schedule`) |
 | `Value/` | Explained variance (how much of the returns the critic predicts, independent of reward scale) |

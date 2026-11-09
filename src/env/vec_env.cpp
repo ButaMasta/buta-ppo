@@ -30,9 +30,13 @@ VecEnv::VecEnv(
     bool render,
     const rl::PFSPConfig& pfsp_cfg,
     const std::vector<int>& worker_cpus,
-    const std::vector<external::ExternalSide>& external_sides
+    const std::vector<external::ExternalSide>& external_sides,
+    float metric_env_share
 ) : pool_(num_threads, worker_cpus) {
     num_envs_ = num_envs;
+    if (!(metric_env_share > 0.0f && metric_env_share <= 1.0f)) {
+        throw std::invalid_argument("metric_env_share must be in (0, 1].");
+    }
 
     if (!external_sides.empty() && !render) {
         throw std::invalid_argument("External bots are only supported in render mode for now.");
@@ -75,6 +79,9 @@ VecEnv::VecEnv(
             ? static_cast<size_t>(std::lround(pfsp_cfg.envs * static_cast<float>(count_for_dist)))
             : 0;
 
+        // Metric sampling ranks, counted apart for the self-play and the PFSP envs, so each kind gets its share.
+        size_t self_play_rank = 0, pfsp_rank = 0;
+
         for (size_t c = 0; c < count_for_dist; c++) {
             // Spread the distribution's PFSP envs evenly over its envs, so both env groups get a similar share.
             const bool is_pfsp = (c + 1) * pfsp_for_dist / count_for_dist > c * pfsp_for_dist / count_for_dist;
@@ -98,6 +105,14 @@ VecEnv::VecEnv(
                 opponent_team,
                 external_sides
             ));
+            // Each metric entry is measured in its share of this layout's envs, spread evenly by rank over its self-play
+            // envs and over its PFSP envs separately: spreading over all of them could line up with the PFSP envs'
+            // own spread and measure only those.
+            if (is_pfsp) {
+                envs_.back()->set_metric_sampling(pfsp_rank++, pfsp_for_dist, metric_env_share);
+            } else {
+                envs_.back()->set_metric_sampling(self_play_rank++, count_for_dist - pfsp_for_dist, metric_env_share);
+            }
 
             env_agent_counts_[env_idx] = agents_in_layout;
             env_agent_offsets_[env_idx] = current_agent_offset;
@@ -419,6 +434,18 @@ void VecEnv::set_heavy_workload(bool enabled) {
     for (auto& env : envs_) {
         env->set_heavy_workload(enabled);
     }
+}
+
+VecEnv::MetricSampling VecEnv::get_metric_sampling() const {
+    MetricSampling s;
+    s.min_active = envs_.empty() ? 0 : envs_[0]->active_metric_count();
+    for (const auto& env : envs_) {
+        const size_t n = env->active_metric_count();
+        s.measuring_envs += n > 0;
+        s.min_active = std::min(s.min_active, n);
+        s.max_active = std::max(s.max_active, n);
+    }
+    return s;
 }
 
 void VecEnv::update_telemetry_breakdowns() {
