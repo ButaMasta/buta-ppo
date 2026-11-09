@@ -314,6 +314,25 @@ BatchedResetResult VecEnv::reset() {
     return { batched_obs_, batched_action_masks_ };
 }
 
+std::optional<BatchedResetResult> VecEnv::handle_viewer_keys() {
+    if (group_in_flight_ || num_envs_ != 1) {
+        throw std::logic_error("VecEnv::handle_viewer_keys is for render's single env, between steps.");
+    }
+    const uint8_t keys = envs_[0]->take_vis_actions();
+    if (keys & ffi::VIS_ACTION_RESET) {
+        std::cout << "Viewer: new episode.\n";
+        const auto& result = envs_[0]->reset();
+        write_obs_and_masks(0, result.observations, result.action_masks);
+    } else if (keys & ffi::VIS_ACTION_LAUNCH) {
+        std::cout << "Viewer: replaying the episode's start.\n";
+        const auto& result = envs_[0]->replay_reset();
+        write_obs_and_masks(0, result.observations, result.action_masks);
+    } else {
+        return std::nullopt;
+    }
+    return BatchedResetResult{ batched_obs_, batched_action_masks_ };
+}
+
 BatchedStepResult VecEnv::step(const int* batched_actions) {
     if (group_in_flight_) {
         throw std::logic_error("VecEnv::step called while an env group is still stepping.");

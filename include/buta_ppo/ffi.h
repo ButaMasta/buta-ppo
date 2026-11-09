@@ -96,6 +96,7 @@ extern "C" {
     rs_arena* rs_arena_create(int game_mode_idx);
     rs_arena* rs_arena_create_ball_sim(int ball_sim_game_mode_idx);
     rs_arena* rs_arena_create_vis(int game_mode_idx);
+    uint8_t rs_arena_take_vis_actions(rs_arena* arena_ptr);
     void rs_arena_free(rs_arena* arena_ptr);
     void rs_arena_free_ball_sim(rs_arena* ball_sim_arena_ptr);
 
@@ -165,6 +166,17 @@ inline BallSimArenaPtr create_arena_ball_sim(int ball_sim_game_mode = 0) {
 
 inline ArenaPtr create_arena_vis(int game_mode = 0) {
     return ArenaPtr(rs_arena_create_vis(game_mode));
+}
+
+// The viewer's key requests, as bits of `take_vis_actions`. The viewer only sends them while it follows a car, has
+// focus and its settings menu is closed, and not in spectate-only mode.
+inline constexpr uint8_t VIS_ACTION_RESET = 1;   // Backspace, or the settings menu's Reset play.
+inline constexpr uint8_t VIS_ACTION_DRIBBLE = 2; // F2.
+inline constexpr uint8_t VIS_ACTION_LAUNCH = 4;  // F4.
+
+// The viewer's key requests since the last call, which it clears. 0 without a viewer attached.
+inline uint8_t take_vis_actions(const ArenaPtr& arena) {
+    return arena ? rs_arena_take_vis_actions(arena.get()) : 0;
 }
 
 inline bool init(const std::string& collision_meshes_folder, bool silent = true) {

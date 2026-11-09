@@ -316,7 +316,8 @@ void PPORunner::setup_dimensions_and_buffers() {
     vec_env_ = std::make_unique<env::VecEnv>(
         config_.total_envs(),
         config_.match_distributions,
-        config_.setter_distributions,
+        (config_.render && !config_.render_setter_distributions.empty()) ? config_.render_setter_distributions
+                                                                          : config_.setter_distributions,
         config_.reward_entries,
         config_.metric_entries,
         config_.num_threads, 
@@ -1149,9 +1150,16 @@ void PPORunner::run_render(const std::atomic<bool>& stop_flag) {
     torch::Tensor current_obs = reset_res.observations;
     torch::Tensor current_masks = reset_res.action_masks;
 
-    std::cout << "Starting visualizer... Press Ctrl+C to stop.\n";
+    std::cout << "Starting visualizer... Press Ctrl+C to stop.\n"
+              << "While the viewer follows a car (1-8, or C to cycle): Backspace starts a new episode, F4 replays "
+                 "the episode's start.\n";
 
     while (!stop_flag) {
+        if (auto keys_reset = vec_env_->handle_viewer_keys()) {
+            current_obs = keys_reset->observations;
+            current_masks = keys_reset->action_masks;
+        }
+
         step_obs_gpu_.copy_(current_obs, true);
         step_masks_gpu_.copy_(current_masks, true);
 

@@ -16,6 +16,25 @@ cargo install --locked rocketsim_viewer --version 0.3.3
 
 It needs to be on your `PATH` (Cargo installs to `~/.cargo/bin`), or set the `ROCKETSIM_VIEWER` environment variable to its path. Without it, render mode stops at startup with an error saying so. The viewer has its own camera controls; its car controls aren't used, since the policy and any external bots drive every car.
 
+## Viewer Keys
+
+While the viewer follows a car, two of its keys restart the episode:
+
+| Key | Does |
+|---|---|
+| `Backspace` (or the settings menu's Reset play) | Starts a new episode from the state setters, as a goal or timeout would. |
+| `F4` | Replays the start of the current episode: the same setter and the same state again. |
+
+The viewer only sends these while it follows a car (`1` to `8`, or `C` to cycle through the cars and the overhead view), has focus and has its settings menu closed, and not in its spectate-only mode. Following a car only moves the camera here; it doesn't hand you the car. `F2` (the viewer's dribble key) does nothing. A replay starts from exactly the same state, but the observation's mirroring and car order are drawn anew, as at every reset, so the bots can play it differently.
+
+To look at particular state setters, such as a new one, list them in `render_setter_distributions`. Render then starts every episode from them instead of `setter_distributions`, and training is unaffected:
+
+```cpp
+config.render_setter_distributions = {{create_default_kickoff_setter(), 1.0f}};
+```
+
+Render plays one match layout, the first among those with the largest weight in `match_distributions`.
+
 ## Playing Against Nexto
 
 The visualizer can put Nexto, the RLGym community bot, on a team in place of your policy:

@@ -279,6 +279,17 @@ pub extern "C" fn rs_arena_create_vis(game_mode_idx: i32) -> *mut Arena {
     Box::into_raw(Box::new(arena))
 }
 
+/// The viewer's pending key requests as bits (1 reset, 2 dribble, 4 launch), which this call clears. 0 when none are
+/// pending or no viewer is attached.
+#[unsafe(no_mangle)]
+pub extern "C" fn rs_arena_take_vis_actions(arena_ptr: *mut Arena) -> u8 {
+    if arena_ptr.is_null() {
+        return 0;
+    }
+    let arena: &mut Arena = unsafe { &mut *arena_ptr };
+    arena.take_vis_actions()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn rs_arena_create(game_mode_idx: i32) -> *mut Arena {
     // Map the integer to the RocketSim enum. Defaulting to Soccar (0).

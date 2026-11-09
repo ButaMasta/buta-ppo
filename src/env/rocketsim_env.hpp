@@ -92,6 +92,7 @@ private:
     std::vector<state::StateSetterDistribution> setters_;
     std::discrete_distribution<size_t> setter_selector_;
     std::mt19937 rng_;
+    std::mt19937 replay_rng_; // Render only: `rng_` as the latest reset started, for `replay_reset`.
 
     int ticks_per_step_;
     size_t single_obs_size_;
@@ -291,6 +292,18 @@ public:
      * @return The result of the reset in the new arena state.
      */
     [[nodiscard]] ResetResult reset();
+
+    /**
+     * @brief Render only: resets to the latest reset's start state again, from the same setter with the same random
+     * draws. The obs's mirroring and car slot order, and where demolished cars respawn, are drawn anew, so the play
+     * that follows can differ.
+     */
+    [[nodiscard]] ResetResult replay_reset();
+
+    /**
+     * @brief Render only: the viewer's key requests since the last call (`ffi::VIS_ACTION_*` bits), which it clears.
+     */
+    [[nodiscard]] uint8_t take_vis_actions() { return ffi::take_vis_actions(arena_); }
 
     /**
      * @brief Step environment and update obs and reward buffers for collection.

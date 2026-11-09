@@ -141,6 +141,14 @@ ResetResult RocketSimEnv::reset() {
     return { obs_buffer_, action_mask_buffer_ };
 }
 
+ResetResult RocketSimEnv::replay_reset() {
+    if (!render_) {
+        throw std::logic_error("RocketSimEnv::replay_reset is only for render mode.");
+    }
+    rng_ = replay_rng_;
+    return reset();
+}
+
 StepResult RocketSimEnv::step(const int* actions) {
     apply_actions(actions);
 
@@ -159,6 +167,10 @@ StepResult RocketSimEnv::step(const int* actions) {
 }
 
 void RocketSimEnv::reset_episode_state() {
+    // Kept in render only, for the viewer's replay key. Copying draws nothing, so the episodes are the same.
+    if (render_) [[unlikely]] {
+        replay_rng_ = rng_;
+    }
     const size_t chosen_idx = setter_selector_(rng_);
     setters_[chosen_idx].setter->apply(arena_, arena_state_, agents_, rng_);
     // The setter teleported the cars and the ball. Once all are placed, the old contacts are dropped and the state is read

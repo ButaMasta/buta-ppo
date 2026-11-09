@@ -121,6 +121,10 @@ struct RunnerConfig {
     // training.
     bool render_best_action = true;
 
+    // Render only: the state setters episodes start from instead of `setter_distributions`, e.g. just a new setter
+    // to look at with the viewer's keys (docs/visualizer.md). Empty uses `setter_distributions`.
+    std::vector<state::StateSetterDistribution> render_setter_distributions = {};
+
     // Instead of training, measures thread counts, CPU pinning and env counts on this machine and prints the fastest
     // as config values to paste in. It runs this config's match layouts and network with fresh weights, under a light
     // workload (a fresh policy, mostly airborne) and a heavy one (scripted cars chasing the ball, like a bot that keeps

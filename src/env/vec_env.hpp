@@ -215,6 +215,14 @@ public:
     [[nodiscard]] BatchedResetResult reset();
 
     /**
+     * @brief Render only: acts on the viewer's keys for the single env. Its reset key (Backspace) starts a new episode
+     * from the state setters, and its launch key (F4) replays the latest episode's start state.
+     *
+     * @return The batched obs and masks after the reset, if a key reset the env.
+     */
+    [[nodiscard]] std::optional<BatchedResetResult> handle_viewer_keys();
+
+    /**
      * @brief Step every env and retrieve the batched result.
      * 
      * @param batched_actions The actions to dispatch to the workers.
