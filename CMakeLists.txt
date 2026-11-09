@@ -8,18 +8,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(BUILD_RUST_BRIDGE "Build the Rust bridge via Cargo" ON)
 
-# Grab dependency for logging.
-find_package(Protobuf REQUIRED)
-find_package(absl REQUIRED)
-include(FetchContent)
-FetchContent_Declare(
-    tensorboard_logger
-    GIT_REPOSITORY      https://github.com/RustingSword/tensorboard_logger.git
-    GIT_TAG             69267c5782775a97bc9c01bec3fa537b739f79fd
-    PATCH_COMMAND       ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patch_tensorboard_logger.cmake
-)
-FetchContent_MakeAvailable(tensorboard_logger)
-
 # Find LibTorch from the LIBTORCH environment variable. The path is cached on configure, so later builds don't need it set.
 if(DEFINED ENV{LIBTORCH})
     set(LIBTORCH_DIR "$ENV{LIBTORCH}" CACHE PATH "LibTorch directory, read from the LIBTORCH environment variable." FORCE)
@@ -86,6 +74,7 @@ if(BUILD_RUST_BRIDGE)
         src/state/default_kickoff.cpp
         src/state/random_state.cpp
         src/state/eval_kickoff.cpp
+        src/util/event_file_writer.cpp
         src/util/worker_pool.cpp
     )
 
@@ -99,19 +88,14 @@ if(BUILD_RUST_BRIDGE)
     target_link_libraries(buta_ppo PRIVATE 
         ${RUST_LIB} 
         ${TORCH_LIBRARIES} 
-        tensorboard_logger
-        protobuf::libprotobuf
-        absl::log_internal_check_op
     )
 
     # Release
     target_compile_options(buta_ppo PRIVATE 
-        "-I${Protobuf_INCLUDE_DIRS}"
         -Wall -Wextra -O3 -march=native -pthread
     )
     # Debug
     # target_compile_options(buta_ppo PRIVATE 
-    #     "-I${Protobuf_INCLUDE_DIRS}"
     #     -Wall -Wextra -g -O0
     # )
 

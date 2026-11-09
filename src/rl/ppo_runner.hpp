@@ -28,9 +28,9 @@
 #include <vector>
 
 // Forward declarations.
-class TensorBoardLogger;
 namespace buta_ppo::env { class VecEnv; struct BatchedStepResult; }
 namespace buta_ppo::rl  { class RolloutBuffer; class OpponentPool; }
+namespace buta_ppo::util { class EventFileWriter; }
 
 namespace buta_ppo::rl {
 
@@ -397,7 +397,8 @@ private:
     int64_t next_checkpoint_step_{0};
     int64_t last_checkpoint_step_{-1};
 
-    std::unique_ptr<TensorBoardLogger> logger_;
+    std::unique_ptr<util::EventFileWriter> logger_;
+    bool log_write_failed_{false};
 
     // Benchmark runners measure one candidate config each, quietly and without logging.
     bool benchmark_child_ = false;
@@ -429,6 +430,11 @@ private:
      */
     template <class T>
     void log_scalar(const std::string& tag, int64_t step, T value);
+
+    /**
+     * @brief Hands the logged scalars to the OS, warning the first time a write fails.
+     */
+    void flush_log();
     /**
      * @brief Runs the stop condition on `telemetry_`, and on a reason to stop, keeps it, prints it and appends it to
      * `<bot name>.stops.txt` in `log_dir()`. Training stops before its next update.

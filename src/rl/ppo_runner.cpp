@@ -2,10 +2,10 @@
 #include "ppo_runner.hpp"
 #include "rollout_buffer.hpp"
 #include "opponent_pool.hpp"
-#include "tensorboard_logger.h"
 #include "env/vec_env.hpp"
 #include "util/thread_affinity.hpp"
 #include "util/cpu_topology.hpp"
+#include "util/event_file_writer.hpp"
 #include "util/file_utils.hpp"
 
 #include <ATen/cuda/CUDAContext.h>
@@ -845,8 +845,15 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
 
 template <class T>
 void PPORunner::log_scalar(const std::string& tag, int64_t step, T value) {
-    logger_->add_scalar(tag, step, value);
+    logger_->add_scalar(tag, step, static_cast<float>(value));
     telemetry_.values[tag] = static_cast<double>(value);
+}
+
+void PPORunner::flush_log() {
+    if (logger_->flush() || log_write_failed_) return;
+    log_write_failed_ = true;
+    warn("Could not write to the TensorBoard log, so nothing more is logged this run. Is the disk full?",
+         "TensorBoard log not written");
 }
 
 void PPORunner::check_stop_condition() {
@@ -940,6 +947,7 @@ void PPORunner::write_log_window() {
     log_scalar("Policy/Clip_Fraction", global_step_, mean_metric("clip_fraction"));
     log_scalar("Policy/LR_Scale", global_step_, mean_metric("lr_scale"));
     log_scalar("Value/Explained_Variance", global_step_, mean_metric("explained_variance"));
+    flush_log();
 
     window = {};
 }
@@ -958,9 +966,10 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
 
     fs::create_directories(log_dir());
     const std::string log_file = log_dir() + "/" + config_.bot_name + ".tfevents";
-    TensorBoardLoggerOptions logger_options{};
-    logger_options.resume_ = true;
-    logger_ = std::make_unique<TensorBoardLogger>(log_file.c_str(), logger_options);
+    logger_ = std::make_unique<util::EventFileWriter>(log_file);
+    if (!logger_->repair_report().empty()) {
+        warn(logger_->repair_report(), "TensorBoard log repaired");
+    }
 
     // The main thread runs inference and the step bookkeeping. Pinned only here, after the env workers and CUDA have
     // started their threads, since threads it starts from now on inherit its CPUs. Unpinned again when training ends,
@@ -1292,6 +1301,7 @@ void PPORunner::run_evaluation() {
         std::cout << "\n";
     }
     log_scalar("Performance/Eval_Time", global_step_, static_cast<float>(result.seconds));
+    flush_log();
     std::cout << " | Eval Time:   " << std::fixed << std::setprecision(2) << result.seconds << "s"
               << (result.promoted ? ", the learner is now an anchor" : "") << std::defaultfloat << "\n";
 }

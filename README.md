@@ -41,7 +41,6 @@ Each update runs through the following stages:
 * **CMake:** Version 3.20 or higher. Ninja is recommended.
 * **Rust Toolchain:** Cargo with Rust 1.95 or newer (RocketSim's minimum).
 * **RocketSim Viewer:** Only for watching the bot in [Visualizer Mode](docs/visualizer.md): `cargo binstall rocketsim-viewer@0.3.3` (prebuilt, needs [cargo-binstall](https://github.com/cargo-bins/cargo-binstall)) or `cargo install --locked rocketsim_viewer --version 0.3.3`.
-* **Protobuf & Abseil:** Development packages, needed by the TensorBoard logger.
 * **Collision Meshes:** Rocket League arena geometry placed in `assets/collision_meshes/`. See RocketSim's documentation for how to obtain them.
 * **Python 3:** For TensorBoard and `deploy.py`.
 

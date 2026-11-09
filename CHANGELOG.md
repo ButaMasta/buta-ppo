@@ -1,4 +1,9 @@
 ### Current Unreleased Changes
+1. Replaced the `tensorboard_logger` dependency with a small built-in event file writer, so building no longer needs Protobuf, Abseil, or a download at configure time.
+    - The event files keep the same format, name and location. Existing logs keep working, and new runs append to them.
+    - A run killed mid-write (a crash, an out-of-memory kill, a power loss) could leave an unfinished record at the end of the log, and TensorBoard then never showed anything appended after it. The next run now removes that record and prints a `[WARN]`. If a record is damaged anywhere else, the bytes from there on are moved to `logs/<bot_name>.damaged-<time>` and the rest of the log stays readable.
+    - Logs reach the file after every TensorBoard log and evaluation instead of every 60 seconds, and a failed write now prints a `[WARN]` instead of being ignored.
+    - Non-breaking. Protobuf and Abseil can be uninstalled if nothing else needs them.
 
 ### Releases
 #### 0.3.2
