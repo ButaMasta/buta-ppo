@@ -1,6 +1,29 @@
 ### Current Unreleased Changes
 
 ### Releases
+#### 0.3.2
+1. The deployed bot now picks up players who join after it started, and holds neutral controls while it can't play. See [Deploying to RLBot](docs/deploying.md).
+    - Before, the enricher rejected every packet holding a player it wasn't built with, so a player joining mid-match stopped the bot from choosing actions and it held its last controls. It now adds the players who joined and rebuilds the enricher.
+    - While it can't play (a team grows past `max_players_per_team`, or the game state can't be mirrored in RocketSim), it holds neutral controls, prints why, and plays again once it can.
+    - Non-breaking. Run `deploy.py` again to get it. The model is unchanged.
+2. Added viewer keys and `RunnerConfig::render_setter_distributions`, for looking at state setters in render mode. See [Viewer Keys](docs/visualizer.md#viewer-keys).
+    - While the viewer follows a car, `Backspace` starts a new episode and `F4` replays the start of the current one, from the same setter and the same state.
+    - `render_setter_distributions` starts every render episode from the listed setters instead of `setter_distributions`. Empty, the default, uses `setter_distributions`.
+    - Non-breaking. Only render mode changes, and training is unaffected.
+3. Added metrics that read reward values, so a metric can count what a reward already judges without computing it again. See [Extending the Framework](docs/extending.md).
+    - A metric names reward entries in `MetricFunction::reward_inputs`, and `reward_value(i, agent)` gives what the `i`-th entry's function returned for the agent on the current tick, before its weight and `RewardOptions`, or `std::nullopt` when no reward entry has that name.
+    - Only the entries some metric names are recorded each tick, so metrics without reward inputs cost nothing extra.
+    - Non-breaking. Existing metrics work unchanged, and the rewards agents receive are the same.
+4. Added `MetricOptions` and `RunnerConfig::metric_env_share`, which limit where a metric is computed, since metrics run every tick for every measured agent. See Metric Options in [Configuration](docs/configuration.md).
+    - `layouts` computes an entry only in the listed match layouts, which also makes any metric loggable per layout.
+    - `env_share` (or `metric_env_share` for entries without their own) computes an entry in `max(1, round(share × n))` of each layout's `n` envs, spread evenly over its self-play envs and over its PFSP envs. A metric's curve then comes from fewer samples.
+    - Shares outside `(0, 1]` and layouts with an empty team stop training at startup, and an entry whose layouts no match distribution plays prints a `[WARN]`.
+    - Non-breaking. Without options, every entry is computed in every env as before.
+5. `deploy.py` can now be given `bot/model.pt` as the checkpoint, to rebuild the bot and keep its model. Before, it failed copying the file onto itself.
+    - Non-breaking.
+6. Documented three existing behaviors: `car_hit_ball` is set on every tick of contact rather than once per touch, `entropy_coef` scales the raw entropy rather than the entropy divided by `ln(valid actions)`, and snapshots evicted from the PFSP pool can't be restored by a rollback.
+    - Non-breaking. Docs only.
+
 #### 0.3.1
 1. Added training plans, which train through a list of stages in one process, each changing the config and training up to a lifetime step count, so a run can follow a curriculum unattended (add rewards in phases, lower the learning rate, shift the match or state setter weights). See [Training Plans](docs/training.md#training-plans).
     - `run_training_plan(config, stages, stop_flag, checkpoint_dir)` in `src/rl/training_plan.hpp` runs in place of `runner.run`. Each `TrainingStage {name, until_steps, apply}` lists only what it changes from the stage before. Each stage builds a fresh runner that resumes from the latest checkpoint, the same as stopping and restarting with the changed config, so the model, optimizer state, PFSP pool and evaluation carry over.
