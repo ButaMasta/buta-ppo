@@ -10,11 +10,12 @@ use crate::bot_ffi::{bot_api_free, bot_api_get_action, bot_api_init, bot_api_max
 
 use rlbot_rocketsim::rlbot::agents::{run_bot_agents, BotAgent};
 use rlbot_rocketsim::rlbot::flat::{
-    ControllableInfo, FieldInfo, GamePacket, MatchConfiguration, MatchPhase, PlayerInput,
+    ControllableInfo, FieldInfo, GamePacket, Human, MatchConfiguration, MatchPhase, PlayerClass, PlayerConfiguration,
+    PlayerInput,
 };
 use rlbot_rocketsim::rlbot::util::{AgentEnvironment, PacketQueue};
 use rlbot_rocketsim::rlbot::RLBotConnection;
-use rlbot_rocketsim::{GameStateEnricher, MatchContext};
+use rlbot_rocketsim::{EnrichmentError, GameStateEnricher, MatchContext, MatchContextError};
 
 use rlbot_rocketsim::rlbot::flat::ControllerState;
 
@@ -45,6 +46,12 @@ pub struct ButaPPOBot {
     small_pad_indices: Vec<usize>,
     last_phase: Option<MatchPhase>,
     pending_reshuffle: bool,
+    // The match's players, plus any who joined after the bot started, which the enricher is rebuilt from.
+    match_config: MatchConfiguration,
+    field_info: Arc<FieldInfo>,
+    max_per_team: usize,
+    // Why the bot isn't inferring, while it holds neutral controls instead. Printed when it changes.
+    pause_reason: Option<String>,
 }
 
 impl BotAgent for ButaPPOBot {
@@ -112,6 +119,10 @@ impl BotAgent for ButaPPOBot {
             small_pad_indices,
             last_phase: None,
             pending_reshuffle: false,
+            match_config: (*match_config).clone(),
+            field_info,
+            max_per_team,
+            pause_reason: None,
         }
     }
 
@@ -126,10 +137,10 @@ impl BotAgent for ButaPPOBot {
         self.last_phase = Some(phase);
 
         // Feed the RLBot packet into the RocketSim enricher.
-        let enriched = self.enricher.update(packet).is_ok();
+        let ready = self.ready(packet);
 
         // Only infer new actions during Kickoff or Active gameplay.
-        if enriched
+        if ready
             && matches!(
                 packet.match_info.match_phase,
                 MatchPhase::Kickoff | MatchPhase::Active
@@ -149,6 +160,73 @@ impl BotAgent for ButaPPOBot {
 }
 
 impl ButaPPOBot {
+    /// Enriches the packet and checks the model can play it. Otherwise the bot holds neutral controls, rather than
+    /// the last ones it chose, until it can.
+    fn ready(&mut self, packet: &GamePacket) -> bool {
+        let blue_count = packet.players.iter().filter(|p| p.team == 0).count();
+        let orange_count = packet.players.len() - blue_count;
+
+        let problem = match self.enrich(packet) {
+            Err(e) => Some(format!("Couldn't mirror the game in RocketSim: {e}")),
+            // The obs has a fixed number of car slots, so a team past it can't be played until a player leaves.
+            Ok(()) if blue_count > self.max_per_team || orange_count > self.max_per_team => Some(format!(
+                "{}v{} on the field, but the model supports at most {} players per team",
+                blue_count, orange_count, self.max_per_team
+            )),
+            Ok(()) => None,
+        };
+
+        // Reported only in play, so packets between plays can't flip it back and forth.
+        let in_play = matches!(packet.match_info.match_phase, MatchPhase::Kickoff | MatchPhase::Active);
+        match problem {
+            Some(reason) => {
+                if in_play && self.pause_reason.as_ref() != Some(&reason) {
+                    eprintln!("[buta_ppo_bot] {reason}. Holding neutral controls.");
+                    self.pause_reason = Some(reason);
+                }
+                self.held_controls = CCarControls::default();
+                self.next_decision_frame = None;
+                false
+            }
+            None => {
+                if in_play && self.pause_reason.take().is_some() {
+                    eprintln!("[buta_ppo_bot] Playing again.");
+                }
+                true
+            }
+        }
+    }
+
+    /// Feeds the packet into the enricher, first adding any players who joined after the bot started.
+    fn enrich(&mut self, packet: &GamePacket) -> Result<(), EnrichmentError> {
+        match self.enricher.update(packet) {
+            Err(EnrichmentError::MatchContext(MatchContextError::PlayerNotConfigured { .. })) => {
+                self.add_joined_players(packet)?;
+                self.enricher.update(packet).map(|_| ())
+            }
+            result => result.map(|_| ()),
+        }
+    }
+
+    /// Adds the packet's players missing from the match config, as humans (whose hitbox the enricher reads from the
+    /// packet), and rebuilds the enricher with them. The enricher rejects every packet holding a player it wasn't built
+    /// with.
+    fn add_joined_players(&mut self, packet: &GamePacket) -> Result<(), MatchContextError> {
+        for player in &packet.players {
+            if !self.match_config.player_configurations.iter().any(|p| p.player_id == player.player_id) {
+                eprintln!("[buta_ppo_bot] {} joined team {} mid-match.", player.name, player.team);
+                self.match_config.player_configurations.push(PlayerConfiguration {
+                    variety: PlayerClass::Human(Box::new(Human {})),
+                    team: player.team,
+                    player_id: player.player_id,
+                });
+            }
+        }
+        let context = MatchContext::new(&self.match_config, &self.field_info)?;
+        self.enricher = GameStateEnricher::from_match_context(context);
+        Ok(())
+    }
+
     fn infer(&mut self, packet: &GamePacket, frame: u32) {
         // Construct the FFI C++ Arena State
         let mut c_arena = CArenaState::default();

@@ -13,7 +13,7 @@ This builds the bot binary and copies it, the C++ inference library, the LibTorc
 2. **Set Up the Bot Config:** The values marked `TEMPLATE` in `bot/bot.toml` and `bot/loadout.toml` belong to the original bot, so change them for yours. In particular `agent_id`, `name`, and `logo_file`, since the logo isn't included in the repository.
 3. **Run:** Add the bot to a match through RLBot v5, using `bot/bot.toml`.
 
-On startup the bot prints the settings it read from the model. It stops with an error if the model can't be run: a team in the match larger than its `max_players_per_team`, or an obs or action size that differs from what this build's `DefaultObs` and `DefaultAction` produce.
+On startup the bot prints the settings it read from the model. It stops with an error if the model can't be run: a team in the match larger than its `max_players_per_team`, or an obs or action size that differs from what this build's `DefaultObs` and `DefaultAction` produce. During a match it plays any layout up to that size, empty teams included, and picks up players who join after it started. While it can't play (a team grows past `max_players_per_team`, or the game state can't be mirrored in RocketSim) it holds neutral controls and prints why, and plays again once it can.
 
 **Several Versions In-Game:** The bot runs the model named by the first argument of its run command, or `model.pt` without one. To play versions against each other, copy their models into `bot/` (e.g. `bot/models/<steps>.pt`) and make a copy of `bot/bot.toml` for each, with its own `agent_id`, `name`, and the model's path in both run commands, e.g. `run_command = "./buta_ppo_bot models/<steps>.pt"`.
 
