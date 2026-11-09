@@ -104,7 +104,10 @@ def deploy():
             print(f"  -> Copied {name} ({path.stat().st_size / 2**20:.0f} MB)")
 
     # The model stores the network and obs settings it was trained with, so the bot needs nothing else from training.
-    if model:
+    # bot/model.pt itself can be passed, to rebuild the bot and keep its model.
+    if model and model.resolve() == (bot_dir / "model.pt").resolve():
+        print(f"Kept {bot_dir / 'model.pt'}")
+    elif model:
         shutil.copy(model, bot_dir / "model.pt")
         print(f"Copied {model} to {bot_dir / 'model.pt'}")
     else:
