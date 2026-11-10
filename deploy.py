@@ -395,7 +395,12 @@ def deploy():
                 sys.exit("--test runs a Windows bot built on Linux with Wine, which wasn't found.")
             command = ["wine"] + command
         print(f"\nRunning the self-test: {' '.join(command)}")
-        if subprocess.run(command, cwd=bot_dir, env={**os.environ, "WINEDEBUG": "-all"}).returncode:
+        if cross:
+            print("(Wine may print graphics driver messages while it starts, such as \"pci id for fd\"; they don't "
+                  "affect the test.)")
+        # Quiets Wine's own messages and Mesa's EGL warnings, which Wine's start-up can trigger.
+        env = {**os.environ, "WINEDEBUG": "-all", "EGL_LOG_LEVEL": "fatal"}
+        if subprocess.run(command, cwd=bot_dir, env=env).returncode:
             sys.exit("The self-test failed.")
 
     print("\nDeployment complete. Change the TEMPLATE values in bot/bot.toml and bot/loadout.toml for your bot.")
