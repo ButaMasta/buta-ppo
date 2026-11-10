@@ -2,7 +2,7 @@
 # each build's self-test on its OS and checks they all play the same. Training isn't built here (it needs CUDA).
 #
 # The self-test needs RocketSim's collision meshes, which aren't in the repository. They come from the
-# COLLISION_MESHES secret: assets/collision_meshes as a .tar.xz, base64 encoded. Without it (e.g. a pull request from a
+# COLLISION_MESHES secret: assets/collision_meshes as a .tar.xz, base64 encoded (see collision_meshes.py). Without it (e.g. a pull request from a
 # fork) the builds still run and the tests are skipped.
 name: Bot builds
 
@@ -45,9 +45,12 @@ jobs:
 
       - name: Collision meshes
         id: meshes
-        env:
-          MESHES: ${{ secrets.COLLISION_MESHES }}
-        run: python3 .github/workflows/collision_meshes.py
+        # Through a file, since the secret is longer than a Windows environment variable can be (32767 characters).
+        run: |
+          cat > meshes.b64 <<'EOF'
+          ${{ secrets.COLLISION_MESHES }}
+          EOF
+          python3 .github/workflows/collision_meshes.py meshes.b64
 
       - name: Deploy
         run: LIBTORCH="$PWD/libtorch-linux" python3 deploy.py
@@ -88,9 +91,12 @@ jobs:
 
       - name: Collision meshes
         id: meshes
-        env:
-          MESHES: ${{ secrets.COLLISION_MESHES }}
-        run: python .github/workflows/collision_meshes.py
+        # Through a file, since the secret is longer than a Windows environment variable can be (32767 characters).
+        run: |
+          cat > meshes.b64 <<'EOF'
+          ${{ secrets.COLLISION_MESHES }}
+          EOF
+          python .github/workflows/collision_meshes.py meshes.b64
 
       - name: Deploy
         run: LIBTORCH="$(cygpath -w "$PWD/libtorch-windows")" python deploy.py
@@ -161,9 +167,12 @@ jobs:
 
       - name: Collision meshes
         id: meshes
-        env:
-          MESHES: ${{ secrets.COLLISION_MESHES }}
-        run: python .github/workflows/collision_meshes.py bot
+        # Through a file, since the secret is longer than a Windows environment variable can be (32767 characters).
+        run: |
+          cat > meshes.b64 <<'EOF'
+          ${{ secrets.COLLISION_MESHES }}
+          EOF
+          python .github/workflows/collision_meshes.py meshes.b64 bot
 
       - name: Self-test
         if: steps.meshes.outputs.available == 'true'
