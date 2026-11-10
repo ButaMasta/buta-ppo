@@ -34,7 +34,7 @@ Each update runs through the following stages:
 
 ## Prerequisites
 
-* **OS & Compiler:** Linux with a C++20 compiler (GCC or Clang).
+* **OS & Compiler:** Linux with a C++20 compiler (GCC or Clang). The RLBot bot can also be built for Windows, on Windows or from Linux, see [Deploying to RLBot](docs/deploying.md#windows).
 * **GPU:** An NVIDIA GPU with CUDA. CPU training is not supported. Training runs in bf16, so an Ampere (RTX 30-series) or newer GPU is recommended. Older GPUs are untested.
 * **LibTorch:** The CUDA-enabled C++ distribution, located through the `LIBTORCH` environment variable (see [Build Instructions](#build-instructions)). The trainer relies on recent LibTorch internals (fused optimizer kernels, CUDA graphs), so older versions may not build.
 * **CUDA Toolkit:** A version compatible with your LibTorch build, needed when CMake configures LibTorch.
@@ -119,7 +119,7 @@ Resuming, stopping, training plans, and checkpoints are covered in [Training](do
 | [Evaluation](docs/evaluation.md) | Elo ratings, Nexto and its ladder, anchors, options, reading the curve, and the cost |
 | [Telemetry](docs/telemetry.md) | TensorBoard groups and tags, run names, and how to view them |
 | [Visualizer Mode](docs/visualizer.md) | Watching the bot in the RocketSim visualizer, viewer keys and render-only state setters, and playing it against Nexto |
-| [Deploying to RLBot](docs/deploying.md) | Packaging the bot and running it in RLBot v5 |
+| [Deploying to RLBot](docs/deploying.md) | Packaging the bot for Linux or Windows and running it in RLBot v5 |
 | [Extending the Framework](docs/extending.md) | Custom rewards, metrics (including metrics that read rewards), and state setters, the arena state reference, and the directory structure |
 
 ## Versioning

@@ -104,6 +104,7 @@ float get_reward(const env::AgentMeta& agent, const ffi::ArenaState& state, cons
 
 ```text
 buta-ppo/
+├── .github/workflows/       # CI: builds and self-tests the bot on Linux and Windows
 ├── assets/
 │   └── collision_meshes/    # Required RocketSim arena geometry (not tracked)
 ├── bot/                     # RLBot bot directory, filled by deploy.py (only the .toml templates are tracked)
@@ -124,6 +125,6 @@ buta-ppo/
 │   ├── util/                # Inline math and vector operations
 │   ├── bot_api.cpp          # Inference-only library used by the RLBot bot
 │   └── main.cpp             # Entry point and all training configuration
-├── deploy.py                # Builds and packages the RLBot bot
+├── deploy.py                # Builds and packages the RLBot bot, for Linux or Windows
 └── THIRD_PARTY_NOTICES.md   # Notices for included third-party material (Nexto)
 ```

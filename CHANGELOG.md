@@ -4,6 +4,13 @@
     - A run killed mid-write (a crash, an out-of-memory kill, a power loss) could leave an unfinished record at the end of the log, and TensorBoard then never showed anything appended after it. The next run now removes that record and prints a `[WARN]`. If a record is damaged anywhere else, the bytes from there on are moved to `logs/<bot_name>.damaged-<time>` and the rest of the log stays readable.
     - Logs reach the file after every TensorBoard log and evaluation instead of every 60 seconds, and a failed write now prints a `[WARN]` instead of being ignored.
     - Non-breaking. Protobuf and Abseil can be uninstalled if nothing else needs them.
+2. The RLBot bot can now be built for Windows, natively or from Linux with `python deploy.py --os windows`. See [Windows](docs/deploying.md#windows).
+    - On Windows, `deploy.py` builds with MSVC. From Linux it cross-compiles with cargo-xwin, using the Windows CPU LibTorch from `LIBTORCH_WINDOWS`; the first such build needs `--accept-msvc-license`, since it downloads Microsoft's C runtime and Windows SDK.
+    - `bot/libs/` gets the LibTorch DLLs the bot needs and Microsoft's Visual C++ runtime DLLs (from Microsoft's latest installer, or `MSVC_RUNTIME_DIR`), so the bot runs on Windows 10 or newer without installing anything. `bot/bot.toml`'s `run_command` now starts `buta_ppo_bot.exe`.
+    - The bot's C++ library now links its own copy of the Rust bridge, as training does, so obs code can call any bridge function and the bot still builds. It costs about 13 ms and 5 MiB at startup.
+    - Added `buta_ppo_bot --self-test [model]` and `deploy.py --test`, which check the bot runs without RLBot or the game. Without a model, the self-test writes a small 1v1 test model with seeded random weights. See [Self-Test](docs/deploying.md#self-test).
+    - Added a GitHub Actions workflow that builds the bot for Linux, for Windows on Windows and from Linux, and checks all three play the same. It's off by default: it runs only for repositories hosted on GitHub whose Actions variable `BOT_CI` is `true`, or by hand. See [Continuous Integration](docs/deploying.md#continuous-integration).
+    - Non-breaking. Run `deploy.py` again to rebuild the bot; an older `bot/` keeps working as it is. Building the bot by hand with Cargo now needs `cargo build --release -p rust_bridge` first (`deploy.py` and `ninja -C build` do this).
 
 ### Releases
 #### 0.3.2
