@@ -1,0 +1,5 @@
+# The Windows bot binary links the C runtime statically, so it starts without the runtime DLLs next to it: they're in
+# libs/ with LibTorch (which uses the DLL runtime, as does the C++ bot library), and Windows resolves the executable's
+# own imports before main runs. Only plain C data crosses to the C++ library, so the two runtimes never share objects.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

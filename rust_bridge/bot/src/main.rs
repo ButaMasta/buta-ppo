@@ -1,12 +1,15 @@
 // buta-ppo/rust_bridge/bot/src/main.rs
 mod bot_ffi;
+mod self_test;
 
 use std::ffi::CString;
 use std::os::raw::c_void;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rust_bridge::{CArenaState, CBallState, CCarControls, CCarState, CPhysState};
-use crate::bot_ffi::{bot_api_free, bot_api_get_action, bot_api_init, bot_api_max_players_per_team, bot_api_tick_skip};
+use crate::bot_ffi::{
+    bot_api_free, bot_api_get_action, bot_api_init, bot_api_max_players_per_team, bot_api_tick_skip,
+};
 
 use rlbot_rocketsim::rlbot::agents::{run_bot_agents, BotAgent};
 use rlbot_rocketsim::rlbot::flat::{
@@ -62,10 +65,10 @@ impl BotAgent for ButaPPOBot {
         field_info: Arc<FieldInfo>,
         _packet_queue: &mut PacketQueue,
     ) -> Self {
-        // The model to run: the first argument of the run command in bot.toml, or model.pt. Relative to the bot directory.
-        let path_str = std::env::args().nth(1).unwrap_or_else(|| "model.pt".into());
+        let path_str = MODEL_PATH.get().expect("model path set in main");
         let path_c = CString::new(path_str.as_str()).expect("Invalid CString");
-        let ctx_ptr = unsafe { bot_api_init(path_c.as_ptr()) };
+        let meshes_c = CString::new(COLLISION_MESHES).expect("Invalid CString");
+        let ctx_ptr = unsafe { bot_api_init(path_c.as_ptr(), meshes_c.as_ptr()) };
 
         if ctx_ptr.is_null() {
             panic!("Failed to load C++ LibTorch checkpoint at: {}", path_str);
@@ -302,9 +305,64 @@ impl Drop for ButaPPOBot {
     }
 }
 
+/// The model to run, read from the command line in main.
+static MODEL_PATH: OnceLock<String> = OnceLock::new();
+
+/// The collision meshes, relative to the working directory (RLBot runs the bot in its directory).
+pub const COLLISION_MESHES: &str = "collision_meshes";
+
+/// Loads the C++ library from libs/ next to the executable, with its dependencies from the same directory. Windows has
+/// no rpath, so the binary delay-loads the library (see build.rs) and loads it here before its first call, which then
+/// finds it already loaded.
+#[cfg(windows)]
+fn load_bot_library() -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn LoadLibraryExW(file_name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
+    }
+    // Search the loaded DLL's own directory for its dependencies, then the usual system directories.
+    const LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: u32 = 0x0000_0100;
+    const LOAD_LIBRARY_SEARCH_DEFAULT_DIRS: u32 = 0x0000_1000;
+
+    let exe = std::env::current_exe().map_err(|e| format!("Couldn't find the bot executable's path: {e}"))?;
+    let path = exe.with_file_name("libs").join("buta_ppo_bot.dll");
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let flags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
+    if unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), flags) }.is_null() {
+        return Err(format!(
+            "Couldn't load {}: {}. It or a library it needs is missing from libs/; run deploy.py again.",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
 fn main() {
-    rocketsim::init("collision_meshes", true).expect("initialize embedded RocketSim Soccar collision meshes");
-    ball_sim::init("collision_meshes", true).expect("initialize embedded BallSim Soccar collision meshes");
+    // Usage: buta_ppo_bot [--self-test] [model]. The model is relative to the working directory (RLBot runs the bot in
+    // its directory) and defaults to model.pt. See self_test.rs for the self-test's model.
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let self_test = args.first().is_some_and(|arg| arg == "--self-test");
+    if self_test {
+        args.remove(0);
+    }
+    let model_arg = args.into_iter().next();
+    MODEL_PATH.set(model_arg.clone().unwrap_or_else(|| "model.pt".into())).expect("set once");
+
+    #[cfg(windows)]
+    if let Err(message) = load_bot_library() {
+        eprintln!("[buta_ppo_bot] {message}");
+        std::process::exit(1);
+    }
+
+    // For this binary's RocketSim, which mirrors the game for the obs. The C++ library loads its own (bot_api_init).
+    rocketsim::init(COLLISION_MESHES, true).expect("initialize embedded RocketSim Soccar collision meshes");
+
+    if self_test {
+        std::process::exit(self_test::run(model_arg.as_deref()));
+    }
 
     // Grab environment variables injected by RLBot (Port, ID).
     let AgentEnvironment {

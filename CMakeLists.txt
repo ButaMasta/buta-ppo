@@ -120,21 +120,58 @@ target_include_directories(buta_ppo_bot PRIVATE
 )
 target_include_directories(buta_ppo_bot SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
 
-target_link_libraries(buta_ppo_bot PRIVATE
-    ${LIBTORCH_DIR}/lib/libtorch_cpu.so
-    ${LIBTORCH_DIR}/lib/libc10.so
-)
+# Only LibTorch's CPU libraries. On Windows these are the import libraries of its DLLs.
+if(WIN32)
+    target_link_libraries(buta_ppo_bot PRIVATE
+        ${LIBTORCH_DIR}/lib/torch_cpu.lib
+        ${LIBTORCH_DIR}/lib/c10.lib
+    )
+else()
+    target_link_libraries(buta_ppo_bot PRIVATE
+        ${LIBTORCH_DIR}/lib/libtorch_cpu.so
+        ${LIBTORCH_DIR}/lib/libc10.so
+    )
+endif()
+
+# The library links its own copy of the Rust bridge, as training does, so its code can call any bridge function. The
+# bot binary has a separate copy for its own use. Built here by cargo_build, or passed in by the bot's build.rs (the
+# import library rust_bridge.dll.lib on Windows).
+if(BUILD_RUST_BRIDGE)
+    target_link_libraries(buta_ppo_bot PRIVATE ${RUST_LIB})
+    add_dependencies(buta_ppo_bot cargo_build)
+else()
+    if(NOT RUST_BRIDGE_LIB)
+        message(FATAL_ERROR "Set RUST_BRIDGE_LIB to the Rust bridge library to link the bot library against.")
+    endif()
+    target_link_libraries(buta_ppo_bot PRIVATE ${RUST_BRIDGE_LIB})
+endif()
 
 set_target_properties(buta_ppo_bot PROPERTIES
     BUILD_WITH_INSTALL_RPATH ON
     INSTALL_RPATH "$ORIGIN"
+    # Only the bot API (marked BOT_API in bot_api.cpp) is exported.
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    # LibTorch's DLLs use the DLL C runtime, and C++ objects pass between them and this library, so it must use the
+    # same one. Set here because a toolchain file can change the default (cargo-xwin's builds the static one).
+    MSVC_RUNTIME_LIBRARY "MultiThreadedDLL"
 )
 
 # Release. No -march=native, so the bot runs on other CPUs too.
-target_compile_options(buta_ppo_bot PRIVATE 
-    -Wall -Wextra -O3 -pthread
-)
-# Debug
-# target_compile_options(buta_ppo_bot PRIVATE 
-#     -Wall -Wextra -g -O0
-# )
+if(MSVC)
+    target_compile_options(buta_ppo_bot PRIVATE
+        /W3 /O2 /EHsc /utf-8 /bigobj
+    )
+    # Debug
+    # target_compile_options(buta_ppo_bot PRIVATE
+    #     /W3 /Od /Zi /EHsc /utf-8 /bigobj
+    # )
+else()
+    target_compile_options(buta_ppo_bot PRIVATE
+        -Wall -Wextra -O3 -pthread
+    )
+    # Debug
+    # target_compile_options(buta_ppo_bot PRIVATE
+    #     -Wall -Wextra -g -O0
+    # )
+endif()

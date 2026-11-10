@@ -254,6 +254,11 @@ pub extern "C" fn rs_is_initialized() -> bool {
     rocketsim::is_initialized()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn rs_is_initialized_ball_sim() -> bool {
+    ball_sim::is_initialized()
+}
+
 
 //// Arena Creation. ////
 #[unsafe(no_mangle)]

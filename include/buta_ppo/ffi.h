@@ -90,6 +90,8 @@ extern "C" {
     // Mesh Initialization.
     bool rs_init(const char* collision_meshes_folder, bool silent);
     bool rs_init_ball_sim(const char* collision_meshes_folder, bool silent);
+    bool rs_is_initialized();
+    bool rs_is_initialized_ball_sim();
 
     // Arena Creation.
     struct rs_arena; // Opaque type representing the Rust Arena struct.

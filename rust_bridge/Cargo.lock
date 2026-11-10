@@ -46,7 +46,6 @@ dependencies = [
 name = "buta_ppo_bot"
 version = "0.1.0"
 dependencies = [
- "ball_sim",
  "cmake",
  "rlbot-rocketsim",
  "rocketsim",

@@ -6,11 +6,20 @@
 
 #include <torch/torch.h>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include <iostream>
+
+// The bot API is all this library exports. The build hides everything else (-fvisibility=hidden on Linux, and a
+// Windows DLL exports only what's marked).
+#if defined(_WIN32)
+#define BOT_API __declspec(dllexport)
+#else
+#define BOT_API __attribute__((visibility("default")))
+#endif
 
 extern "C" {
 
@@ -24,10 +33,27 @@ struct BotContext {
     std::vector<buta_ppo::env::AgentMeta> agents;
 };
 
-void* bot_api_init(const char* checkpoint_path) {
+// This library links its own copy of the Rust bridge (libs/), separate from the bot binary's, so it loads the collision
+// meshes for that copy, once per process. RocketSim too, not just the ball sim the default obs uses, so an obs may call
+// any bridge function. Locked since one process can run several bots.
+static void init_bridge(const char* collision_meshes_path) {
+    static std::mutex init_mutex;
+    const std::lock_guard<std::mutex> lock(init_mutex);
+    if (!rs_is_initialized() && !rs_init(collision_meshes_path, true)) {
+        throw std::runtime_error(std::string("couldn't load RocketSim's collision meshes from ") + collision_meshes_path);
+    }
+    if (!rs_is_initialized_ball_sim() && !rs_init_ball_sim(collision_meshes_path, true)) {
+        throw std::runtime_error(std::string("couldn't load the ball sim's collision meshes from ") +
+                                 collision_meshes_path);
+    }
+}
+
+BOT_API void* bot_api_init(const char* checkpoint_path, const char* collision_meshes_path) {
     auto ctx = std::make_unique<BotContext>();
 
     try {
+        init_bridge(collision_meshes_path);
+
         const std::optional<buta_ppo::rl::ModelConfig> config = buta_ppo::rl::read_model_config(checkpoint_path);
         if (!config) {
             throw std::runtime_error(std::string(checkpoint_path) + " has no stored model config, since it was saved "
@@ -68,7 +94,7 @@ void* bot_api_init(const char* checkpoint_path) {
     return ctx.release();
 }
 
-buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi::ArenaState* state, uint32_t car_idx, bool new_kickoff) {
+BOT_API buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi::ArenaState* state, uint32_t car_idx, bool new_kickoff) {
     try {
         auto ctx = static_cast<BotContext*>(ctx_ptr);
 
@@ -146,18 +172,46 @@ buta_ppo::ffi::CarControls bot_api_get_action(void* ctx_ptr, const buta_ppo::ffi
     return buta_ppo::ffi::CarControls{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false, false, false};
 }
 
-uint32_t bot_api_max_players_per_team(void* ctx_ptr) {
+BOT_API uint32_t bot_api_max_players_per_team(void* ctx_ptr) {
     return static_cast<uint32_t>(static_cast<BotContext*>(ctx_ptr)->config.max_players_per_team);
 }
 
-uint32_t bot_api_tick_skip(void* ctx_ptr) {
+BOT_API uint32_t bot_api_tick_skip(void* ctx_ptr) {
     return static_cast<uint32_t>(static_cast<BotContext*>(ctx_ptr)->config.ticks_per_step);
 }
 
-void bot_api_free(void* ctx_ptr) {
+BOT_API void bot_api_free(void* ctx_ptr) {
     if (ctx_ptr) {
         delete static_cast<BotContext*>(ctx_ptr);
     }
+}
+
+// For the bot's --self-test: writes a small model with seeded random weights for this build's obs and action code, so the
+// test runs without a trained model and never goes stale when the obs changes. Returns false on failure.
+BOT_API bool bot_api_write_test_model(const char* path, const char* collision_meshes_path,
+                                      uint32_t max_players_per_team, uint32_t ticks_per_step) {
+    try {
+        init_bridge(collision_meshes_path);
+        const buta_ppo::obs::DefaultObs obs_builder(max_players_per_team, static_cast<uint8_t>(ticks_per_step));
+        const buta_ppo::action::DefaultAction action_parser;
+
+        buta_ppo::rl::ModelConfig config;
+        config.network.obs_size = static_cast<int64_t>(obs_builder.get_obs_size());
+        config.network.action_size = static_cast<int64_t>(action_parser.get_action_space_size());
+        config.network.shared_layers = {64, 64};
+        config.network.actor_layers = {64};
+        config.network.critic_layers = {64};
+        config.max_players_per_team = max_players_per_team;
+        config.ticks_per_step = ticks_per_step;
+
+        // The same weights on every platform, so self-test output can be compared between builds.
+        torch::manual_seed(0);
+        buta_ppo::rl::save_model(buta_ppo::rl::ActorCritic(config.network), config, path);
+    } catch (const std::exception& e) {
+        std::cerr << "[buta_ppo_bot] Could not write the test model: " << e.what() << std::endl;
+        return false;
+    }
+    return true;
 }
 
 } // extern "C"

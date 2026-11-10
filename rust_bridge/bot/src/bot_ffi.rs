@@ -5,9 +5,10 @@ use std::os::raw::c_char;
 use rust_bridge::{CArenaState, CCarControls};
 
 unsafe extern "C" {
-    /// Loads the model and builds the obs/action builders from the config stored in it.
-    /// Returns a pointer to the BotContext, or null if the model couldn't be loaded.
-    pub unsafe fn bot_api_init(checkpoint_path: *const c_char) -> *mut c_void;
+    /// Loads the collision meshes into the C++ library's own copy of the Rust bridge (once per process), then the
+    /// model, and builds the obs/action builders from the config stored in it.
+    /// Returns a pointer to the BotContext, or null if the meshes or the model couldn't be loaded.
+    pub unsafe fn bot_api_init(checkpoint_path: *const c_char, collision_meshes_path: *const c_char) -> *mut c_void;
 
     /// Infers the model for the given state and car then returns the controls.
     /// `new_kickoff` reshuffles the obs car slots (once per kickoff).
@@ -23,6 +24,15 @@ unsafe extern "C" {
 
     /// Returns the ticks per step the model was trained with, the frames between decisions.
     pub unsafe fn bot_api_tick_skip(ctx_ptr: *mut c_void) -> u32;
+
+    /// Writes a small model with seeded random weights for the compiled-in obs and action code, for the self-test.
+    /// Returns false if it couldn't.
+    pub unsafe fn bot_api_write_test_model(
+        path: *const c_char,
+        collision_meshes_path: *const c_char,
+        max_players_per_team: u32,
+        ticks_per_step: u32,
+    ) -> bool;
 
     /// Frees the C++ context memory.
     pub unsafe fn bot_api_free(ctx_ptr: *mut c_void);
