@@ -1,0 +1,198 @@
+# Builds the RLBot bot with deploy.py for Linux, for Windows natively, and for Windows from Linux (cross), then runs
+# each build's self-test on its OS and checks they all play the same. Training isn't built here (it needs CUDA).
+#
+# The self-test needs RocketSim's collision meshes, which aren't in the repository. They come from the
+# COLLISION_MESHES secret: assets/collision_meshes as a .tar.xz, base64 encoded. Without it (e.g. a pull request from a
+# fork) the builds still run and the tests are skipped.
+name: Bot builds
+
+on:
+  push:
+    branches: [main, windows-bot]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with the LibTorch training uses: the bot reads models that version saved.
+  LIBTORCH_VERSION: 2.14.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache LibTorch
+        id: libtorch-cache
+        uses: actions/cache@v6
+        with:
+          path: libtorch-linux
+          key: libtorch-linux-cpu-${{ env.LIBTORCH_VERSION }}
+      - name: Download LibTorch
+        if: steps.libtorch-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o libtorch.zip "https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip"
+          unzip -q libtorch.zip && mv libtorch libtorch-linux && rm libtorch.zip
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_bridge
+
+      - name: Collision meshes
+        id: meshes
+        env:
+          MESHES: ${{ secrets.COLLISION_MESHES }}
+        run: python3 .github/workflows/collision_meshes.py
+
+      - name: Deploy
+        run: LIBTORCH="$PWD/libtorch-linux" python3 deploy.py
+
+      - name: Self-test
+        if: steps.meshes.outputs.available == 'true'
+        working-directory: bot
+        run: ./buta_ppo_bot --self-test | tee ../self-test.txt
+      - uses: actions/upload-artifact@v7
+        if: steps.meshes.outputs.available == 'true'
+        with:
+          name: self-test-linux
+          path: self-test.txt
+
+  windows-native:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache LibTorch
+        id: libtorch-cache
+        uses: actions/cache@v6
+        with:
+          path: libtorch-windows
+          key: libtorch-windows-cpu-${{ env.LIBTORCH_VERSION }}
+      - name: Download LibTorch
+        if: steps.libtorch-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o libtorch.zip "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip"
+          7z x -bd libtorch.zip > /dev/null && mv libtorch libtorch-windows && rm libtorch.zip
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_bridge
+
+      - name: Collision meshes
+        id: meshes
+        env:
+          MESHES: ${{ secrets.COLLISION_MESHES }}
+        run: python .github/workflows/collision_meshes.py
+
+      - name: Deploy
+        run: LIBTORCH="$(cygpath -w "$PWD/libtorch-windows")" python deploy.py
+
+      - name: Self-test
+        if: steps.meshes.outputs.available == 'true'
+        working-directory: bot
+        run: ./buta_ppo_bot.exe --self-test | tee ../self-test.txt
+      - uses: actions/upload-artifact@v7
+        if: steps.meshes.outputs.available == 'true'
+        with:
+          name: self-test-windows-native
+          path: self-test.txt
+
+  windows-cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache LibTorch
+        id: libtorch-cache
+        uses: actions/cache@v6
+        with:
+          path: libtorch-windows
+          key: libtorch-windows-cpu-${{ env.LIBTORCH_VERSION }}
+      - name: Download LibTorch
+        if: steps.libtorch-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o libtorch.zip "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip"
+          unzip -q libtorch.zip && mv libtorch libtorch-windows && rm libtorch.zip
+
+      - name: Cross tools
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq clang lld llvm
+          rustup target add x86_64-pc-windows-msvc
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust_bridge
+
+      - name: Deploy
+        run: LIBTORCH_WINDOWS="$PWD/libtorch-windows" python3 deploy.py --os windows --accept-msvc-license
+
+      # Without the meshes; the test job adds its own.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bot-windows-cross
+          path: |
+            bot/buta_ppo_bot.exe
+            bot/libs/
+
+  windows-cross-test:
+    needs: windows-cross
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+      - uses: actions/download-artifact@v8
+        with:
+          name: bot-windows-cross
+          path: bot
+
+      - name: Collision meshes
+        id: meshes
+        env:
+          MESHES: ${{ secrets.COLLISION_MESHES }}
+        run: python .github/workflows/collision_meshes.py bot
+
+      - name: Self-test
+        if: steps.meshes.outputs.available == 'true'
+        working-directory: bot
+        run: ./buta_ppo_bot.exe --self-test | tee ../self-test.txt
+      - uses: actions/upload-artifact@v7
+        if: steps.meshes.outputs.available == 'true'
+        with:
+          name: self-test-windows-cross
+          path: self-test.txt
+
+  compare:
+    needs: [linux, windows-native, windows-cross-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: self-test-*
+      - name: Same play on every build
+        run: |
+          if [ ! -d self-test-linux ]; then
+            echo "::warning::No self-tests ran (no COLLISION_MESHES secret), so nothing to compare."
+            exit 0
+          fi
+          # The "Loaded <model>" line names a temporary file, which differs between runs.
+          for build in linux windows-native windows-cross; do
+            tr -d '\r' < "self-test-$build/self-test.txt" | grep -v '^\[buta_ppo_bot\] Loaded' > "$build.txt"
+          done
+          cat linux.txt
+          diff -u linux.txt windows-native.txt
+          diff -u linux.txt windows-cross.txt
+          echo "All three builds played the same."
