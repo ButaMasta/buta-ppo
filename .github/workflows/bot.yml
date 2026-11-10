@@ -12,7 +12,7 @@ name: Bot builds
 # Only changes that can affect the bot. src/main.cpp is training configuration.
 on:
   push:
-    branches: [main, windows-bot]
+    branches: [main]
     paths:
       - "src/**"
       - "!src/main.cpp"
