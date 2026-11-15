@@ -3,8 +3,7 @@
 #include "rollout_buffer.hpp"
 #include "opponent_pool.hpp"
 #include "env/vec_env.hpp"
-#include "util/thread_affinity.hpp"
-#include "util/cpu_topology.hpp"
+#include "platform/cpu.hpp"
 #include "util/event_file_writer.hpp"
 #include "util/file_utils.hpp"
 
@@ -184,7 +183,7 @@ PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
 
     // Resolve the automatic env and thread counts once, so everything after sees the actual values.
     // Nothing is pinned yet, so the allowed CPUs are the whole process's.
-    allowed_cpus_ = util::allowed_cpus().size();
+    allowed_cpus_ = platform::allowed_cpus().size();
     if (!config_.render) {
         config_.num_envs = config_.total_envs();
         // Unpinned, one CPU is left for the main thread, which is slower when it has to share every CPU with workers.
@@ -304,8 +303,8 @@ void PPORunner::validate_metrics() {
 
 void PPORunner::validate_cpu_pinning() {
     // Runs before any thread is pinned, so the allowed CPUs are the whole process's, e.g. as limited by `taskset`.
-    util::validate_cpus(config_.main_thread_cpus, "main_thread_cpus");
-    util::validate_cpus(config_.worker_cpus, "worker_cpus");
+    platform::validate_cpus(config_.main_thread_cpus, "main_thread_cpus");
+    platform::validate_cpus(config_.worker_cpus, "worker_cpus");
 
     for (const int cpu : config_.main_thread_cpus) {
         if (std::find(config_.worker_cpus.begin(), config_.worker_cpus.end(), cpu) != config_.worker_cpus.end()) {
@@ -974,8 +973,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     // The main thread runs inference and the step bookkeeping. Pinned only here, after the env workers and CUDA have
     // started their threads, since threads it starts from now on inherit its CPUs. Unpinned again when training ends,
     // so a runner built afterwards (the next stage of a training plan) starts from the process's CPUs.
-    const util::AffinityRestorer restore_main_thread_cpus;
-    if (!config_.main_thread_cpus.empty() && !util::pin_thread(pthread_self(), config_.main_thread_cpus)) {
+    const platform::AffinityRestorer restore_main_thread_cpus;
+    if (!config_.main_thread_cpus.empty() && !platform::pin_current_thread(config_.main_thread_cpus)) {
         warn("Could not pin the main thread to main_thread_cpus. It runs unpinned.", "Main thread unpinned");
     }
 

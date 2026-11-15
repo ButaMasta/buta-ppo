@@ -4,9 +4,9 @@
 #include "reward/rewards.hpp"
 #include "metric/metrics.hpp"
 #include "external/bots.hpp" // IWYU pragma: keep
+#include "platform/process.hpp"
 
 #include <iostream>
-#include <csignal>
 #include <atomic>
 #include <locale>
 #include <stdexcept>
@@ -21,18 +21,13 @@ using namespace buta_ppo::external;
 
 std::atomic<bool> g_stop_training{false};
 
-void handle_stop_signal(int) {
-    g_stop_training.store(true, std::memory_order_relaxed);
-}
-
 int main() {
     try {
         std::cout.imbue(std::locale("en_US.utf8"));
     } catch (const std::runtime_error&) {}
     // Ctrl+C, or the stop request from a process manager (systemd, docker stop, Slurm), finishes the current update
     // and saves a checkpoint.
-    std::signal(SIGINT, handle_stop_signal);
-    std::signal(SIGTERM, handle_stop_signal);
+    buta_ppo::platform::install_stop_handler(g_stop_training);
 
     if (!ffi::init("assets/collision_meshes", true)) {
         std::cerr << "[ERROR] Failed to initialize RocketSim.\n";

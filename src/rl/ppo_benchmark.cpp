@@ -2,14 +2,12 @@
 // The benchmark mode of `PPORunner`, see `RunnerConfig::benchmark`.
 #include "ppo_runner.hpp"
 #include "env/vec_env.hpp"
-#include "util/cpu_topology.hpp"
-#include "util/thread_affinity.hpp"
+#include "platform/cpu.hpp"
+#include "platform/process.hpp"
 
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAFunctions.h>
-
-#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
@@ -125,7 +123,7 @@ std::vector<CpuSetup> make_cpu_setups(const RunnerConfig& config, const std::vec
     };
 
     const size_t cpus = allowed.size();
-    const std::vector<util::PhysicalCore> cores = util::physical_cores(allowed);
+    const std::vector<platform::PhysicalCore> cores = platform::physical_cores(allowed);
 
     add({"Current config", config.num_threads, config.main_thread_cpus, config.worker_cpus});
     add({"Unpinned, a worker per CPU", cpus, {}, {}});
@@ -136,7 +134,7 @@ std::vector<CpuSetup> make_cpu_setups(const RunnerConfig& config, const std::vec
     // The main thread on the fastest core: alone, so no worker shares the core with it, or with workers on its
     // other hyperthreads. The workers share every other CPU.
     if (cpus >= 3) {
-        const util::PhysicalCore& fastest = cores.front();
+        const platform::PhysicalCore& fastest = cores.front();
         const int main_cpu = fastest.cpus.front();
 
         std::vector<int> other_cores;
@@ -240,18 +238,18 @@ PPORunner::UpdateSample PPORunner::measure_updates(bool heavy, int warmup, int m
 
 void PPORunner::run_benchmark(const std::atomic<bool>& stop_flag) {
     // Read before anything is pinned. Unpinned configs run on all of these CPUs.
-    const std::vector<int> allowed = util::allowed_cpus();
-    const auto unpin_main = [&] { (void)util::pin_thread(pthread_self(), allowed); };
+    const std::vector<int> allowed = platform::allowed_cpus();
+    const auto unpin_main = [&] { (void)platform::pin_current_thread(allowed); };
     const auto pin_main = [&](const CpuSetup& setup) {
         if (setup.main_cpus.empty()) {
             unpin_main();
-        } else if (!util::pin_thread(pthread_self(), setup.main_cpus)) {
+        } else if (!platform::pin_current_thread(setup.main_cpus)) {
             std::cerr << "[WARN] Could not pin the main thread to " << cpu_list(setup.main_cpus) << ".\n";
         }
     };
 
     const std::vector<CpuSetup> setups = make_cpu_setups(config_, allowed);
-    const std::vector<util::PhysicalCore> cores = util::physical_cores(allowed);
+    const std::vector<platform::PhysicalCore> cores = platform::physical_cores(allowed);
     // Resolved by the constructor from num_envs or target_steps_per_agent.
     const size_t target_envs = config_.num_envs;
 
@@ -289,7 +287,7 @@ void PPORunner::run_benchmark(const std::atomic<bool>& stop_flag) {
               << " min. Ctrl+C stops early and prints what was measured.\n"
               << " | Run it the way you train: keep open what usually runs alongside.\n";
 
-    if (isatty(STDIN_FILENO)) {
+    if (platform::stdin_is_terminal()) {
         std::cout << "Run the benchmark? [y/N] " << std::flush;
         std::string answer;
         std::getline(std::cin, answer);
