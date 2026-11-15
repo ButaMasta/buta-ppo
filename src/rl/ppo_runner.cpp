@@ -4,6 +4,7 @@
 #include "opponent_pool.hpp"
 #include "env/vec_env.hpp"
 #include "platform/cpu.hpp"
+#include "platform/process.hpp"
 #include "util/event_file_writer.hpp"
 #include "util/file_utils.hpp"
 
@@ -137,7 +138,9 @@ PPORunner::PPORunner(const RunnerConfig& config) : PPORunner(config, false) {}
 
 PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
     : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU), benchmark_child_(benchmark_child) {
-    
+    // Training runs at full speed even while another window is in front.
+    platform::reduce_power_throttling();
+
     if (torch::cuda::is_available()) {
         if (!benchmark_child_) {
             std::cout << "CUDA detected. Running on GPU.\n";
