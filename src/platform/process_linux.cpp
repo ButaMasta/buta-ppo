@@ -30,4 +30,6 @@ bool stdin_is_terminal() {
     return isatty(STDIN_FILENO);
 }
 
+void reduce_power_throttling() {}
+
 } // namespace buta_ppo::platform
