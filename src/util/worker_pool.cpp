@@ -1,6 +1,6 @@
 // buta-ppo/src/util/worker_pool.cpp
 #include "worker_pool.hpp"
-#include "thread_affinity.hpp"
+#include "platform/cpu.hpp"
 
 #include <iostream>
 
@@ -11,7 +11,7 @@ WorkerPool::WorkerPool(size_t num_threads, const std::vector<int>& cpus) {
     workers_.reserve(num_threads);
     for (size_t i = 0; i < num_threads; i++) {
         workers_.emplace_back(&WorkerPool::worker_loop, this);
-        if (!cpus.empty() && !pin_thread(workers_.back().native_handle(), cpus)) {
+        if (!cpus.empty() && !platform::pin_thread(workers_.back(), cpus)) {
             std::cerr << "[WARN] Could not pin worker thread " << i << " to worker_cpus. It runs unpinned.\n";
         }
     }

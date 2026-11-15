@@ -78,6 +78,13 @@ if(BUILD_RUST_BRIDGE)
         src/util/worker_pool.cpp
     )
 
+    # OS-specific code: each src/platform/ header has an implementation per OS.
+    target_sources(buta_ppo PRIVATE
+        src/platform/cpu_linux.cpp
+        src/platform/process_linux.cpp
+        src/platform/timing_linux.cpp
+    )
+
     # Expose include/ directory.
     target_include_directories(buta_ppo PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}/include

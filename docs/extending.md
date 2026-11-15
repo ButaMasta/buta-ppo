@@ -119,6 +119,7 @@ buta-ppo/
 │   ├── external/            # Bots from outside the framework (Nexto) that drive a team in the visualizer and in evaluation
 │   ├── metric/              # Metric functions and the metric manager
 │   ├── obs/                 # Observation builder and ball prediction
+│   ├── platform/            # OS-specific code: CPU pinning and topology, stop signals, timing
 │   ├── reward/              # Reward functions and the reward manager
 │   ├── rl/                  # Network, rollout buffer, trainer, optimizers, PFSP, evaluation, and the training runner
 │   ├── state/               # State setters for episode resets

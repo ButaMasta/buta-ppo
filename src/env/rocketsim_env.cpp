@@ -1,12 +1,12 @@
 // buta-ppo/src/env/rocketsim_env.cpp
 #include "rocketsim_env.hpp"
 #include "buta_ppo/ffi.h"
+#include "platform/timing.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
 #include <iterator>
-#include <thread>
 #include <chrono>
 #include <stdexcept>
 #include <string>
@@ -223,7 +223,7 @@ bool RocketSimEnv::advance_tick(int tick, StepProgress& progress) {
     ffi::get_arena_state(arena_, arena_state_);
 
     if (render_) [[unlikely]] {
-        std::this_thread::sleep_for(std::chrono::microseconds(8333));
+        platform::precise_sleep(std::chrono::microseconds(8333));
     }
 
     // Accumulate rewards and metrics. Rewards also update their previous state.
