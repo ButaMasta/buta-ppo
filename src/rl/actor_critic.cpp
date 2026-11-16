@@ -53,7 +53,7 @@ struct AutocastOffGuard {
  * @brief Runs a block's layers in order, like seq->forward(x), but it ensures that when autocast is on and x is bf16 to run layernorm in bf16 as well.
  *
  * Autocast runs LayerNorm in fp32, which casts every activation to fp32 and back. 
- * The CUDA kernel accumulates in fp32 even for bf16 input (`acc_type<BFloat16> = float`, see `aten/src/ATen/native/cuda/layer_norm_kernel.cu` in v2.14),
+ * The CUDA kernel accumulates in fp32 even for bf16 input (`acc_type<BFloat16> = float`, see `aten/src/ATen/native/cuda/layer_norm_kernel.cu` in v2.15),
  * so this runs it on bf16 directly.
  *
  * Under autocast, a Linear layer with an odd input width also gets its bf16 input and weight zero-padded to a multiple
