@@ -35,7 +35,7 @@ uint64_t fnv1a(const std::string& bytes) {
     return h;
 }
 
-std::string read_file(const fs::path& path) {
+std::string read_binary_file(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return {};
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
@@ -62,7 +62,7 @@ std::string NextoLadder::rung_id(float beta) {
 }
 
 std::string NextoLadder::fingerprint(const NextoLadderSettings& settings) {
-    const std::string model = read_file(settings.model_path);
+    const std::string model = read_binary_file(settings.model_path);
     if (model.empty()) {
         throw std::invalid_argument("Nexto model not found at '" + settings.model_path + "'.");
     }
@@ -252,7 +252,8 @@ bool NextoLadder::parse(const std::string& text, const NextoLadderSettings& sett
 void NextoLadder::open(const NextoLadderSettings& settings, const fs::path& shipped, const fs::path& calibrated,
                        const Calibration& calibration, const std::shared_ptr<external::NextoBot>& nexto) {
     for (const fs::path& path : {shipped, calibrated}) {
-        if (fs::exists(path) && parse(read_file(path), settings)) {
+        // As text: the header must match line for line, and the hash must not depend on how the file's lines end.
+        if (fs::exists(path) && parse(util::read_text_file(path), settings)) {
             source_ = path;
             return;
         }

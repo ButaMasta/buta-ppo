@@ -1,0 +1,6 @@
+# Text files are stored with LF line endings and checked out with LF on every OS, also on Windows, where Git for
+# Windows defaults to core.autocrlf=true. So a clone is the same bytes everywhere.
+* text=auto eol=lf
+
+# Binary: never converted, and diffed as binary.
+*.pt binary
