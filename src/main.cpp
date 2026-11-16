@@ -5,11 +5,10 @@
 #include "metric/metrics.hpp"
 #include "external/bots.hpp" // IWYU pragma: keep
 #include "platform/process.hpp"
+#include "util/console.hpp"
 
 #include <iostream>
 #include <atomic>
-#include <locale>
-#include <stdexcept>
 
 namespace ffi = buta_ppo::ffi;
 using namespace buta_ppo::rl;
@@ -22,9 +21,8 @@ using namespace buta_ppo::external;
 std::atomic<bool> g_stop_training{false};
 
 int main() {
-    try {
-        std::cout.imbue(std::locale("en_US.utf8"));
-    } catch (const std::runtime_error&) {}
+    // Numbers in the console output get thousands separators: 1,234,567.
+    buta_ppo::util::use_thousands_separators(std::cout);
     // Ctrl+C, or the stop request from a process manager (systemd, docker stop, Slurm), finishes the current update
     // and saves a checkpoint.
     buta_ppo::platform::install_stop_handler(g_stop_training);
