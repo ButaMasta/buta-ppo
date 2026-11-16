@@ -49,7 +49,7 @@ Tested with:
 | Component | Version |
 |---|---|
 | GPU | RTX 5070 |
-| LibTorch | 2.14.0 (CUDA 13.2 build) |
+| LibTorch | 2.15.0 (CUDA 13.4 build) |
 | CUDA Toolkit | 13.4 |
 | GCC | 16.2 |
 | CMake | 4.4 |

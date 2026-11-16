@@ -59,7 +59,7 @@ def host_os():
     sys.exit(f"Deploying from {sys.platform} isn't supported. Use Linux or Windows.")
 
 def libtorch_version(libtorch):
-    """The LibTorch release (e.g. 2.14.0) without its build suffix (+cu132, +cpu), or None if unknown."""
+    """The LibTorch release (e.g. 2.15.0) without its build suffix (+cu134, +cpu), or None if unknown."""
     try:
         return (Path(libtorch) / "build-version").read_text().strip().split("+")[0]
     except OSError:
