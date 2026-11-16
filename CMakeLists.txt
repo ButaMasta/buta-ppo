@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+
+# No build type unless one is given: the targets set their own flags (for a debug build, swap their commented blocks).
+# Otherwise project() would default MSVC to Debug, whose /Od and /RTC1 clash with the targets' /O2.
+set(CMAKE_BUILD_TYPE "" CACHE STRING "Leave empty: the targets set their own optimization flags.")
+
 project(buta_ppo LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -22,6 +27,14 @@ if(NOT EXISTS "${LIBTORCH_DIR}/share/cmake/Torch/TorchConfig.cmake")
     message(FATAL_ERROR "LibTorch not found at '${bad_dir}'. Set the LIBTORCH environment variable to your LibTorch "
                         "directory (the one containing lib/ and share/), then configure again.")
 endif()
+
+# Catch the common LibTorch setup mistakes with a clear message, before LibTorch's own config reports them confusingly.
+include(cmake/libtorch_checks.cmake)
+buta_ppo_check_libtorch_release()
+if(BUILD_RUST_BRIDGE)
+    buta_ppo_check_training_setup()
+endif()
+
 set(Torch_DIR "${LIBTORCH_DIR}/share/cmake/Torch")
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
@@ -31,14 +44,21 @@ if(BUILD_RUST_BRIDGE)
     # Define directories.
     set(RUST_BRIDGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rust_bridge)
     set(RUST_TARGET_DIR ${RUST_BRIDGE_DIR}/target/release)
-    set(RUST_LIB ${RUST_TARGET_DIR}/librust_bridge.so)
+    # What to link: on Windows the DLL's import library. RUST_DLL is what runs, copied next to the executable below.
+    if(WIN32)
+        set(RUST_LIB ${RUST_TARGET_DIR}/rust_bridge.dll.lib)
+        set(RUST_DLL ${RUST_TARGET_DIR}/rust_bridge.dll)
+    else()
+        set(RUST_LIB ${RUST_TARGET_DIR}/librust_bridge.so)
+        set(RUST_DLL "")
+    endif()
 
     # Create a custom target that always runs `cargo build --release`. That builds only the bridge library, not the
     # RLBot bot package in the same Cargo workspace, so it's a no-op unless the Rust code changed.
     add_custom_target(cargo_build ALL
         COMMAND cargo build --release
         WORKING_DIRECTORY ${RUST_BRIDGE_DIR}
-        BYPRODUCTS ${RUST_LIB}
+        BYPRODUCTS ${RUST_LIB} ${RUST_DLL}
         COMMENT "Compiling Rust FFI cdylib via Cargo..."
     )
 
@@ -105,17 +125,58 @@ if(BUILD_RUST_BRIDGE)
         ${TORCH_LIBRARIES} 
     )
 
-    # Release
-    target_compile_options(buta_ppo PRIVATE 
-        -Wall -Wextra -O3 -march=native -pthread
-    )
-    # Debug
-    # target_compile_options(buta_ppo PRIVATE 
-    #     -Wall -Wextra -g -O0
-    # )
+    if(MSVC)
+        # Release. LibTorch's targets add /permissive- too.
+        target_compile_options(buta_ppo PRIVATE
+            /W3 /O2 /EHsc /utf-8 /bigobj
+        )
+        # Debug
+        # target_compile_options(buta_ppo PRIVATE
+        #     /W3 /Od /Zi /EHsc /utf-8 /bigobj
+        # )
+        # MSVC can't tune for the build machine's CPU, so it gets AVX2 (Haswell or newer). clang-cl can, like GCC.
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(buta_ppo PRIVATE -march=native)
+        else()
+            target_compile_options(buta_ppo PRIVATE /arch:AVX2)
+        endif()
+    else()
+        # Release
+        target_compile_options(buta_ppo PRIVATE
+            -Wall -Wextra -O3 -march=native -pthread
+        )
+        # Debug
+        # target_compile_options(buta_ppo PRIVATE
+        #     -Wall -Wextra -g -O0
+        # )
+    endif()
+
+    # The DLL C runtime, as LibTorch's DLLs use, since C++ objects pass between them and the program. Set explicitly
+    # because a Debug build type or a toolchain file can change the default.
+    set_target_properties(buta_ppo PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
     # Ensure Cargo builds the Rust library.
     add_dependencies(buta_ppo cargo_build)
+
+    # Windows has no rpath: a program finds its DLLs next to itself (or on PATH). So LibTorch's DLLs (about 3 GB for a
+    # CUDA build) and the bridge's are copied into the build directory, where Ninja puts buta_ppo.exe. Each is copied
+    # again only when its source is newer, so LibTorch's once per LibTorch version.
+    if(WIN32)
+        file(GLOB TORCH_DLLS CONFIGURE_DEPENDS "${LIBTORCH_DIR}/lib/*.dll")
+        set(RUNTIME_DLLS "")
+        foreach(dll IN LISTS TORCH_DLLS RUST_DLL)
+            get_filename_component(dll_name "${dll}" NAME)
+            set(copied "${CMAKE_CURRENT_BINARY_DIR}/${dll_name}")
+            add_custom_command(
+                OUTPUT "${copied}"
+                COMMAND ${CMAKE_COMMAND} -E copy "${dll}" "${copied}"
+                DEPENDS "${dll}"
+                VERBATIM
+            )
+            list(APPEND RUNTIME_DLLS "${copied}")
+        endforeach()
+        add_custom_target(copy_runtime_dlls ALL DEPENDS ${RUNTIME_DLLS})
+    endif()
 
 endif()
 
