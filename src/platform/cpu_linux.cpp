@@ -42,6 +42,10 @@ std::vector<int> allowed_cpus() {
     return cpus_of(allowed);
 }
 
+bool pinning_supported() {
+    return true;
+}
+
 void validate_cpus(const std::vector<int>& cpus, const std::string& name) {
     cpu_set_t allowed;
     CPU_ZERO(&allowed);

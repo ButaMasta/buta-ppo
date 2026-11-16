@@ -17,20 +17,28 @@ namespace buta_ppo::platform {
 std::vector<int> allowed_cpus();
 
 /**
+ * @brief Whether threads can be pinned to CPU lists on this machine. Windows can only pin a thread within one processor
+ * group (at most 64 logical CPUs), so machines with several groups run unpinned. Always true on Linux.
+ */
+bool pinning_supported();
+
+/**
  * @brief Checks that every CPU is one this process may run on, which excludes CPUs left out by `taskset`.
  *
  * Reads the calling thread's allowed CPUs, so call it before any thread is pinned.
  *
  * @param cpus Logical CPU ids. Empty is valid and means no pinning.
  * @param name The config field the CPUs came from, for the error message.
- * @throws std::invalid_argument If a CPU doesn't exist or this process isn't allowed to run on it.
+ * @throws std::invalid_argument If a CPU doesn't exist or this process isn't allowed to run on it, or `cpus` isn't empty
+ * and `pinning_supported` is false.
  */
 void validate_cpus(const std::vector<int>& cpus, const std::string& name);
 
 /**
  * @brief Restricts a thread to a set of CPUs. The OS still moves it between those CPUs as it likes.
  *
- * Threads that the pinned thread starts afterwards inherit its CPUs.
+ * On Linux, threads that the pinned thread starts afterwards inherit its CPUs. On Windows they start with the process's
+ * CPUs instead.
  *
  * @param thread The thread to pin.
  * @param cpus Logical CPU ids, already checked with `validate_cpus`.

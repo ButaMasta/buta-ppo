@@ -974,8 +974,8 @@ void PPORunner::run_training(int num_updates, const std::atomic<bool>& stop_flag
     }
 
     // The main thread runs inference and the step bookkeeping. Pinned only here, after the env workers and CUDA have
-    // started their threads, since threads it starts from now on inherit its CPUs. Unpinned again when training ends,
-    // so a runner built afterwards (the next stage of a training plan) starts from the process's CPUs.
+    // started their threads, since on Linux threads it starts from now on inherit its CPUs. Unpinned again when
+    // training ends, so a runner built afterwards (the next stage of a training plan) starts from the process's CPUs.
     const platform::AffinityRestorer restore_main_thread_cpus;
     if (!config_.main_thread_cpus.empty() && !platform::pin_current_thread(config_.main_thread_cpus)) {
         warn("Could not pin the main thread to main_thread_cpus. It runs unpinned.", "Main thread unpinned");
