@@ -6,7 +6,6 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <iterator>
 #include <sstream>
 #include <optional>
 
@@ -26,11 +25,7 @@ void EvalLedger::open(const fs::path& dir, const std::string& meta, int64_t max_
     ratings_.clear();
 
     if (fs::exists(dir_)) {
-        std::string saved_meta;
-        if (std::ifstream in(dir_ / META_FILE); in) {
-            saved_meta.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-        }
-        if (saved_meta != meta) {
+        if (util::read_text_file(dir_ / META_FILE) != meta) {
             const auto now = std::chrono::system_clock::now().time_since_epoch();
             const fs::path stale = dir_.string() + ".stale-" +
                 std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now).count());
