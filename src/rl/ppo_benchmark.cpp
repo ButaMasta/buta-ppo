@@ -132,8 +132,9 @@ std::vector<CpuSetup> make_cpu_setups(const RunnerConfig& config, const std::vec
     if (cores.size() < cpus) add({"Unpinned, a worker per core", cores.size(), {}, {}});
 
     // The main thread on the fastest core: alone, so no worker shares the core with it, or with workers on its
-    // other hyperthreads. The workers share every other CPU.
-    if (cpus >= 3) {
+    // other hyperthreads. The workers share every other CPU. Not where pinning isn't supported (Windows with more
+    // than 64 logical CPUs).
+    if (cpus >= 3 && platform::pinning_supported()) {
         const platform::PhysicalCore& fastest = cores.front();
         const int main_cpu = fastest.cpus.front();
 
@@ -259,7 +260,7 @@ void PPORunner::run_benchmark(const std::atomic<bool>& stop_flag) {
         c.envs = std::max<size_t>(2, static_cast<size_t>(std::lround(static_cast<double>(target_envs) * env_factor)));
         return c;
     };
-    // The main thread is unpinned first, since the workers of an unpinned config inherit its CPUs.
+    // The main thread is unpinned first, since on Linux the workers of an unpinned config inherit its CPUs.
     const auto make_runner = [&](const Candidate& c) {
         RunnerConfig cfg = config_;
         cfg.num_threads = c.setup.threads;
