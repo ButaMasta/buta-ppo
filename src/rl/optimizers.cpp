@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -225,7 +226,7 @@ float LrSchedule::scale_at(int64_t steps) const {
     switch (shape) {
         case Shape::Linear:      return static_cast<float>(from + (to - from) * t);
         case Shape::Exponential: return static_cast<float>(from * std::pow(to / from, t));
-        case Shape::Cosine:      return static_cast<float>(to + (from - to) * 0.5 * (1.0 + std::cos(M_PI * t)));
+        case Shape::Cosine:      return static_cast<float>(to + (from - to) * 0.5 * (1.0 + std::cos(std::numbers::pi * t)));
         case Shape::Constant:    break;
     }
     return start_scale;
