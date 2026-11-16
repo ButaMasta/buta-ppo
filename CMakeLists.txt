@@ -134,6 +134,9 @@ if(BUILD_RUST_BRIDGE)
         # target_compile_options(buta_ppo PRIVATE
         #     /W3 /Od /Zi /EHsc /utf-8 /bigobj
         # )
+        # MSVC deprecates standard C functions such as std::localtime in favor of its own _s variants, which other
+        # compilers don't have. The standard ones stay.
+        target_compile_definitions(buta_ppo PRIVATE _CRT_SECURE_NO_WARNINGS)
         # MSVC can't tune for the build machine's CPU, so it gets AVX2 (Haswell or newer). clang-cl can, like GCC.
         if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
             target_compile_options(buta_ppo PRIVATE -march=native)
