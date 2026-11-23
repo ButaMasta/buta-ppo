@@ -35,8 +35,7 @@ if(BUILD_RUST_BRIDGE)
     buta_ppo_check_training_setup()
 endif()
 
-set(Torch_DIR "${LIBTORCH_DIR}/share/cmake/Torch")
-find_package(Torch REQUIRED)
+buta_ppo_find_libtorch()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 if(BUILD_RUST_BRIDGE)

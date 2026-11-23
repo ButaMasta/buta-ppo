@@ -1,7 +1,7 @@
 # buta-ppo/cmake/libtorch_checks.cmake
 # Configure-time checks for setup mistakes that would otherwise show up late or confusingly: as a link error, a missing
 # DLL at startup, or LibTorch's own generic "cannot find the CUDA libraries". CMakeLists.txt includes this once
-# LIBTORCH_DIR is known and calls the checks before find_package(Torch).
+# LIBTORCH_DIR is known, calls the checks, then finds LibTorch with buta_ppo_find_libtorch().
 
 # The LibTorch version, e.g. "2.15.0+cu134", from its build-version file, or "" if it has none.
 function(buta_ppo_libtorch_version out)
@@ -94,3 +94,67 @@ function(buta_ppo_check_training_setup)
         endif()
     endif()
 endfunction()
+
+# The cached library paths (FILEPATH entries named *_LIBRARY) that name a library LIBTORCH_DIR/lib has, but in another
+# directory: another LibTorch's copy.
+function(buta_ppo_other_libtorch_libraries out)
+    file(REAL_PATH "${LIBTORCH_DIR}/lib" own_dir)
+    if(WIN32)
+        string(TOLOWER "${own_dir}" own_dir)
+    endif()
+    set(others "")
+    get_property(cache_vars DIRECTORY PROPERTY CACHE_VARIABLES)
+    foreach(var IN LISTS cache_vars)
+        # Filtered before reading any value: reading some variables (CMAKE_WARN_DEPRECATED) makes CMake 4.4+ warn.
+        if(NOT var MATCHES "_LIBRARY$")
+            continue()
+        endif()
+        get_property(type CACHE "${var}" PROPERTY TYPE)
+        get_property(path CACHE "${var}" PROPERTY VALUE)
+        if(NOT type STREQUAL "FILEPATH" OR NOT EXISTS "${path}")
+            continue()
+        endif()
+        get_filename_component(name "${path}" NAME)
+        get_filename_component(dir "${path}" DIRECTORY)
+        file(REAL_PATH "${dir}" dir)
+        if(WIN32)
+            string(TOLOWER "${dir}" dir)
+        endif()
+        if(EXISTS "${LIBTORCH_DIR}/lib/${name}" AND NOT dir STREQUAL own_dir)
+            list(APPEND others "${var}")
+        endif()
+    endforeach()
+    set(${out} "${others}" PARENT_SCOPE)
+endfunction()
+
+# find_package(Torch), making sure every library comes from LIBTORCH_DIR. LibTorch's config looks for its libraries
+# with find_library(... PATHS <its lib/>), which CMake searches last, after PATH (on Windows) and the system library
+# directories, so another LibTorch there would be linked silently, with this one's headers. And find_library caches what
+# it finds, so a build directory configured with an earlier LIBTORCH would keep linking that one's libraries.
+macro(buta_ppo_find_libtorch)
+    # Forget the libraries an earlier LIBTORCH left in the cache, so they're looked up again.
+    buta_ppo_other_libtorch_libraries(_buta_ppo_stale)
+    foreach(_buta_ppo_var IN LISTS _buta_ppo_stale)
+        unset(${_buta_ppo_var} CACHE)
+    endforeach()
+
+    # CMAKE_LIBRARY_PATH is searched before PATH and the system directories. It only affects find_library, and
+    # LibTorch's lib/ has no library named like a CUDA Toolkit one (it bundles those under versioned names only), so the
+    # CUDA lookups inside LibTorch's config find what they found before.
+    set(_buta_ppo_library_path "${CMAKE_LIBRARY_PATH}")
+    set(CMAKE_LIBRARY_PATH "${LIBTORCH_DIR}/lib" ${CMAKE_LIBRARY_PATH})
+    set(Torch_DIR "${LIBTORCH_DIR}/share/cmake/Torch")
+    find_package(Torch REQUIRED)
+    set(CMAKE_LIBRARY_PATH "${_buta_ppo_library_path}")
+
+    buta_ppo_other_libtorch_libraries(_buta_ppo_other)
+    if(_buta_ppo_other)
+        set(_buta_ppo_found "")
+        foreach(_buta_ppo_var IN LISTS _buta_ppo_other)
+            string(APPEND _buta_ppo_found "\n  ${_buta_ppo_var} = ${${_buta_ppo_var}}")
+        endforeach()
+        message(FATAL_ERROR "LibTorch's libraries must come from LIBTORCH ('${LIBTORCH_DIR}/lib'), but these were "
+                            "found elsewhere, in another LibTorch:${_buta_ppo_found}\nRemove that LibTorch's directory "
+                            "from PATH (and LIB), then configure again.")
+    endif()
+endmacro()
