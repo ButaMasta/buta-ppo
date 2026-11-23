@@ -1,5 +1,6 @@
 // buta-ppo/src/util/event_file_writer.cpp
 #include "event_file_writer.hpp"
+#include "file_utils.hpp"
 
 #include <array>
 #include <bit>
@@ -142,7 +143,7 @@ std::string repair_event_file(const fs::path& path) {
 
     const std::string removed = std::to_string(file_size - scan.valid_size) + " bytes";
     if (scan.unfinished) {
-        fs::resize_file(path, scan.valid_size);
+        retry_while_in_use([&] { fs::resize_file(path, scan.valid_size); });
         return "Removed an unfinished record (" + removed + ") from the end of " + path.string() +
                ", left by a run that didn't shut down cleanly.";
     }
@@ -153,7 +154,7 @@ std::string repair_event_file(const fs::path& path) {
         path.parent_path() / (path.stem().string() + ".damaged-" +
                               std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now).count()));
     move_tail_aside(path, scan.valid_size, damaged);
-    fs::resize_file(path, scan.valid_size);
+    retry_while_in_use([&] { fs::resize_file(path, scan.valid_size); });
     return path.string() + " is damaged at byte " + std::to_string(scan.valid_size) +
            ", which hides everything after it from TensorBoard. Moved those " + removed + " to " + damaged.string() +
            ".";

@@ -2,6 +2,7 @@
 #include "gauntlet.hpp"
 #include "state/setters.hpp"
 #include "rating.hpp"
+#include "util/file_utils.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -229,7 +230,7 @@ void Gauntlet::open(const fs::path& dir, int64_t max_steps) {
         if (!entry.is_regular_file() || !parse_anchor_name(entry.path(), steps)) continue;
 
         if (steps > max_steps) {
-            fs::remove(entry.path());
+            util::remove_with_retry(entry.path());
             std::cout << "Deleted Evaluation Anchor " << entry.path().filename().string()
                       << ", which is newer than the resumed checkpoint.\n";
             continue;
@@ -243,7 +244,7 @@ void Gauntlet::open(const fs::path& dir, int64_t max_steps) {
             }
         }
         if (!rating_exists) {
-            fs::remove(entry.path());
+            util::remove_with_retry(entry.path());
             std::cout << "Deleted Evaluation Anchor " << entry.path().filename().string()
                       << ", which has no rating values.\n";
             continue;
@@ -625,7 +626,7 @@ void Gauntlet::promote(int64_t steps, const ActorCritic& learner) {
     const fs::path path = anchor_path(steps);
     const fs::path tmp = path.string() + ".tmp";
     save_model(learner, model_config_, tmp.string());
-    fs::rename(tmp, path);
+    util::rename_with_retry(tmp, path);
     anchors_.push_back(steps);
 }
 

@@ -29,7 +29,7 @@ void EvalLedger::open(const fs::path& dir, const std::string& meta, int64_t max_
             const auto now = std::chrono::system_clock::now().time_since_epoch();
             const fs::path stale = dir_.string() + ".stale-" +
                 std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now).count());
-            fs::rename(dir_, stale);
+            util::rename_with_retry(dir_, stale);
             std::cout << "Evaluation Ledger at " << dir_.string() << " was saved with different evaluation settings. "
                         << "Moved it to " << stale.string() << " and started a fresh ledger.\n";
         }

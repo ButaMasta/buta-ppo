@@ -101,12 +101,14 @@ if(BUILD_RUST_BRIDGE)
     if(WIN32)
         target_sources(buta_ppo PRIVATE
             src/platform/cpu_windows.cpp
+            src/platform/file_windows.cpp
             src/platform/process_windows.cpp
             src/platform/timing_windows.cpp
         )
     else()
         target_sources(buta_ppo PRIVATE
             src/platform/cpu_linux.cpp
+            src/platform/file_linux.cpp
             src/platform/process_linux.cpp
             src/platform/timing_linux.cpp
         )

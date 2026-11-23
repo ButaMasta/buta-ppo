@@ -832,13 +832,13 @@ void PPORunner::save_checkpoint(const std::string& dir) const {
     const fs::path tmp_dir = final_dir.string() + ".tmp";
 
     // Write into a temp dir and rename once complete so an interrupted save never looks like a valid checkpoint.
-    fs::remove_all(tmp_dir);
-    fs::create_directories(tmp_dir);
+    util::remove_all_with_retry(tmp_dir);
+    util::retry_while_in_use([&] { fs::create_directories(tmp_dir); });
     save_model(actor_critic_, model_config(), (tmp_dir / MODEL_FILE).string());
     trainer_->save_optimizer((tmp_dir / OPTIMIZER_FILE).string());
 
-    fs::remove_all(final_dir);
-    fs::rename(tmp_dir, final_dir);
+    util::remove_all_with_retry(final_dir);
+    util::rename_with_retry(tmp_dir, final_dir);
 
     // The pool saves its snapshots as they're added, so only the latest win records are left to write.
     if (opponent_pool_) {

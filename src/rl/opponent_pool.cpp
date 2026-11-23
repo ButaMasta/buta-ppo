@@ -76,7 +76,7 @@ void OpponentPool::open(const fs::path& dir, int64_t max_steps) {
             const auto now = std::chrono::system_clock::now().time_since_epoch();
             const fs::path stale = dir_.string() + ".stale-" +
                 std::to_string(std::chrono::duration_cast<std::chrono::seconds>(now).count());
-            fs::rename(dir_, stale);
+            util::rename_with_retry(dir_, stale);
             std::cout << "PFSP pool at " << dir_.string() << " was saved with a different network shape. "
                       << "Moved it to " << stale.string() << " and started a fresh pool.\n";
         }
@@ -101,7 +101,7 @@ void OpponentPool::open(const fs::path& dir, int64_t max_steps) {
 
         // A snapshot from past the resumed checkpoint belongs to a run that was rolled back.
         if (steps > max_steps) {
-            fs::remove(entry.path());
+            util::remove_with_retry(entry.path());
             std::cout << "Deleted PFSP snapshot " << entry.path().filename().string()
                       << ", which is newer than the resumed checkpoint.\n";
             continue;
@@ -170,7 +170,7 @@ void OpponentPool::add(int64_t steps, const ActorCritic& learner) {
         const fs::path path = snapshot_path(dir_, steps);
         const fs::path tmp = path.string() + ".tmp";
         save_model(learner, model_config_, tmp.string());
-        fs::rename(tmp, path);
+        util::rename_with_retry(tmp, path);
     }
 
     if (snapshots_.size() > config_.pool_size) {
@@ -237,7 +237,7 @@ void OpponentPool::evict() {
     }
     // With no snapshot trusted enough, `victim` stays at the oldest.
     if (!dir_.empty()) {
-        fs::remove(snapshot_path(dir_, snapshots_[victim].steps));
+        util::remove_with_retry(snapshot_path(dir_, snapshots_[victim].steps));
     }
     snapshots_.erase(snapshots_.begin() + static_cast<std::ptrdiff_t>(victim));
 }
