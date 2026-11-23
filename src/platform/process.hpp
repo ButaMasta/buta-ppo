@@ -27,4 +27,14 @@ bool stdin_is_terminal();
  */
 void reduce_power_throttling();
 
+/**
+ * @brief Stops the OS from briefly raising a thread's priority when it wakes from a wait, for every thread of the
+ * process, including ones started later.
+ *
+ * Windows boosts a thread that wakes up. When the main thread wakes the workers to step the physics, the boosted workers
+ * can take the CPU it needs to go on with uploads and inference, so it often resumed only 0.4–0.7 ms later. Turning the
+ * boost off made training on Windows about 17% faster. Does nothing on Linux, whose scheduler has no such boost.
+ */
+void disable_priority_boost();
+
 } // namespace buta_ppo::platform

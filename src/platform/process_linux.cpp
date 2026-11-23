@@ -32,4 +32,6 @@ bool stdin_is_terminal() {
 
 void reduce_power_throttling() {}
 
+void disable_priority_boost() {}
+
 } // namespace buta_ppo::platform

@@ -61,4 +61,10 @@ void reduce_power_throttling() {
     SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
 }
 
+void disable_priority_boost() {
+    // TRUE disables the boost for the process's threads, and new threads take the process's setting. If it fails, the
+    // process only runs slower, so the result is ignored.
+    SetProcessPriorityBoost(GetCurrentProcess(), TRUE);
+}
+
 } // namespace buta_ppo::platform

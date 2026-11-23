@@ -138,8 +138,10 @@ PPORunner::PPORunner(const RunnerConfig& config) : PPORunner(config, false) {}
 
 PPORunner::PPORunner(const RunnerConfig& config, bool benchmark_child)
     : config_(config), device_(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU), benchmark_child_(benchmark_child) {
-    // Training runs at full speed even while another window is in front.
+    // Training runs at full speed even while another window is in front, and the main thread isn't held up by the
+    // workers it wakes.
     platform::reduce_power_throttling();
+    platform::disable_priority_boost();
 
     if (torch::cuda::is_available()) {
         if (!benchmark_child_) {
