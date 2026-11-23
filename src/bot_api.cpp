@@ -21,7 +21,9 @@
 #define BOT_API __attribute__((visibility("default")))
 #endif
 
-extern "C" {
+// The helpers are outside `extern "C"`: MSVC's /EHsc assumes C-linkage functions never throw, so a throwing helper
+// in there could skip the API functions' catch blocks and end the process instead.
+namespace {
 
 struct BotContext {
     // Read from the model file, so the obs builder and network match what it was trained with.
@@ -36,7 +38,7 @@ struct BotContext {
 // This library links its own copy of the Rust bridge (libs/), separate from the bot binary's, so it loads the collision
 // meshes for that copy, once per process. RocketSim too, not just the ball sim the default obs uses, so an obs may call
 // any bridge function. Locked since one process can run several bots.
-static void init_bridge(const char* collision_meshes_path) {
+void init_bridge(const char* collision_meshes_path) {
     static std::mutex init_mutex;
     const std::lock_guard<std::mutex> lock(init_mutex);
     if (!rs_is_initialized() && !rs_init(collision_meshes_path, true)) {
@@ -47,6 +49,10 @@ static void init_bridge(const char* collision_meshes_path) {
                                  collision_meshes_path);
     }
 }
+
+} // namespace
+
+extern "C" {
 
 BOT_API void* bot_api_init(const char* checkpoint_path, const char* collision_meshes_path) {
     auto ctx = std::make_unique<BotContext>();
