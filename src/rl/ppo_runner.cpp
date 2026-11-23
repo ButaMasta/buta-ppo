@@ -385,7 +385,7 @@ void PPORunner::setup_dimensions_and_buffers() {
     deferred_obs_.reserve(2 * learner_agents_ * obs_size_);
 
     total_steps_per_update_ = static_cast<int64_t>(buffer_size_ * learner_agents_);
-    config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / config_.num_minibatches;
+    config_.ppo_cfg.mini_batch_size = total_steps_per_update_ / static_cast<int64_t>(config_.num_minibatches);
 
     if (!benchmark_child_ && !config_.render) {
         std::cout << "Envs: " << config_.num_envs << " (" << learner_agents_ << " learner agents, " << buffer_size_

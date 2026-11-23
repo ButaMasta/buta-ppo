@@ -107,7 +107,7 @@ int main() {
     // Presets: OptimizerConfig::adam(lr), ::adamw(lr, wd), ::muon(muon_lr, adamw_lr, wd).
     // Sections (shared / actor / critic) and groups within them can be adjusted afterwards, e.g. `.critic.with_lr(1e-4f)`.
     // muon lr is scaled to be comparable to adam lr.
-    config.ppo_cfg.optimizer = OptimizerConfig::muon(3e-4, 3e-4, 0.01);
+    config.ppo_cfg.optimizer = OptimizerConfig::muon(3e-4f, 3e-4f, 0.01f);
     config.ppo_cfg.entropy_coef = 0.035f;
     config.ppo_cfg.epochs = 1;
 

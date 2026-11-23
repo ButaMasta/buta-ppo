@@ -123,7 +123,7 @@ config.ppo_cfg.entropy_coef = 0.035f;
 // Also available: clip_ratio, value_coef, max_grad_norm, gae_gamma, gae_lambda.
 
 // Presets: OptimizerConfig::adam(lr), ::adamw(lr, wd), ::muon(muon_lr, adamw_lr, wd).
-config.ppo_cfg.optimizer = OptimizerConfig::muon(3e-4, 3e-4, 0.01);
+config.ppo_cfg.optimizer = OptimizerConfig::muon(3e-4f, 3e-4f, 0.01f);
 // Sections (shared / actor / critic) can be adjusted afterwards:
 config.ppo_cfg.optimizer.critic.with_lr(1e-4f);
 ```
