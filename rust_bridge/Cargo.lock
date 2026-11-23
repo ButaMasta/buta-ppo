@@ -331,7 +331,6 @@ name = "rust_bridge"
 version = "0.1.0"
 dependencies = [
  "ball_sim",
- "libc",
  "rocketsim",
  "rocketsim_vis",
 ]

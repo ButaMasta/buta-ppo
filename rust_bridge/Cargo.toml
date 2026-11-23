@@ -18,7 +18,6 @@ crate-type = ["cdylib", "rlib"]
 rocketsim = "=0.3.3"
 rocketsim_vis = "=0.3.3"
 ball_sim = { git = "https://github.com/VirxEC/rocketsim-utils.git", rev = "90df2bc795545d1c458ce0b67398ebdb56a2ab3b" }
-libc = "0.2"
 
 [profile.release]
 lto = "fat"
